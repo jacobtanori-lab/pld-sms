@@ -369,10 +369,9 @@ var SCIAN = [
   {codigo:'9999999',desc:'OTRO / NO ESPECIFICADO'}
 ];
 
-// Catálogo tipos de operación INM
-var TIPOS_OPERACION = [
+// Catálogo tipos de operación FRACCIÓN V (INM)
+var TIPOS_OPERACION_INM = [
   {codigo:'501',desc:'Compraventa de inmuebles'},
-  {codigo:'502',desc:'Arrendamiento de inmuebles'},
   {codigo:'503',desc:'Promesa de compraventa'},
   {codigo:'504',desc:'Cesion de derechos sobre inmuebles'},
   {codigo:'505',desc:'Fideicomiso sobre inmuebles'},
@@ -381,6 +380,14 @@ var TIPOS_OPERACION = [
   {codigo:'508',desc:'Administracion de inmuebles'},
   {codigo:'509',desc:'Valuacion de inmuebles'}
 ];
+
+// Catálogo tipos de operación FRACCIÓN XV (ARI)
+var TIPOS_OPERACION_ARI = [
+  {codigo:'1501',desc:'Arrendamiento de inmuebles'}
+];
+
+// Compatibilidad (usar según fracción)
+var TIPOS_OPERACION = TIPOS_OPERACION_INM;
 
 // Catálogo tipos de alerta
 var TIPOS_ALERTA = [
@@ -678,6 +685,83 @@ document.addEventListener('click', function(ev) {
   }
   if (opRow && opRow.getAttribute('data-opid')) {
     verOp(opRow.getAttribute('data-opid'));
+    return;
+  }
+
+  // Event delegation: guardar liquidacion (.liq-save-btn)
+  var liqBtn = null;
+  var el6 = ev.target;
+  while (el6 && el6 !== document) {
+    if (el6.className && el6.className.indexOf('liq-save-btn') >= 0) { liqBtn = el6; break; }
+    el6 = el6.parentElement;
+  }
+  if (liqBtn) {
+    guardarLiq(liqBtn.getAttribute('data-idex')||'');
+    return;
+  }
+
+  // Event delegation: botones nuevo aviso INM/ARI
+  var avBtnEl = null;
+  var elA = ev.target;
+  while (elA && elA !== document) {
+    if (elA.className && (elA.className.indexOf('av-btn-inm')>=0||elA.className.indexOf('av-btn-ari')>=0)) { avBtnEl=elA; break; }
+    elA = elA.parentElement;
+  }
+  if (avBtnEl) {
+    var frac = avBtnEl.className.indexOf('av-btn-ari')>=0 ? 'ARI' : 'INM';
+    nuevaOpForm(null, frac); return;
+  }
+
+  // Event delegation: tabs de fracción en avisos (.av-tab)
+  var avTab = null;
+  var elB = ev.target;
+  while (elB && elB !== document) {
+    if (elB.className && elB.className.indexOf('av-tab')>=0) { avTab=elB; break; }
+    elB = elB.parentElement;
+  }
+  if (avTab && avTab.getAttribute('data-frac')) {
+    switchFraccion(avTab, avTab.getAttribute('data-frac')); return;
+  }
+
+  // Event delegation: tabs de fracción en operaciones (.ops-tab)
+  var opsTab = null;
+  var elC = ev.target;
+  while (elC && elC !== document) {
+    if (elC.className && elC.className.indexOf('ops-tab')>=0) { opsTab=elC; break; }
+    elC = elC.parentElement;
+  }
+  if (opsTab && opsTab.getAttribute('data-frac')) {
+    switchOpsTab(opsTab, opsTab.getAttribute('data-frac')); return;
+  }
+
+  // Event delegation: sidebar avisos - todos
+  var avTodos = null;
+  var el8 = ev.target;
+  while (el8 && el8 !== document) {
+    if (el8.className && el8.className.indexOf('av-todos') >= 0) { avTodos = el8; break; }
+    el8 = el8.parentElement;
+  }
+  if (avTodos) { cargarOps(null, App._fraccionAvisos||'INM'); return; }
+
+  // Event delegation: sidebar avisos - nuevo
+  var avNuevo = null;
+  var el9 = ev.target;
+  while (el9 && el9 !== document) {
+    if (el9.className && el9.className.indexOf('av-nuevo') >= 0) { avNuevo = el9; break; }
+    el9 = el9.parentElement;
+  }
+  if (avNuevo) { nuevaOpForm(null, App._fraccionAvisos||'INM'); return; }
+
+  // Event delegation: cambiar fracción en módulo operaciones (.data-opsfrac)
+  var opsFracEl = null;
+  var el7 = ev.target;
+  while (el7 && el7 !== document) {
+    if (el7.getAttribute && el7.getAttribute('data-opsfrac')) { opsFracEl = el7; break; }
+    el7 = el7.parentElement;
+  }
+  if (opsFracEl) {
+    App._fraccionOps = opsFracEl.getAttribute('data-opsfrac');
+    cargarOpsRegistros(App._fraccionOps);
   }
 });
 
@@ -813,7 +897,7 @@ function spUpdate(lista, itemId, datos, cb) {
 //  NAVEGACIÓN
 // ================================================================
 function renderNav() {
-  var items = [['dashboard','Inicio'],['clientes','Clientes'],['alertas','Alertas'],['operaciones','Operaciones'],['reportes','Reportes']];
+  var items = [['dashboard','Inicio'],['clientes','Clientes'],['alertas','Alertas'],['avisos','Avisos'],['operaciones','Operaciones'],['reportes','Reportes'],['config','Config']];
   var html = '';
   items.forEach(function(i){ html+='<div class="nav-item" id="nav-'+i[0]+'" onclick="irA(\''+i[0]+'\')">'+i[1]+'</div>'; });
   document.getElementById('nav-bar').innerHTML = html;
@@ -821,7 +905,7 @@ function renderNav() {
 function irA(sec) {
   document.querySelectorAll('.nav-item').forEach(function(e){e.classList.remove('on');});
   var el=document.getElementById('nav-'+sec); if(el) el.classList.add('on');
-  ({dashboard:pgDash,clientes:pgClientes,alertas:pgAlertas,operaciones:pgOps,reportes:pgReportes})[sec]();
+  ({dashboard:pgDash,clientes:pgClientes,alertas:pgAlertas,avisos:pgAvisos,operaciones:pgOps,reportes:pgReportes,config:pgConfig})[sec]();
 }
 function setSB(h){document.getElementById('sb-ct').innerHTML=h;}
 function setMain(h){document.getElementById('main').innerHTML=h;}
@@ -859,6 +943,91 @@ function secHdr(txt){return '<div class="sec-hdr">'+txt+'</div>';}
 // ================================================================
 //  DASHBOARD
 // ================================================================
+// ================================================================
+//  CONFIGURACIÓN DEL SISTEMA (UMA y parámetros)
+// ================================================================
+function pgConfig() {
+  setSB('<div class="sb-sec">Configuracion</div>'
+    +'<div class="sb-item on">Parametros del sistema</div>');
+
+  var uma = CFG_UMA.DIARIA;
+  var umbral = (uma * CFG_UMA.UMBRAL_UMAS).toLocaleString('es-MX');
+
+  setMain('<div class="phdr"><div><div class="ptit">Configuracion del sistema</div>'
+    +'<div class="psub">Parametros regulatorios y valores de referencia</div></div></div>'
+
+    +'<div class="card"><div class="card-h"><span class="card-t">Valor de la UMA</span>'
+    +'<span class="pill p-am" style="margin-left:8px">Actualizar cada 1 de febrero</span></div>'
+    +'<div class="fgrid">'
+    +'<div class="fg"><label class="lbl">UMA diaria vigente (MXN) <span class="req">*</span></label>'
+    +'<input class="inp mono" id="uma-input" type="number" step="0.01" value="'+uma+'">'
+    +'<span class="fhint">Ultima actualizacion: '+CFG_UMA.FECHA_ACT+'</span></div>'
+    +'<div class="fg"><label class="lbl">Umbral de identificacion calculado</label>'
+    +'<div style="padding:8px;background:var(--am3);border-radius:var(--r);font-size:13px;font-weight:500;color:var(--am)">'
+    +'$'+umbral+' MXN ('+CFG_UMA.UMBRAL_UMAS.toLocaleString()+' UMAs)</div>'
+    +'<span class="fhint">Art. 17 Fr. V LFPIORPI — pagos en efectivo que obligan a presentar aviso</span></div>'
+    +'</div>'
+    +'<div style="padding:12px 16px;border-top:1px solid var(--brd);display:flex;justify-content:flex-end">'
+    +'<button class="btn btn-p" onclick="guardarUMA()">Actualizar UMA</button>'
+    +'</div></div>'
+
+    +'<div class="card"><div class="card-h"><span class="card-t">Entidades obligadas</span></div>'
+    +'<div class="card-b">'
+    +ENTIDADES.map(function(e,i){
+      return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--brd)">'
+        +'<div><div style="font-weight:500;font-size:13px">'+e.nombre+'</div>'
+        +'<div style="font-size:11px;color:var(--tx3)">ID: '+e.id+(e.rfc?' | RFC: '+e.rfc:'')+'</div></div>'
+        +'<div style="display:flex;gap:6px">'
+        +'<input class="inp mono" id="rfc-'+i+'" placeholder="RFC" value="'+(e.rfc||'')+'" style="width:140px;font-size:12px">'
+        +'<button class="btn btn-sm" onclick="guardarRFC('+i+')">Guardar</button>'
+        +'</div></div>';
+    }).join('')
+    +'</div></div>');
+}
+
+function guardarUMA() {
+  var input = document.getElementById('uma-input');
+  if (!input) return;
+  var val = parseFloat(input.value);
+  if (isNaN(val) || val <= 0) { toast('Valor de UMA invalido','e'); return; }
+  CFG_UMA.DIARIA = val;
+  CFG_UMA.FECHA_ACT = hoy();
+  localStorage.setItem('uma_diaria', String(val));
+  localStorage.setItem('uma_fecha', hoy());
+  toast('UMA actualizada a $'+val.toFixed(2)+' — Umbral: $'+(val*CFG_UMA.UMBRAL_UMAS).toLocaleString('es-MX'),'s');
+  pgConfig();
+}
+
+function guardarRFC(idx) {
+  var input = document.getElementById('rfc-'+idx);
+  if (!input) return;
+  ENTIDADES[idx].rfc = input.value.trim().toUpperCase();
+  // Persistir en localStorage
+  localStorage.setItem('entidades_rfc', JSON.stringify(ENTIDADES.map(function(e){return e.rfc||'';})));
+  toast('RFC de '+ENTIDADES[idx].nombre+' actualizado','s');
+}
+
+function verificarAlertaUMA() {
+  var hoyDate = new Date();
+  var mes = hoyDate.getMonth()+1;
+  var dia = hoyDate.getDate();
+  var yaVisto = localStorage.getItem('uma_alerta_'+hoyDate.getFullYear());
+  if (mes===2 && dia<=7 && !yaVisto) {
+    localStorage.setItem('uma_alerta_'+hoyDate.getFullYear(),'1');
+    setTimeout(function(){
+      toast('RECORDATORIO: Actualizar el valor de la UMA en Configuracion del sistema','w');
+    }, 3000);
+  }
+}
+
+// Cargar RFC guardados de entidades
+(function() {
+  try {
+    var rfcs = JSON.parse(localStorage.getItem('entidades_rfc')||'[]');
+    rfcs.forEach(function(rfc,i){ if(ENTIDADES[i]) ENTIDADES[i].rfc=rfc; });
+  } catch(e){}
+})();
+
 function pgDash() {
   setSB('<div class="sb-sec">PLD/FT</div>'
     +'<div class="sb-item on">Panel general</div>'
@@ -1833,35 +2002,59 @@ function guardarAlerta() {
 // ================================================================
 //  OPERACIONES INMOBILIARIAS — AVISO INM
 // ================================================================
-var CFG_UMA = {DIARIA:113.14, UMBRAL_UMAS:8025};
+// UMA — se actualiza cada 1° de febrero manualmente
+var CFG_UMA = {
+  DIARIA: parseFloat(localStorage.getItem('uma_diaria') || '113.14'),
+  UMBRAL_UMAS: 8025,
+  FECHA_ACT: localStorage.getItem('uma_fecha') || '2024-02-01'
+};
 
-function pgOps() {
-  setSB('<div class="sb-sec">Operaciones INM</div>'
-    +'<div class="sb-item on" onclick="cargarOps(null)">Todos los avisos</div>'
-    +'<div class="sb-item" onclick="nuevaOpForm()">+ Nueva operacion</div>'
-    +'<div class="sb-sec">Filtrar</div>'
+function pgAvisos() {
+  setSB('<div class="sb-sec">Avisos</div>'
+    +'<div class="sb-item on av-todos">Todos</div>'
+    +'<div class="sb-item av-nuevo">+ Nuevo aviso</div>'
+    +'<div class="sb-sec">Filtrar estatus</div>'
     +'<div class="sb-item" data-filtro="Borrador">Borradores</div>'
-    +'<div class="sb-item" data-filtro="Listo">Listos para enviar</div>'
+    +'<div class="sb-item" data-filtro="Listo">Listos</div>'
     +'<div class="sb-item" data-filtro="Enviado">Enviados</div>');
+
+  var fraccion = App._fraccionAvisos || 'INM';
   setMain('<div class="phdr">'
-    +'<div><div class="ptit">Operaciones inmobiliarias</div>'
-    +'<div class="psub">Avisos de actividad vulnerable - Art. 17 Fr. V LFPIORPI</div></div>'
-    +'<button class="btn btn-p" onclick="nuevaOpForm()">+ Nueva operacion</button>'
+    +'<div><div class="ptit">Avisos regulatorios</div>'
+    +'<div class="psub">Avisos de actividad vulnerable - LFPIORPI</div></div>'
+    +'<div style="display:flex;gap:8px">'
+    +'<button class="btn btn-p av-btn-inm">+ Aviso Fr. V</button>'
+    +'<button class="btn btn-g av-btn-ari">+ Aviso Fr. XV</button>'
+    +'</div></div>'
+    +'<div class="tabs">'
+    +'<div class="tab'+(fraccion==='INM'?' on':'')+' av-tab" data-frac="INM">Fraccion V - Compraventa / Desarrollo</div>'
+    +'<div class="tab'+(fraccion==='ARI'?' on':'')+' av-tab" data-frac="ARI">Fraccion XV - Arrendamiento</div>'
     +'</div>'
     +'<div id="ops-ct"><div class="empty"><div class="spin" style="margin:0 auto"></div></div></div>');
-  cargarOps(null);
+  cargarOps(null, fraccion);
 }
 
 function pgOpsFiltro(estatus) {
   document.querySelectorAll('.sb-item').forEach(function(e){e.classList.remove('on');});
-  cargarOps(estatus);
+  cargarOps(estatus, App._fraccionAvisos||'INM');
 }
 
-function cargarOps(filtroEstatus) {
+function switchFraccion(el, fraccion) {
+  document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('on');});
+  el.classList.add('on');
+  App._fraccionAvisos = fraccion;
+  cargarOps(null, fraccion);
+}
+
+function cargarOps(filtroEstatus, fraccion) {
+  fraccion = fraccion || App._fraccionAvisos || 'INM';
+  App._fraccionAvisos = fraccion;
   spGet('PLD_Operaciones', function(lista) {
     if (App.entidadActual && App.entidadActual.id !== 'TODAS') {
       lista = (lista||[]).filter(function(o){ return o.entidad_id===App.entidadActual.id||!o.entidad_id; });
     }
+    // Filtrar por fracción
+    lista = (lista||[]).filter(function(o){ return (o.fraccion||'INM') === fraccion; });
     if (filtroEstatus) lista = lista.filter(function(o){ return o.estatus_aviso===filtroEstatus; });
     if (!lista.length) { document.getElementById('ops-ct').innerHTML='<div class="empty">Sin operaciones registradas.</div>'; return; }
     var rows = '';
@@ -1953,9 +2146,12 @@ function renderFichaOp(op) {
 // ================================================================
 //  FORMULARIO NUEVA OPERACION INMOBILIARIA
 // ================================================================
-function nuevaOpForm(datos) {
+function nuevaOpForm(datos, fraccion) {
   var d = datos || {};
   var idEx = d.id || '';
+  fraccion = fraccion || d.fraccion || App._fraccionAvisos || 'INM';
+  d.fraccion = fraccion;
+  var esARI = fraccion === 'ARI';
 
   // Select helpers para catálogos
   function optsC(arr, sel) {
@@ -2000,7 +2196,8 @@ function nuevaOpForm(datos) {
     // Datos de la operación
     +'<div class="card"><div class="card-h"><span class="card-t">3. Datos del acto u operacion</span></div><div class="fgrid">'
     +fg('Fecha de la operacion',null,true)+fi('fecha_operacion',d.fecha_operacion||hoy(),'AAAA-MM-DD')
-    +fg('Tipo de operacion',null,true)+'<select class="sel" name="tipo_operacion">'+optsC(TIPOS_OPERACION,d.tipo_operacion||'501')+'</select></div>'
+    +fg('Tipo de operacion',null,true)+'<select class="sel" name="tipo_operacion">'+optsC(esARI?TIPOS_OPERACION_ARI:TIPOS_OPERACION_INM,d.tipo_operacion||(esARI?'1501':'501'))+'</select></div>'
+    +'<input type="hidden" name="fraccion" value="'+fraccion+'">'
     +'</div></div>'
 
     // Contraparte
@@ -2015,13 +2212,20 @@ function nuevaOpForm(datos) {
     +fg('Pais de nacionalidad ISO',null,false)+fi('contraparte_pais_iso',d.contraparte_pais_iso||'MX','Ej: MX')
     +'</div></div>'
 
-    // Características del inmueble
-    +'<div class="card"><div class="card-h"><span class="card-t">5. Caracteristicas del inmueble</span></div><div class="fgrid">'
+    // Características del inmueble (campos comunes + específicos por fracción)
+    +'<div class="card"><div class="card-h"><span class="card-t">5. Caracteristicas del inmueble</span>'
+    +'<span class="pill '+(esARI?'p-mo':'p-az')+'" style="margin-left:8px">'+(esARI?'Fr. XV - ARI':'Fr. V - INM')+'</span>'
+    +'</div><div class="fgrid">'
     +fg('Tipo de inmueble',null,true)+'<select class="sel" name="tipo_inmueble">'+optsC(TIPOS_INMUEBLE,d.tipo_inmueble||'')+'</select></div>'
-    +fg('Valor pactado (MXN)',null,true)+fi('valor_pactado',d.valor_pactado||'','0.00')
+    +(esARI
+      ? fg('Valor de referencia / renta (MXN)',null,true)+fi('valor_referencia',d.valor_referencia||'','0.00')
+        +fg('Fecha inicio del arrendamiento (AAAA-MM-DD)',null,true)+fi('fecha_inicio',d.fecha_inicio||hoy(),'')
+        +fg('Fecha termino del arrendamiento (AAAA-MM-DD)',null,true)+fi('fecha_termino',d.fecha_termino||'','')
+      : fg('Valor pactado (MXN)',null,true)+fi('valor_pactado',d.valor_pactado||'','0.00')
+        +fg('Dimension del terreno (m2)',null,true)+fi('dim_terreno',d.dim_terreno||'','Ej: 120.00')
+        +fg('Dimension construida (m2)',null,true)+fi('dim_construido',d.dim_construido||'','Ej: 90.00')
+    )
     +fg('Folio real o antecedentes registrales',null,true)+fi('folio_real',d.folio_real||'','')
-    +fg('Dimension del terreno (m2)',null,true)+fi('dim_terreno',d.dim_terreno||'','Ej: 120.00')
-    +fg('Dimension construida (m2)',null,true)+fi('dim_construido',d.dim_construido||'','Ej: 90.00')
     +secHdr('Ubicacion del inmueble')
     +fg('Colonia',null,true)+fi('inm_colonia',d.inm_colonia||'','')
     +fg('Calle o vialidad',null,true)+fi('inm_calle',d.inm_calle||'','')
@@ -2030,8 +2234,9 @@ function nuevaOpForm(datos) {
     +fg('Codigo postal (5 digitos)',null,true)+fi('inm_cp',d.inm_cp||'','00000','mono')
     +'</div></div>'
 
-    // Instrumento publico o contrato
-    +'<div class="card"><div class="card-h"><span class="card-t">6. Instrumento publico o contrato privado</span></div><div class="fgrid">'
+    // Instrumento publico o contrato (solo Fr. V — INM)
+    +(esARI ? '' :
+      '<div class="card"><div class="card-h"><span class="card-t">6. Instrumento publico o contrato privado</span></div><div class="fgrid">'
     +'<div class="fg full"><label class="lbl">Tipo de instrumento <span class="req">*</span></label>'
     +'<select class="sel" name="tipo_instrumento" onchange="toggleInstrumento(this.value)">'
     +'<option value="publico"'+(d.tipo_instrumento!=='privado'?' selected':'')+'>Instrumento publico (notarial)</option>'
@@ -2047,7 +2252,7 @@ function nuevaOpForm(datos) {
     +'<div id="sec-contrato-priv" style="display:'+(d.tipo_instrumento==='privado'?'contents':'none')+'">'
     +fg('Fecha del contrato privado (AAAA-MM-DD)',null,true)+fi('fecha_contrato',d.fecha_contrato||hoy(),'')
     +'</div>'
-    +'</div></div>'
+    +'</div></div>')
 
     // Liquidaciones
     +'<div class="card">'
@@ -2138,8 +2343,9 @@ function submitOp(idEx, estatus) {
   }
   d.liquidaciones = liqs;
 
-  // Buscar descripciones de catálogos
-  TIPOS_OPERACION.forEach(function(x){ if(x.codigo===d.tipo_operacion) d.tipo_operacion_desc=x.desc; });
+  // Buscar descripciones de catálogos según fracción
+  var catOp = (d.fraccion==='ARI') ? TIPOS_OPERACION_ARI : TIPOS_OPERACION_INM;
+  catOp.forEach(function(x){ if(x.codigo===d.tipo_operacion) d.tipo_operacion_desc=x.desc; });
   TIPOS_ALERTA.forEach(function(x){ if(x.codigo===d.tipo_alerta) d.tipo_alerta_desc=x.desc; });
   TIPOS_INMUEBLE.forEach(function(x){ if(x.codigo===d.tipo_inmueble) d.tipo_inmueble_desc=x.desc; });
   FIGURAS.forEach(function(x){ if(x.codigo===d.figura_cliente) d.figura_cliente_desc=x.desc; });
@@ -2396,6 +2602,139 @@ function generarXML(opId) {
   });
 }
 
+// ================================================================
+//  GENERADOR XML AVISO ARI (FRACCIÓN XV — Arrendamiento)
+// ================================================================
+function generarXML_ARI(op, cli, ent) {
+  var mesRep = op.fecha_operacion ? op.fecha_operacion.replace(/-/g,'').substring(0,6)
+    : new Date().getFullYear()+pad(new Date().getMonth()+1);
+
+  var xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
+  xml += '<archivo xsi:schemaLocation="http://www.uif.shcp.gob.mx/recepcion/ari ari.xsd"';
+  xml += ' xmlns="http://www.uif.shcp.gob.mx/recepcion/ari"';
+  xml += ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n';
+  xml += '  <informe>\n';
+  xml += '    <mes_reportado>'+mesRep+'</mes_reportado>\n';
+  xml += '    <sujeto_obligado>\n';
+  xml += '      <clave_sujeto_obligado>'+limXML(ent.rfc||'RFC000000XXX',13)+'</clave_sujeto_obligado>\n';
+  xml += '      <clave_actividad>ARI</clave_actividad>\n';
+  xml += '    </sujeto_obligado>\n';
+  xml += '    <aviso>\n';
+  xml += '      <referencia_aviso>'+limXML(op.referencia_aviso||'REF001',14)+'</referencia_aviso>\n';
+
+  if (op.es_modificatorio==='SI' && op.folio_modificacion) {
+    xml += '      <modificatorio>\n';
+    xml += '        <folio_modificacion>'+limXML(op.folio_modificacion,14)+'</folio_modificacion>\n';
+    xml += '        <descripcion_modificacion>'+limXML(op.descripcion_modificacion||'MODIFICACION',3000)+'</descripcion_modificacion>\n';
+    xml += '      </modificatorio>\n';
+  }
+
+  xml += '      <prioridad>'+(op.prioridad||'1')+'</prioridad>\n';
+  xml += '      <alerta>\n';
+  xml += '        <tipo_alerta>'+(op.tipo_alerta||'100')+'</tipo_alerta>\n';
+  if (op.descripcion_alerta)
+    xml += '        <descripcion_alerta>'+limXML(op.descripcion_alerta,3000)+'</descripcion_alerta>\n';
+  xml += '      </alerta>\n';
+
+  // Persona aviso
+  xml += '      <persona_aviso>\n';
+  xml += '        <tipo_persona>\n';
+  xml += xmlPersona(cli, op);
+  xml += '        </tipo_persona>\n';
+
+  // Domicilio
+  xml += '        <tipo_domicilio>\n';
+  var esPFExt = cli && cli.tipo === 'PF_EXT';
+  if (esPFExt) {
+    xml += '          <extranjero>\n';
+    xml += '            <pais>'+(cli.pais_nac_iso||paisISO(cli.pais_nac2||'Mexico'))+'</pais>\n';
+    xml += '            <estado_provincia>'+limXML(cli.res_estado||'NA',100)+'</estado_provincia>\n';
+    xml += '            <ciudad_poblacion>'+limXML(cli.res_ciudad||cli.res_municipio||'NA',100)+'</ciudad_poblacion>\n';
+    xml += '            <colonia>'+limXML(cli.res_colonia||'NA',50)+'</colonia>\n';
+    xml += '            <calle>'+limXML(cli.res_calle||'NA',100)+'</calle>\n';
+    xml += '            <numero_exterior>'+limXML(cli.res_num_ext||'SN',56)+'</numero_exterior>\n';
+    xml += '            <codigo_postal>'+limXML(cli.res_cp||'00000',12)+'</codigo_postal>\n';
+    xml += '          </extranjero>\n';
+  } else {
+    xml += '          <nacional>\n';
+    xml += '            <colonia>'+limXML((cli&&cli.colonia)||'NA',50)+'</colonia>\n';
+    xml += '            <calle>'+limXML((cli&&cli.calle)||'NA',100)+'</calle>\n';
+    xml += '            <numero_exterior>'+limXML((cli&&cli.num_ext)||'SN',56)+'</numero_exterior>\n';
+    if (cli&&cli.num_int) xml += '            <numero_interior>'+limXML(cli.num_int,40)+'</numero_interior>\n';
+    xml += '            <codigo_postal>'+((cli&&cli.cp&&cli.cp.length===5)?cli.cp:'00000')+'</codigo_postal>\n';
+    xml += '          </nacional>\n';
+  }
+  xml += '        </tipo_domicilio>\n';
+
+  if (cli&&cli.telefono) {
+    xml += '        <telefono>\n';
+    xml += '          <clave_pais>'+(cli.tel_clave_pais||'MX')+'</clave_pais>\n';
+    xml += '          <numero_telefono>'+String(cli.telefono).replace(/[^0-9]/g,'').substring(0,12)+'</numero_telefono>\n';
+    if (cli.email) xml += '          <correo_electronico>'+String(cli.email).toUpperCase()+'</correo_electronico>\n';
+    xml += '        </telefono>\n';
+  }
+  xml += '      </persona_aviso>\n';
+
+  // Dueño beneficiario
+  if (cli&&cli.tiene_dueno_ben==='SI'&&cli.db_nombre) {
+    xml += '      <dueno_beneficiario>\n';
+    xml += '        <tipo_persona>\n';
+    xml += '          <persona_fisica>\n';
+    xml += '            <nombre>'+limXML(cli.db_nombre,200)+'</nombre>\n';
+    xml += '            <apellido_paterno>'+limXML(cli.db_ap_pat||'X',200)+'</apellido_paterno>\n';
+    xml += '            <apellido_materno>'+limXML(cli.db_ap_mat||'X',200)+'</apellido_materno>\n';
+    if (cli.db_fecha_nac) xml += '            <fecha_nacimiento>'+fechaXML(cli.db_fecha_nac)+'</fecha_nacimiento>\n';
+    if (cli.db_rfc) xml += '            <rfc>'+limXML(cli.db_rfc,13)+'</rfc>\n';
+    if (cli.db_curp) xml += '            <curp>'+limXML(cli.db_curp,18)+'</curp>\n';
+    if (cli.db_pais_nac2||cli.db_pais_nac)
+      xml += '            <pais_nacionalidad>'+(cli.db_pais_nac_iso||paisISO(cli.db_pais_nac2||'Mexico'))+'</pais_nacionalidad>\n';
+    xml += '          </persona_fisica>\n';
+    xml += '        </tipo_persona>\n';
+    xml += '      </dueno_beneficiario>\n';
+  }
+
+  // Detalle operaciones ARI
+  xml += '      <detalle_operaciones>\n';
+  xml += '        <datos_operacion>\n';
+  xml += '          <fecha_operacion>'+fechaXML(op.fecha_operacion||hoy())+'</fecha_operacion>\n';
+  xml += '          <tipo_operacion>'+(op.tipo_operacion||'1501')+'</tipo_operacion>\n';
+
+  // Características ARI (fecha_inicio, fecha_termino, valor_referencia)
+  xml += '          <caracteristicas>\n';
+  xml += '            <fecha_inicio>'+fechaXML(op.fecha_inicio||op.fecha_operacion||hoy())+'</fecha_inicio>\n';
+  xml += '            <fecha_termino>'+fechaXML(op.fecha_termino||hoy())+'</fecha_termino>\n';
+  xml += '            <tipo_inmueble>'+(op.tipo_inmueble||'1')+'</tipo_inmueble>\n';
+  xml += '            <valor_referencia>'+montoXML(op.valor_referencia||0)+'</valor_referencia>\n';
+  xml += '            <colonia>'+limXML(op.inm_colonia||'NA',50)+'</colonia>\n';
+  xml += '            <calle>'+limXML(op.inm_calle||'NA',100)+'</calle>\n';
+  xml += '            <numero_exterior>'+limXML(op.inm_num_ext||'SN',56)+'</numero_exterior>\n';
+  if (op.inm_num_int) xml += '            <numero_interior>'+limXML(op.inm_num_int,40)+'</numero_interior>\n';
+  xml += '            <codigo_postal>'+((op.inm_cp&&op.inm_cp.length===5)?op.inm_cp:'00000')+'</codigo_postal>\n';
+  xml += '            <folio_real>'+limXML(op.folio_real||'SINFOLIO',200)+'</folio_real>\n';
+  xml += '          </caracteristicas>\n';
+
+  // Liquidaciones (igual que INM)
+  var liqs = op.liquidaciones || [];
+  liqs.forEach(function(l) {
+    if (!l.fecha_pago&&!l.fecha) return;
+    xml += '          <datos_liquidacion>\n';
+    xml += '            <fecha_pago>'+fechaXML(l.fecha_pago||l.fecha||hoy())+'</fecha_pago>\n';
+    xml += '            <forma_pago>'+(l.forma_pago||l.forma||'3')+'</forma_pago>\n';
+    if (l.instrumento||l.instrumento_monetario)
+      xml += '            <instrumento_monetario>'+(l.instrumento||l.instrumento_monetario)+'</instrumento_monetario>\n';
+    xml += '            <moneda>'+(l.moneda||'1')+'</moneda>\n';
+    xml += '            <monto_operacion>'+montoXML(l.monto||0)+'</monto_operacion>\n';
+    xml += '          </datos_liquidacion>\n';
+  });
+
+  xml += '        </datos_operacion>\n';
+  xml += '      </detalle_operaciones>\n';
+  xml += '    </aviso>\n';
+  xml += '  </informe>\n';
+  xml += '</archivo>';
+  return xml;
+}
+
 // Helper: genera el bloque XML de persona según tipo
 function xmlPersona(cli, op) {
   if (!cli) {
@@ -2461,6 +2800,243 @@ function xmlPersona(cli, op) {
   }
 
   return '';
+}
+
+// ================================================================
+//  MÓDULO OPERACIONES — Seguimiento por cliente con liquidaciones
+// ================================================================
+function pgOps() {
+  var fraccion = App._fraccionOps || 'INM';
+  setSB('<div class="sb-sec">Operaciones</div>'
+    +'<div class="sb-item on">Todas</div>'
+    +'<div class="sb-item" onclick="nuevaLiqForm()">+ Nueva liquidacion</div>'
+    +'<div class="sb-sec">Fraccion</div>'
+    +'<div class="sb-item" data-opsfrac="INM">Fr. V - Compraventa</div>'
+    +'<div class="sb-item" data-opsfrac="ARI">Fr. XV - Arrendamiento</div>');
+
+  setMain('<div class="phdr">'
+    +'<div><div class="ptit">Operaciones</div>'
+    +'<div class="psub">Seguimiento de operaciones por cliente y fraccion</div></div>'
+    +'<div style="display:flex;gap:8px">'
+    +'<button class="btn btn-p" onclick="nuevaLiqForm()">+ Nueva operacion</button>'
+    +'<label class="btn" style="cursor:pointer">Cargar Excel<input type="file" accept=".xlsx,.xls,.csv" style="display:none" onchange="cargarLayoutExcel(this)"></label>'
+    +'</div></div>'
+    +'<div class="tabs">'
+    +'<div class="tab'+(fraccion==='INM'?' on':'')+' ops-tab" data-frac="INM">Fraccion V - Compraventa</div>'
+    +'<div class="tab'+(fraccion==='ARI'?' on':'')+' ops-tab" data-frac="ARI">Fraccion XV - Arrendamiento</div>'
+    +'</div>'
+    +'<div id="ops-main-ct"><div class="empty"><div class="spin" style="margin:0 auto"></div></div></div>');
+  cargarOpsRegistros(fraccion);
+}
+
+function switchOpsTab(el, fraccion) {
+  document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('on');});
+  el.classList.add('on');
+  App._fraccionOps = fraccion;
+  cargarOpsRegistros(fraccion);
+}
+
+function cargarOpsRegistros(fraccion) {
+  spGet('PLD_Ops_Liq', function(lista) {
+    if (App.entidadActual && App.entidadActual.id !== 'TODAS') {
+      lista = (lista||[]).filter(function(o){ return o.entidad_id===App.entidadActual.id||!o.entidad_id; });
+    }
+    lista = (lista||[]).filter(function(o){ return (o.fraccion||'INM')===fraccion; });
+    var el = document.getElementById('ops-main-ct');
+    if (!el) return;
+    if (!lista.length) {
+      el.innerHTML = '<div class="empty">Sin operaciones registradas para esta fraccion.'
+        +'<br><br><button class="btn btn-p" onclick="nuevaLiqForm()">+ Nueva operacion</button>'
+        +'<br><br>o carga un layout Excel con el boton "Cargar Excel".</div>';
+      return;
+    }
+    // Agrupar por cliente
+    var porCliente = {};
+    lista.forEach(function(op) {
+      var key = op.id_cliente_ref || op.nombre_cliente || 'Sin cliente';
+      if (!porCliente[key]) porCliente[key] = {nombre: op.nombre_cliente||key, ops:[]};
+      porCliente[key].ops.push(op);
+    });
+    var html = '';
+    Object.keys(porCliente).forEach(function(key) {
+      var grupo = porCliente[key];
+      var totalMonto = grupo.ops.reduce(function(s,o){ return s+parseFloat(o.monto||0); }, 0);
+      html += '<div class="card" style="margin-bottom:12px">'
+        +'<div class="card-h"><span class="card-t">'+grupo.nombre+'</span>'
+        +'<span style="font-size:12px;color:var(--tx3)">'+grupo.ops.length+' ops | $'+totalMonto.toLocaleString('es-MX')+'</span>'
+        +'</div><div class="twrap"><table>'
+        +'<thead><tr><th>Fecha pago</th><th>Forma pago</th><th>Instrumento</th><th>Moneda</th><th>Monto</th><th>Ref. aviso</th></tr></thead>'
+        +'<tbody>';
+      grupo.ops.forEach(function(op) {
+        var fp = FORMAS_PAGO.find(function(x){return x.codigo===op.forma_pago;});
+        var im = INSTRUMENTOS_MON.find(function(x){return x.codigo===op.instrumento_monetario;});
+        var mo = MONEDAS.find(function(x){return x.codigo===op.moneda;});
+        html += '<tr>'
+          +'<td>'+String(op.fecha_pago||'-').substring(0,10)+'</td>'
+          +'<td>'+(fp?fp.desc:op.forma_pago||'-')+'</td>'
+          +'<td>'+(im?im.desc:op.instrumento_monetario||'-')+'</td>'
+          +'<td>'+(mo?mo.desc:op.moneda||'-')+'</td>'
+          +'<td style="font-weight:500">$'+(parseFloat(op.monto||0)).toLocaleString('es-MX')+'</td>'
+          +'<td style="font-size:11px;color:var(--tx3)">'+(op.ref_aviso||'-')+'</td>'
+          +'</tr>';
+      });
+      html += '</tbody></table></div></div>';
+    });
+    el.innerHTML = html;
+  });
+}
+
+// ── NUEVA LIQUIDACIÓN / OPERACIÓN ────────────────────────────
+function nuevaLiqForm(datos) {
+  var d = datos || {};
+  var fraccion = d.fraccion || App._fraccionOps || 'INM';
+  var idEx = d.id || '';
+
+  function optsC2(arr, sel) {
+    var h = '<option value="">-- Seleccionar --</option>';
+    arr.forEach(function(x){ h += '<option value="'+x.codigo+'"'+(x.codigo===sel?' selected':'')+'>'+x.codigo+' - '+x.desc+'</option>'; });
+    return h;
+  }
+
+  var clienteOpts = '<option value="">-- Seleccionar cliente --</option>';
+  App.clientes.forEach(function(c) {
+    var nom = (c.tipo==='PM_MEX'||c.tipo==='PM_SIMP') ? c.razon_social
+      : [c.nombre,c.ap_pat,c.ap_mat].filter(Boolean).join(' ');
+    clienteOpts += '<option value="'+c.id+'"'+(c.id===d.id_cliente_ref?' selected':'')+'>'+nom+'</option>';
+  });
+
+  var html = '<div class="phdr"><div><div class="ptit">'+(idEx?'Editar':'Nueva')+' operacion</div>'
+    +'<div class="psub">'+(fraccion==='ARI'?'Fraccion XV - Arrendamiento':'Fraccion V - Compraventa')+'</div></div>'
+    +'<button class="btn" onclick="pgOps()">Volver</button></div>'
+    +'<div class="card"><div class="card-h"><span class="card-t">Datos de la liquidacion</span></div>'
+    +'<div class="fgrid">'
+    +'<input type="hidden" name="fraccion_op" value="'+fraccion+'">'
+    +fsFull('Cliente','id_cliente_ref_op',clienteOpts)
+    +fg('Fecha de pago',null,true)+fi('fecha_pago_op',d.fecha_pago||hoy(),'AAAA-MM-DD')
+    +fg('Forma de pago',null,true)+'<select class="sel" name="forma_pago_op">'+optsC2(FORMAS_PAGO,d.forma_pago||'')+'</select></div>'
+    +fg('Instrumento monetario',null,true)+'<select class="sel" name="instrumento_op">'+optsC2(INSTRUMENTOS_MON,d.instrumento_monetario||'')+'</select></div>'
+    +fg('Moneda',null,true)+'<select class="sel" name="moneda_op">'+optsC2(MONEDAS,d.moneda||'1')+'</select></div>'
+    +fg('Monto del pago (MXN)',null,true)+fi('monto_op',d.monto||'','0.00')
+    +fg('Referencia de aviso relacionado',null,false)+fi('ref_aviso_op',d.ref_aviso||'','Opcional')
+    +ftxt('Observaciones','obs_op',d.observaciones||'')
+    +'</div>'
+    +'<div style="padding:12px 16px;border-top:1px solid var(--brd);display:flex;justify-content:flex-end">'
+    +'<button class="btn btn-p liq-save-btn" data-idex="'+idEx+'">Guardar operacion</button>'
+    +'</div></div>';
+  setMain(html);
+}
+
+// ── GUARDAR OPERACIÓN ────────────────────────────────────────
+function guardarLiq(idEx) {
+  var frm = document.getElementById('main');
+  function v(n){ var e=frm.querySelector('[name="'+n+'"]'); return e?e.value:''; }
+
+  // Buscar cliente seleccionado
+  var idCli = v('id_cliente_ref_op');
+  var nomCli = '';
+  App.clientes.forEach(function(c){ if(c.id===idCli) nomCli=nombreCliente(c); });
+
+  var fraccion = v('fraccion_op') || App._fraccionOps || 'INM';
+  var monto = parseFloat(v('monto_op')||0);
+  var formaPago = v('forma_pago_op');
+
+  // Verificar umbral efectivo
+  var umbral = CFG_UMA.DIARIA * CFG_UMA.UMBRAL_UMAS;
+  var esEfectivo = formaPago === '1';
+  if (esEfectivo && monto >= umbral) {
+    toast('ALERTA: Pago en efectivo supera umbral UMA ($'+umbral.toLocaleString('es-MX')+')', 'w');
+    // Crear alerta automática
+    var al = {
+      nombre_cliente: nomCli, tipo: 'Umbral efectivo', nivel: 'Alto',
+      descripcion: 'Pago en efectivo por $'+monto.toLocaleString('es-MX')+' supera umbral LFPIORPI',
+      estatus: 'Abierta', registrado_por: App.cuenta.username, fecha_registro: hoy(),
+      entidad_id: App.entidadActual?App.entidadActual.id:'',
+      entidad_nombre: App.entidadActual?App.entidadActual.nombre:''
+    };
+    al.Title = 'ALT-UMBRAL-'+Date.now();
+    spCreate('PLD_Alertas', al, null);
+  }
+
+  var datos = {
+    id_cliente_ref: idCli, nombre_cliente: nomCli,
+    fraccion: fraccion,
+    fecha_pago: v('fecha_pago_op'),
+    forma_pago: formaPago,
+    instrumento_monetario: v('instrumento_op'),
+    moneda: v('moneda_op'), monto: monto,
+    ref_aviso: v('ref_aviso_op'),
+    observaciones: v('obs_op'),
+    entidad_id: App.entidadActual?App.entidadActual.id:'',
+    entidad_nombre: App.entidadActual?App.entidadActual.nombre:'',
+    registrado_por: App.cuenta.username,
+    fecha_registro: hoy()
+  };
+  datos.Title = 'LIQ-'+Date.now();
+
+  if (idEx) {
+    spUpdate('PLD_Ops_Liq', idEx, datos, function(){ toast('Operacion actualizada','s'); pgOps(); });
+  } else {
+    spCreate('PLD_Ops_Liq', datos, function(item){ if(item){ toast('Operacion guardada','s'); pgOps(); } });
+  }
+}
+
+// ── CARGA EXCEL ──────────────────────────────────────────────
+function cargarLayoutExcel(input) {
+  var file = input.files[0]; if(!file) return;
+  var fraccion = App._fraccionOps || 'INM';
+  toast('Procesando Excel...');
+
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      // Parsear CSV/Excel básico (CSV separado por comas o tabuladores)
+      var text = e.target.result;
+      var lines = text.split('\n').filter(function(l){ return l.trim(); });
+      if (lines.length < 2) { toast('Archivo vacio o sin datos', 'e'); return; }
+
+      var headers = lines[0].split(/[,\t]/).map(function(h){ return h.trim().toLowerCase().replace(/\s/g,'_'); });
+      var registros = [];
+      for (var i=1;i<lines.length;i++) {
+        var vals = lines[i].split(/[,\t]/);
+        var reg = {};
+        headers.forEach(function(h,j){ reg[h] = (vals[j]||'').trim().replace(/^"|"$/g,''); });
+        if (reg.monto || reg.fecha_pago || reg.fecha) registros.push(reg);
+      }
+
+      if (!registros.length) { toast('No se encontraron registros validos', 'e'); return; }
+
+      // Mapear columnas comunes
+      var guardados = 0;
+      registros.forEach(function(reg) {
+        var datos = {
+          nombre_cliente: reg.nombre||reg.cliente||reg.nombre_cliente||'',
+          fraccion: fraccion,
+          fecha_pago: reg.fecha_pago||reg.fecha||'',
+          forma_pago: reg.forma_pago||reg.forma||'',
+          instrumento_monetario: reg.instrumento_monetario||reg.instrumento||'',
+          moneda: reg.moneda||'1',
+          monto: parseFloat(reg.monto||reg.monto_operacion||0),
+          ref_aviso: reg.referencia||reg.ref_aviso||'',
+          entidad_id: App.entidadActual?App.entidadActual.id:'',
+          entidad_nombre: App.entidadActual?App.entidadActual.nombre:'',
+          registrado_por: App.cuenta.username,
+          fecha_registro: hoy()
+        };
+        datos.Title = 'LIQ-EXCEL-'+Date.now()+'-'+guardados;
+        spCreate('PLD_Ops_Liq', datos, function(){ guardados++; });
+      });
+
+      setTimeout(function(){
+        toast(registros.length+' registros importados del Excel','s');
+        pgOps();
+      }, registros.length * 200 + 500);
+
+    } catch(err) {
+      console.error(err);
+      toast('Error al procesar el archivo: '+err.message, 'e');
+    }
+  };
+  reader.readAsText(file);
 }
 
 // ================================================================
