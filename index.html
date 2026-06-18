@@ -969,7 +969,7 @@ function spUpdate(lista, itemId, datos, cb) {
 //  NAVEGACIÓN
 // ================================================================
 function renderNav() {
-  var items = [['dashboard','Inicio'],['clientes','Clientes'],['alertas','Alertas'],['avisos','Avisos'],['operaciones','Operaciones'],['reportes','Reportes'],['config','Config']];
+  var items = [['dashboard','Inicio'],['clientes','Clientes'],['alertas','Alertas'],['avisos','Avisos'],['operaciones','Operaciones'],['reportes','Reportes'],['screening','Screening'],['config','Config']];
   var html = '';
   items.forEach(function(i){ html+='<div class="nav-item" id="nav-'+i[0]+'" onclick="irA(\''+i[0]+'\')">'+i[1]+'</div>'; });
   document.getElementById('nav-bar').innerHTML = html;
@@ -977,7 +977,7 @@ function renderNav() {
 function irA(sec) {
   document.querySelectorAll('.nav-item').forEach(function(e){e.classList.remove('on');});
   var el=document.getElementById('nav-'+sec); if(el) el.classList.add('on');
-  ({dashboard:pgDash,clientes:pgClientes,alertas:pgAlertas,avisos:pgAvisos,operaciones:pgOps,reportes:pgReportes,config:pgConfig})[sec]();
+  ({dashboard:pgDash,clientes:pgClientes,alertas:pgAlertas,avisos:pgAvisos,operaciones:pgOps,reportes:pgReportes,screening:pgScreening,config:pgConfig})[sec]();
 }
 function setSB(h){document.getElementById('sb-ct').innerHTML=h;}
 function setMain(h){document.getElementById('main').innerHTML=h;}
@@ -3996,6 +3996,695 @@ function guardarRep(){
   datos.entidad_id = App.entidadActual ? App.entidadActual.id : '';
   datos.entidad_nombre = App.entidadActual ? App.entidadActual.nombre : '';
   spCreate('PLD_Reportes',datos,function(item){if(item){toast('Reporte '+folio+' generado','s');pgReportes();}});
+}
+
+// ================================================================
+//  MÓDULO SCREENING — LISTAS DE SANCIONES
+// ================================================================
+
+// ── Catálogo de listas ────────────────────────────────────────
+// Para agregar una nueva lista: añadir un objeto a SCR_LISTAS con
+// los campos: id, nombre, fuente, url, tipo ('csv'|'xml'), parser
+var SCR_LISTAS = [
+  {
+    id: 'ofac_sdn',
+    nombre: 'OFAC SDN',
+    fuente: 'U.S. Treasury / OFAC',
+    url: 'https://www.treasury.gov/ofac/downloads/sdn.csv',
+    tipo: 'csv',
+    activa: true,
+    color: 'var(--rj)',
+    color3: 'var(--rj3)',
+    _datos: null,   // caché en memoria
+    _fechaCarga: null
+  },
+  {
+    id: 'ofac_cons',
+    nombre: 'OFAC Consolidated (Non-SDN)',
+    fuente: 'U.S. Treasury / OFAC',
+    url: 'https://www.treasury.gov/ofac/downloads/consolidated/consolidated.csv',
+    tipo: 'csv',
+    activa: true,
+    color: 'var(--am)',
+    color3: 'var(--am3)',
+    _datos: null,
+    _fechaCarga: null
+  },
+  {
+    id: 'onu',
+    nombre: 'ONU Lista Consolidada',
+    fuente: 'Naciones Unidas — UNSC',
+    url: 'https://scsanctions.un.org/resources/xml/en/consolidated.xml',
+    tipo: 'xml',
+    activa: true,
+    color: 'var(--az2)',
+    color3: 'var(--az3)',
+    _datos: null,
+    _fechaCarga: null
+  },
+  {
+    id: 'ue',
+    nombre: 'UE Lista Consolidada',
+    fuente: 'Unión Europea — CFSP',
+    url: 'https://webgate.ec.europa.eu/fsd/fsf/public/files/csvFullSanctionsList_1_1/content?token=dG9rZW4tMjAxNw',
+    tipo: 'csv',
+    activa: true,
+    color: 'var(--mo)',
+    color3: 'var(--mo3)',
+    _datos: null,
+    _fechaCarga: null
+  },
+  {
+    id: 'sat_69b',
+    nombre: 'Lista 69-B SAT (México)',
+    fuente: 'SAT — Servicio de Administración Tributaria',
+    url: 'https://omawww.sat.gob.mx/cifras_sat/Documents/Lista_69B.csv',
+    tipo: 'csv',
+    activa: true,
+    color: 'var(--vd)',
+    color3: 'var(--vd3)',
+    _datos: null,
+    _fechaCarga: null
+  }
+  // Para agregar más listas en el futuro:
+  // { id:'nueva', nombre:'...', fuente:'...', url:'...', tipo:'csv'|'xml',
+  //   activa:true, color:'var(--xx)', color3:'var(--xx3)', _datos:null, _fechaCarga:null }
+];
+
+// ── Estado del módulo ─────────────────────────────────────────
+var SCR = {
+  listasSeleccionadas: ['ofac_sdn','ofac_cons','onu','ue','sat_69b'],
+  cargando: {},       // { listaId: true/false }
+  umbralMatch: 75     // % mínimo para considerar un match
+};
+
+// ── Normalización de texto para fuzzy matching ────────────────
+function scrNorm(s) {
+  if (!s) return '';
+  return String(s)
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // quitar acentos
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Calcula similitud entre dos strings (0–100)
+// Algoritmo: combinación de coincidencia de tokens + Dice coefficient
+function scrSimilitud(a, b) {
+  var na = scrNorm(a), nb = scrNorm(b);
+  if (!na || !nb) return 0;
+  if (na === nb) return 100;
+
+  // Coincidencia exacta de tokens clave
+  var ta = na.split(' '), tb = nb.split(' ');
+  var comunes = ta.filter(function(t){ return t.length > 2 && tb.indexOf(t) >= 0; });
+  var tokenScore = comunes.length > 0 ? Math.round(comunes.length / Math.max(ta.length, tb.length) * 100) : 0;
+
+  // Dice coefficient sobre bigramas
+  function bigramas(s) {
+    var bg = [];
+    for (var i=0; i<s.length-1; i++) bg.push(s.substring(i,i+2));
+    return bg;
+  }
+  var ba = bigramas(na.replace(/\s/g,'')), bb = bigramas(nb.replace(/\s/g,''));
+  var intersect = ba.filter(function(bg){ return bb.indexOf(bg) >= 0; }).length;
+  var dice = ba.length + bb.length > 0 ? Math.round(2 * intersect / (ba.length + bb.length) * 100) : 0;
+
+  return Math.round((tokenScore * 0.5) + (dice * 0.5));
+}
+
+// ── Parsers de CSV/XML ────────────────────────────────────────
+function scrParseCSV(texto) {
+  // Parser CSV simple robusto (maneja comillas)
+  var lineas = texto.split(/\r?\n/);
+  var resultado = [];
+  lineas.forEach(function(linea) {
+    if (!linea.trim()) return;
+    var campos = [];
+    var dentro = false, campo = '';
+    for (var i=0; i<linea.length; i++) {
+      var c = linea[i];
+      if (c === '"') { dentro = !dentro; }
+      else if (c === ',' && !dentro) { campos.push(campo.trim()); campo = ''; }
+      else { campo += c; }
+    }
+    campos.push(campo.trim());
+    resultado.push(campos);
+  });
+  return resultado;
+}
+
+// Extrae entradas normalizadas de cada lista según su formato
+function scrParsearLista(lista, texto) {
+  var entradas = [];
+  if (lista.tipo === 'csv') {
+    var filas = scrParseCSV(texto);
+    if (!filas.length) return entradas;
+
+    if (lista.id === 'ofac_sdn' || lista.id === 'ofac_cons') {
+      // Formato OFAC CSV: col 0=uid, col 1=nombre, col 2=tipo, col 11=fecha_nacimiento, col 2=pais
+      filas.forEach(function(f) {
+        var nombre = (f[1]||'').replace(/^"|"$/g,'');
+        if (!nombre || nombre === 'SDN_Name' || nombre === 'Ent_Name') return;
+        entradas.push({
+          nombre: nombre,
+          tipo: f[2]||'',
+          pais: f[3]||'',
+          programa: f[10]||'',
+          uid: f[0]||''
+        });
+      });
+    } else if (lista.id === 'ue') {
+      // Formato UE CSV: buscar columnas name_alias / wholeName
+      var header = filas[0] || [];
+      var iNombre = -1, iTipo = -1, iPais = -1, iRef = -1;
+      header.forEach(function(h,i){
+        var hh = (h||'').toLowerCase();
+        if (hh.indexOf('wholename') >= 0 || hh.indexOf('name_alias') >= 0) iNombre = i;
+        if (hh === 'entity_type' || hh === 'subjecttype') iTipo = i;
+        if (hh.indexOf('country') >= 0 && iPais < 0) iPais = i;
+        if (hh.indexOf('reference') >= 0 || hh.indexOf('eu_reference') >= 0) iRef = i;
+      });
+      if (iNombre < 0) iNombre = 1; // fallback
+      for (var r=1; r<filas.length; r++) {
+        var f = filas[r];
+        var nombre = (f[iNombre]||'').replace(/^"|"$/g,'');
+        if (!nombre) continue;
+        entradas.push({
+          nombre: nombre,
+          tipo: iTipo >= 0 ? (f[iTipo]||'') : '',
+          pais: iPais >= 0 ? (f[iPais]||'') : '',
+          programa: '',
+          uid: iRef >= 0 ? (f[iRef]||'') : ''
+        });
+      }
+    } else if (lista.id === 'sat_69b') {
+      // SAT 69-B: col 0=RFC, col 1=nombre/razón social, col 2=supuesto
+      var header69 = filas[0] || [];
+      var iRfc = 0, iNom = 1, iSup = 2;
+      header69.forEach(function(h,i){
+        var hh=(h||'').toLowerCase();
+        if (hh.indexOf('rfc') >= 0) iRfc = i;
+        if (hh.indexOf('nombre') >= 0 || hh.indexOf('razon') >= 0) iNom = i;
+        if (hh.indexOf('supuesto') >= 0 || hh.indexOf('situacion') >= 0) iSup = i;
+      });
+      for (var r=1; r<filas.length; r++) {
+        var f = filas[r];
+        var nombre = (f[iNom]||'').replace(/^"|"$/g,'');
+        if (!nombre) continue;
+        entradas.push({
+          nombre: nombre,
+          tipo: 'PF/PM',
+          pais: 'México',
+          programa: (f[iSup]||''),
+          uid: (f[iRfc]||'')
+        });
+      }
+    }
+  } else if (lista.tipo === 'xml') {
+    // ONU XML — parsear con DOMParser
+    try {
+      var parser = new DOMParser();
+      var doc = parser.parseFromString(texto, 'text/xml');
+      // Nodos INDIVIDUAL y ENTITY
+      var nodos = Array.from(doc.querySelectorAll('INDIVIDUAL, ENTITY'));
+      if (!nodos.length) nodos = Array.from(doc.querySelectorAll('individual, entity'));
+      nodos.forEach(function(n) {
+        // Nombre principal
+        var primerNombre = n.querySelector('FIRST_NAME, firstName') || n.querySelector('SECOND_NAME, secondName');
+        var segundoNombre = n.querySelector('SECOND_NAME, secondName');
+        var tercerNombre  = n.querySelector('THIRD_NAME, thirdName');
+        var nombreEnt     = n.querySelector('FIRST_NAME, NAME, name');
+        var nombre = [
+          primerNombre  ? primerNombre.textContent  : '',
+          segundoNombre ? segundoNombre.textContent : '',
+          tercerNombre  ? tercerNombre.textContent  : ''
+        ].filter(Boolean).join(' ').trim() || (nombreEnt ? nombreEnt.textContent : '');
+        if (!nombre) return;
+        var pais = n.querySelector('NATIONALITY > VALUE, nationality');
+        var uid  = n.getAttribute('dataId') || n.getAttribute('DATAID') || '';
+        entradas.push({
+          nombre: nombre,
+          tipo: n.tagName.toUpperCase().indexOf('INDIVIDUAL') >= 0 ? 'Individual' : 'Entidad',
+          pais: pais ? pais.textContent : '',
+          programa: 'ONU',
+          uid: uid
+        });
+        // También agregar alias
+        n.querySelectorAll('ALIAS, alias').forEach(function(al) {
+          var alNom = al.querySelector('ALIAS_NAME, aliasName, name');
+          if (alNom && alNom.textContent.trim()) {
+            entradas.push({ nombre: alNom.textContent.trim(), tipo: 'Alias', pais: '', programa: 'ONU', uid: uid });
+          }
+        });
+      });
+    } catch(e) { console.error('[SCR] Error parseando XML ONU:', e); }
+  }
+  console.log('[SCR] Lista', lista.id, 'parseada:', entradas.length, 'entradas');
+  return entradas;
+}
+
+// ── Carga de lista (con caché en memoria por sesión) ──────────
+function scrCargarLista(lista, cb) {
+  // Si ya está en caché y tiene datos, reutilizar
+  if (lista._datos && lista._datos.length > 0) { cb(lista._datos); return; }
+
+  SCR.cargando[lista.id] = true;
+  scrActualizarEstadoListas();
+
+  // Las listas externas requieren un proxy CORS en producción.
+  // Usamos allorigins.win como proxy público para descargar los CSV/XML.
+  var proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(lista.url);
+
+  fetch(proxyUrl)
+    .then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.text();
+    })
+    .then(function(texto) {
+      lista._datos = scrParsearLista(lista, texto);
+      lista._fechaCarga = new Date().toLocaleTimeString('es-MX');
+      SCR.cargando[lista.id] = false;
+      scrActualizarEstadoListas();
+      cb(lista._datos);
+    })
+    .catch(function(err) {
+      console.error('[SCR] Error cargando lista', lista.id, err);
+      SCR.cargando[lista.id] = false;
+      lista._error = 'No disponible: ' + err.message;
+      scrActualizarEstadoListas();
+      cb([]);
+    });
+}
+
+// ── Buscar en una lista ya cargada ────────────────────────────
+function scrBuscarEnLista(nombre, datos, umbral) {
+  var matches = [];
+  datos.forEach(function(entrada) {
+    var score = scrSimilitud(nombre, entrada.nombre);
+    if (score >= umbral) {
+      matches.push({ score: score, entrada: entrada });
+    }
+  });
+  matches.sort(function(a,b){ return b.score - a.score; });
+  return matches.slice(0, 10); // top 10 por lista
+}
+
+// ── Guardar resultado en SharePoint PLD_Screening ─────────────
+function scrGuardarResultado(nombre, resultados, clienteId, clienteNom) {
+  var hayMatch = resultados.some(function(r){ return r.matches.length > 0; });
+  var resumen = resultados.map(function(r){
+    return r.lista + ': ' + (r.matches.length > 0 ? r.matches.length + ' coincidencia(s)' : 'Sin coincidencias');
+  }).join(' | ');
+
+  var datos = {
+    Title: 'SCR-' + Date.now(),
+    nombre_consultado: nombre,
+    id_cliente_ref: clienteId || '',
+    nombre_cliente: clienteNom || nombre,
+    resultado: hayMatch ? 'COINCIDENCIA' : 'Sin coincidencias',
+    resumen: resumen,
+    detalle: JSON.stringify(resultados.map(function(r){
+      return { lista: r.lista, matches: r.matches.slice(0,3).map(function(m){
+        return { nombre: m.entrada.nombre, score: m.score, tipo: m.entrada.tipo,
+                 pais: m.entrada.pais, uid: m.entrada.uid };
+      })};
+    })),
+    listas_consultadas: resultados.map(function(r){ return r.lista; }).join(', '),
+    consultado_por: App.cuenta ? App.cuenta.username : '',
+    fecha_consulta: hoy(),
+    entidad_id: App.entidadActual ? App.entidadActual.id : '',
+    entidad_nombre: App.entidadActual ? App.entidadActual.nombre : ''
+  };
+  spCreate('PLD_Screening', datos, null);
+}
+
+// ── Ejecutar screening sobre un nombre ───────────────────────
+function scrEjecutar(nombre, clienteId, clienteNom, cbResultados) {
+  var listasActivas = SCR_LISTAS.filter(function(l){ return l.activa && SCR.listasSeleccionadas.indexOf(l.id) >= 0; });
+  var pendientes = listasActivas.length;
+  var resultados = [];
+
+  if (!pendientes) { if (cbResultados) cbResultados([]); return; }
+
+  listasActivas.forEach(function(lista) {
+    scrCargarLista(lista, function(datos) {
+      var matches = scrBuscarEnLista(nombre, datos, SCR.umbralMatch);
+      resultados.push({ listaId: lista.id, lista: lista.nombre, matches: matches, total: datos.length });
+      pendientes--;
+      if (pendientes === 0) {
+        // Ordenar según catálogo
+        resultados.sort(function(a,b){
+          var ia = SCR_LISTAS.findIndex(function(l){ return l.id===a.listaId; });
+          var ib = SCR_LISTAS.findIndex(function(l){ return l.id===b.listaId; });
+          return ia - ib;
+        });
+        scrGuardarResultado(nombre, resultados, clienteId, clienteNom);
+        if (cbResultados) cbResultados(resultados);
+      }
+    });
+  });
+}
+
+// ── Renderizar resultado de una búsqueda ─────────────────────
+function scrRenderResultados(nombre, resultados, contenedorId, modoMasivo) {
+  var hayMatch = resultados.some(function(r){ return r.matches.length > 0; });
+  var html = '';
+
+  if (!modoMasivo) {
+    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
+      + '<div style="font-size:15px;font-weight:600">' + nombre + '</div>'
+      + '<span class="pill ' + (hayMatch ? 'p-rj' : 'p-vd') + '" style="font-size:12px">'
+      + (hayMatch ? '⚠ COINCIDENCIA DETECTADA' : '✓ Sin coincidencias') + '</span>'
+      + '</div>';
+  }
+
+  resultados.forEach(function(r) {
+    var lista = SCR_LISTAS.find(function(l){ return l.id === r.listaId; });
+    var color  = lista ? lista.color  : 'var(--tx)';
+    var color3 = lista ? lista.color3 : 'var(--gr3)';
+    var iconoEstado = r.matches.length > 0 ? '🔴' : (r.total === 0 ? '⚪' : '🟢');
+
+    html += '<div style="border:1px solid var(--brd);border-radius:var(--r);margin-bottom:8px;overflow:hidden">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:' + (r.matches.length > 0 ? color3 : 'var(--bg)') + '">'
+      + '<div style="font-weight:600;font-size:12.5px;color:' + (r.matches.length > 0 ? color : 'var(--tx2)') + '">'
+      + iconoEstado + ' ' + r.lista + '</div>'
+      + '<div style="font-size:11px;color:var(--tx3)">' + r.total.toLocaleString() + ' registros'
+      + (r.matches.length > 0 ? ' — <strong style="color:' + color + '">' + r.matches.length + ' coincidencia(s)</strong>' : '') + '</div>'
+      + '</div>';
+
+    if (r.matches.length > 0) {
+      html += '<div style="padding:8px 12px">';
+      r.matches.slice(0,5).forEach(function(m) {
+        html += '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--brd)">'
+          + '<span style="background:' + color + ';color:#fff;border-radius:4px;padding:2px 6px;font-size:11px;font-weight:700;min-width:36px;text-align:center">' + m.score + '%</span>'
+          + '<div style="flex:1">'
+          + '<div style="font-weight:500;font-size:12.5px">' + m.entrada.nombre + '</div>'
+          + '<div style="font-size:11px;color:var(--tx3)">'
+          + [m.entrada.tipo, m.entrada.pais, m.entrada.programa ? 'Prog: '+m.entrada.programa : '', m.entrada.uid ? 'ID: '+m.entrada.uid : ''].filter(Boolean).join(' · ')
+          + '</div></div></div>';
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+  });
+
+  var ct = document.getElementById(contenedorId);
+  if (ct) ct.innerHTML = html;
+}
+
+// ── Actualizar badges de estado en el sidebar ────────────────
+function scrActualizarEstadoListas() {
+  SCR_LISTAS.forEach(function(lista) {
+    var el = document.getElementById('scr-estado-' + lista.id);
+    if (!el) return;
+    if (SCR.cargando[lista.id]) {
+      el.innerHTML = '<span class="spin" style="width:12px;height:12px;border-width:2px;display:inline-block"></span>';
+    } else if (lista._datos) {
+      el.innerHTML = '<span style="color:var(--vd);font-size:11px">✓ ' + lista._datos.length.toLocaleString() + '</span>';
+    } else if (lista._error) {
+      el.innerHTML = '<span style="color:var(--rj);font-size:11px">Error</span>';
+    } else {
+      el.innerHTML = '<span style="color:var(--tx3);font-size:11px">No cargada</span>';
+    }
+  });
+}
+
+// ── Pantalla principal del módulo ─────────────────────────────
+function pgScreening() {
+  var sbHtml = '<div class="sb-sec">Screening</div>'
+    + '<div class="sb-item on" onclick="scrVistaManual()">Búsqueda manual</div>'
+    + '<div class="sb-item" onclick="scrVistaCliente()">Por cliente</div>'
+    + '<div class="sb-item" onclick="scrVistaMasivo()">Screening masivo</div>'
+    + '<div class="sb-item" onclick="scrVistaHistorial()">Historial</div>'
+    + '<div class="sb-sec" style="margin-top:12px">Listas</div>';
+
+  SCR_LISTAS.forEach(function(lista) {
+    sbHtml += '<div style="padding:6px 12px;font-size:12px;display:flex;justify-content:space-between;align-items:center">'
+      + '<span style="color:var(--tx2)">' + lista.nombre + '</span>'
+      + '<span id="scr-estado-' + lista.id + '"><span style="color:var(--tx3);font-size:11px">—</span></span>'
+      + '</div>';
+  });
+
+  setSB(sbHtml);
+  scrVistaManual();
+  scrActualizarEstadoListas();
+}
+
+function scrVistaManual() {
+  document.querySelectorAll('#sb-ct .sb-item').forEach(function(e){ e.classList.remove('on'); });
+  var el = document.querySelector('#sb-ct .sb-item'); if(el) el.classList.add('on');
+
+  setMain('<div class="phdr"><div><div class="ptit">Screening de sanciones</div>'
+    + '<div class="psub">Búsqueda en listas internacionales y nacionales</div></div></div>'
+    + '<div class="card">'
+    + '<div class="card-h"><span class="card-t">Búsqueda manual de nombre</span></div>'
+    + '<div class="fgrid">'
+    + '<div class="fg full"><label class="lbl">Nombre a consultar <span class="req">*</span></label>'
+    + '<input class="inp" id="scr-input-nombre" placeholder="Ej: Juan García López o Empresa SA de CV" style="font-size:15px;padding:10px 12px">'
+    + '</div>'
+    + '<div class="fg full"><label class="lbl">Umbral mínimo de similitud</label>'
+    + '<div style="display:flex;align-items:center;gap:12px">'
+    + '<input type="range" id="scr-umbral" min="50" max="100" value="' + SCR.umbralMatch + '" style="flex:1" oninput="SCR.umbralMatch=parseInt(this.value);document.getElementById(\'scr-umbral-val\').textContent=this.value+\'%\'">'
+    + '<span id="scr-umbral-val" style="font-weight:600;min-width:36px">' + SCR.umbralMatch + '%</span>'
+    + '</div></div>'
+    + '<div class="fg full"><label class="lbl">Listas a consultar</label>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:8px">'
+    + SCR_LISTAS.map(function(l){
+        var sel = SCR.listasSeleccionadas.indexOf(l.id) >= 0;
+        return '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12.5px">'
+          + '<input type="checkbox" ' + (sel?'checked':'') + ' onchange="scrToggleLista(\'' + l.id + '\',this.checked)">'
+          + l.nombre + '</label>';
+      }).join('')
+    + '</div></div>'
+    + '</div>'
+    + '<div style="padding:12px 16px;border-top:1px solid var(--brd);display:flex;justify-content:flex-end">'
+    + '<button class="btn btn-p" onclick="scrLanzarBusquedaManual()">🔍 Buscar en listas</button>'
+    + '</div></div>'
+    + '<div id="scr-resultados" style="margin-top:0"></div>');
+}
+
+function scrToggleLista(id, activa) {
+  if (activa) {
+    if (SCR.listasSeleccionadas.indexOf(id) < 0) SCR.listasSeleccionadas.push(id);
+  } else {
+    SCR.listasSeleccionadas = SCR.listasSeleccionadas.filter(function(x){ return x !== id; });
+  }
+}
+
+function scrLanzarBusquedaManual() {
+  var nombre = (document.getElementById('scr-input-nombre')||{}).value;
+  if (!nombre || !nombre.trim()) { toast('Ingresa un nombre para buscar','w'); return; }
+  nombre = nombre.trim();
+
+  var ct = document.getElementById('scr-resultados');
+  if (ct) ct.innerHTML = '<div class="card"><div style="padding:20px;text-align:center">'
+    + '<div class="spin" style="margin:0 auto 8px"></div>'
+    + '<div style="color:var(--tx3);font-size:12.5px">Consultando listas de sanciones...</div></div></div>';
+
+  scrEjecutar(nombre, '', nombre, function(resultados) {
+    var ct2 = document.getElementById('scr-resultados');
+    if (!ct2) return;
+    ct2.innerHTML = '<div class="card"><div class="card-h"><span class="card-t">Resultados para: ' + nombre + '</span>'
+      + '<span style="font-size:11px;color:var(--tx3)">' + new Date().toLocaleString('es-MX') + '</span></div>'
+      + '<div style="padding:12px 16px"><div id="scr-res-inner"></div></div></div>';
+    scrRenderResultados(nombre, resultados, 'scr-res-inner', false);
+    scrActualizarEstadoListas();
+  });
+}
+
+function scrVistaCliente() {
+  document.querySelectorAll('#sb-ct .sb-item').forEach(function(e){ e.classList.remove('on'); });
+  var els = document.querySelectorAll('#sb-ct .sb-item'); if(els[1]) els[1].classList.add('on');
+
+  var optsClientes = '<option value="">— Selecciona cliente —</option>';
+  (App.clientes||[]).forEach(function(c){
+    optsClientes += '<option value="' + c.id + '">' + nombreCliente(c) + '</option>';
+  });
+
+  setMain('<div class="phdr"><div><div class="ptit">Screening por cliente</div>'
+    + '<div class="psub">Consulta el expediente directamente</div></div></div>'
+    + '<div class="card"><div class="card-h"><span class="card-t">Seleccionar cliente</span></div>'
+    + '<div class="fgrid">'
+    + '<div class="fg full"><label class="lbl">Cliente <span class="req">*</span></label>'
+    + '<select class="sel" id="scr-sel-cliente" onchange="scrCargarNombreCliente()">' + optsClientes + '</select>'
+    + '</div>'
+    + '<div class="fg full"><label class="lbl">Nombre a consultar (editable)</label>'
+    + '<input class="inp" id="scr-input-nombre-cli" placeholder="Se llenará al seleccionar cliente">'
+    + '</div>'
+    + '</div>'
+    + '<div style="padding:12px 16px;border-top:1px solid var(--brd);display:flex;justify-content:flex-end">'
+    + '<button class="btn btn-p" onclick="scrLanzarBusquedaCliente()">🔍 Buscar</button>'
+    + '</div></div>'
+    + '<div id="scr-resultados-cli" style="margin-top:0"></div>');
+}
+
+function scrCargarNombreCliente() {
+  var sel = document.getElementById('scr-sel-cliente');
+  var input = document.getElementById('scr-input-nombre-cli');
+  if (!sel || !input) return;
+  var cli = (App.clientes||[]).find(function(c){ return c.id === sel.value; });
+  if (cli) input.value = nombreCliente(cli);
+}
+
+function scrLanzarBusquedaCliente() {
+  var sel = document.getElementById('scr-sel-cliente');
+  var input = document.getElementById('scr-input-nombre-cli');
+  if (!sel || !input || !input.value.trim()) { toast('Selecciona un cliente','w'); return; }
+  var nombre = input.value.trim();
+  var cli = (App.clientes||[]).find(function(c){ return c.id === (sel ? sel.value : ''); });
+
+  var ct = document.getElementById('scr-resultados-cli');
+  if (ct) ct.innerHTML = '<div class="card"><div style="padding:20px;text-align:center">'
+    + '<div class="spin" style="margin:0 auto 8px"></div>'
+    + '<div style="color:var(--tx3);font-size:12.5px">Consultando...</div></div></div>';
+
+  scrEjecutar(nombre, cli ? cli.id : '', nombre, function(resultados) {
+    var ct2 = document.getElementById('scr-resultados-cli');
+    if (!ct2) return;
+    ct2.innerHTML = '<div class="card"><div class="card-h"><span class="card-t">Resultados: ' + nombre + '</span></div>'
+      + '<div style="padding:12px 16px"><div id="scr-res-cli-inner"></div></div></div>';
+    scrRenderResultados(nombre, resultados, 'scr-res-cli-inner', false);
+    scrActualizarEstadoListas();
+  });
+}
+
+function scrVistaMasivo() {
+  document.querySelectorAll('#sb-ct .sb-item').forEach(function(e){ e.classList.remove('on'); });
+  var els = document.querySelectorAll('#sb-ct .sb-item'); if(els[2]) els[2].classList.add('on');
+
+  var totalCli = (App.clientes||[]).length;
+  setMain('<div class="phdr"><div><div class="ptit">Screening masivo</div>'
+    + '<div class="psub">Todos los clientes contra todas las listas activas</div></div></div>'
+    + '<div class="card"><div class="card-h"><span class="card-t">Configuración del screening masivo</span></div>'
+    + '<div style="padding:16px">'
+    + '<div class="alerta-banner" style="margin-bottom:12px">Este proceso consulta <strong>' + totalCli + ' clientes</strong> contra todas las listas seleccionadas. '
+    + 'Puede tomar varios minutos dependiendo de la conexión. Los resultados se guardan en <strong>PLD_Screening</strong>.</div>'
+    + '<div style="display:flex;gap:12px;flex-wrap:wrap">'
+    + SCR_LISTAS.map(function(l){
+        var sel = SCR.listasSeleccionadas.indexOf(l.id) >= 0;
+        return '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12.5px">'
+          + '<input type="checkbox" ' + (sel?'checked':'') + ' onchange="scrToggleLista(\'' + l.id + '\',this.checked)">'
+          + l.nombre + '</label>';
+      }).join('')
+    + '</div>'
+    + '</div>'
+    + '<div style="padding:12px 16px;border-top:1px solid var(--brd);display:flex;justify-content:flex-end;gap:8px">'
+    + '<button class="btn btn-p" onclick="scrEjecutarMasivo()">▶ Iniciar screening masivo</button>'
+    + '</div></div>'
+    + '<div id="scr-masivo-progreso" style="margin-top:0"></div>'
+    + '<div id="scr-masivo-resultados" style="margin-top:0"></div>');
+}
+
+function scrEjecutarMasivo() {
+  var clientes = App.clientes || [];
+  if (!clientes.length) { toast('No hay clientes cargados','w'); return; }
+
+  var btn = document.querySelector('[onclick="scrEjecutarMasivo()"]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Ejecutando...'; }
+
+  var progEl = document.getElementById('scr-masivo-progreso');
+  if (progEl) progEl.innerHTML = '<div class="card"><div style="padding:16px">'
+    + '<div style="font-weight:600;margin-bottom:8px">Progreso</div>'
+    + '<div id="scr-barra-cont" style="background:var(--brd);border-radius:4px;height:8px;overflow:hidden;margin-bottom:8px">'
+    + '<div id="scr-barra" style="width:0%;height:100%;background:var(--az2);transition:width .3s"></div></div>'
+    + '<div id="scr-prog-texto" style="font-size:12px;color:var(--tx3)">Iniciando...</div>'
+    + '</div></div>';
+
+  var resultadosMasivos = [];
+  var idx = 0;
+
+  function procesarSiguiente() {
+    if (idx >= clientes.length) {
+      // Finalizado
+      var barra = document.getElementById('scr-barra');
+      if (barra) barra.style.width = '100%';
+      var txt = document.getElementById('scr-prog-texto');
+      if (txt) txt.textContent = 'Completado: ' + clientes.length + ' clientes procesados.';
+      if (btn) { btn.disabled = false; btn.textContent = '▶ Iniciar screening masivo'; }
+      scrRenderResumenMasivo(resultadosMasivos);
+      return;
+    }
+
+    var cli = clientes[idx];
+    var nombre = nombreCliente(cli);
+    idx++;
+
+    var barra = document.getElementById('scr-barra');
+    if (barra) barra.style.width = Math.round(idx/clientes.length*100) + '%';
+    var txt = document.getElementById('scr-prog-texto');
+    if (txt) txt.textContent = '(' + idx + '/' + clientes.length + ') Consultando: ' + nombre;
+
+    scrEjecutar(nombre, cli.id, nombre, function(resultados) {
+      var hayMatch = resultados.some(function(r){ return r.matches.length > 0; });
+      if (hayMatch) resultadosMasivos.push({ cliente: nombre, clienteId: cli.id, resultados: resultados });
+      setTimeout(procesarSiguiente, 200); // pequeña pausa para no saturar
+    });
+  }
+
+  procesarSiguiente();
+}
+
+function scrRenderResumenMasivo(hits) {
+  var ct = document.getElementById('scr-masivo-resultados');
+  if (!ct) return;
+  if (!hits.length) {
+    ct.innerHTML = '<div class="card"><div style="padding:16px;text-align:center;color:var(--vd)">'
+      + '<div style="font-size:18px">✓</div>'
+      + '<div style="font-weight:600;margin-top:4px">Sin coincidencias en ningún cliente</div></div></div>';
+    return;
+  }
+  var html = '<div class="card"><div class="card-h"><span class="card-t">⚠ Clientes con coincidencias (' + hits.length + ')</span></div>'
+    + '<div style="padding:12px 16px">';
+  hits.forEach(function(h) {
+    html += '<div style="border:1px solid var(--rj);border-radius:var(--r);padding:10px 12px;margin-bottom:8px;background:var(--rj3)">'
+      + '<div style="font-weight:600;color:var(--rj);margin-bottom:6px">⚠ ' + h.cliente + '</div>';
+    h.resultados.forEach(function(r) {
+      if (r.matches.length > 0) {
+        html += '<div style="font-size:12px;margin-bottom:4px"><strong>' + r.lista + ':</strong> '
+          + r.matches.slice(0,3).map(function(m){ return m.entrada.nombre + ' (' + m.score + '%)'; }).join(', ')
+          + '</div>';
+      }
+    });
+    html += '</div>';
+  });
+  html += '</div></div>';
+  ct.innerHTML = html;
+}
+
+function scrVistaHistorial() {
+  document.querySelectorAll('#sb-ct .sb-item').forEach(function(e){ e.classList.remove('on'); });
+  var els = document.querySelectorAll('#sb-ct .sb-item'); if(els[3]) els[3].classList.add('on');
+
+  setMain('<div class="phdr"><div><div class="ptit">Historial de screening</div>'
+    + '<div class="psub">Consultas previas guardadas en PLD_Screening</div></div></div>'
+    + '<div id="scr-hist-ct"><div class="empty"><div class="spin" style="margin:0 auto"></div></div></div>');
+
+  spGet('PLD_Screening', function(lista) {
+    var ct = document.getElementById('scr-hist-ct');
+    if (!ct) return;
+    if (!lista || !lista.length) {
+      ct.innerHTML = '<div class="empty">Sin consultas registradas.</div>';
+      return;
+    }
+    // Ordenar más recientes primero
+    lista.sort(function(a,b){ return (b.fecha_consulta||'').localeCompare(a.fecha_consulta||''); });
+    var rows = lista.slice(0,100).map(function(s){
+      var esMatch = s.resultado === 'COINCIDENCIA';
+      return '<tr>'
+        + '<td style="font-family:monospace;font-size:11px">' + String(s.fecha_consulta||'').substring(0,10) + '</td>'
+        + '<td style="font-weight:500">' + (s.nombre_consultado||'-') + '</td>'
+        + '<td>' + (s.listas_consultadas||'-') + '</td>'
+        + '<td><span class="pill ' + (esMatch?'p-rj':'p-vd') + '">' + (s.resultado||'-') + '</span></td>'
+        + '<td style="font-size:11px;color:var(--tx3)">' + (s.resumen||'') + '</td>'
+        + '<td style="font-size:11px;color:var(--tx3)">' + (s.consultado_por||'-') + '</td>'
+        + '</tr>';
+    }).join('');
+    ct.innerHTML = '<div class="card"><div class="twrap"><table>'
+      + '<thead><tr><th>Fecha</th><th>Nombre consultado</th><th>Listas</th><th>Resultado</th><th>Resumen</th><th>Usuario</th></tr></thead>'
+      + '<tbody>' + rows + '</tbody></table></div></div>';
+  });
 }
 </script>
 </body>
