@@ -2254,16 +2254,71 @@ function cambiarEstatusAlerta(id, estatus) {
 }
 
 function guardarAtencionAlerta(id) {
-  var folioEl = document.querySelector('[name="alt-folio-acuse"]');
-  var folio = folioEl ? folioEl.value : '';
+  var folioEl  = document.querySelector('[name="alt-folio-acuse"]');
+  var folio    = folioEl ? folioEl.value.trim() : '';
+  var statusEl = document.querySelector('[name="alt-estatus-at"]');
+  var nuevoEstatus = statusEl ? statusEl.value : null;
+
   spGet('PLD_Alertas', function(lista) {
     var a = null;
     lista.forEach(function(x){ if(String(x.id)===String(id)) a=x; });
     if (!a) return;
+
+    var estatusAnterior = a.estatus_atencion || 'Pendiente';
     if (folio) a.folio_acuse = folio;
-    var statusEl = document.querySelector('[name="alt-estatus-at"]');
-    if (statusEl) a.estatus_atencion = statusEl.value;
-    spUpdate('PLD_Alertas', id, a, function(){ toast('Alerta actualizada','s'); renderFichaAlerta(a); });
+    if (nuevoEstatus) a.estatus_atencion = nuevoEstatus;
+
+    spUpdate('PLD_Alertas', id, a, function(){
+      toast('Alerta actualizada','s');
+      renderFichaAlerta(a);
+
+      // Si el estatus cambió a Reportada, marcar ops del cliente como reportadas
+      if (nuevoEstatus === 'Reportada' && estatusAnterior !== 'Reportada') {
+        marcarOpsReportadasDeAlerta(a, folio || a.folio_acuse || ('ALT-'+id));
+      }
+    });
+  });
+}
+
+// Marca como reportadas todas las ops de liquidación del cliente asociadas a la alerta
+function marcarOpsReportadasDeAlerta(alerta, folio) {
+  spGet('PLD_Ops_Liq', function(todasOps) {
+    var ahora  = new Date();
+    var hace6m = new Date(ahora.getFullYear(), ahora.getMonth() - 6, ahora.getDate());
+    var fraccion = alerta.fraccion || 'INM';
+
+    var opsAMarcar = todasOps.filter(function(o) {
+      if (o.reportada === true) return false; // ya reportada, no tocar
+
+      var mismoCliente = false;
+      if (alerta.id_cliente_ref && o.id_cliente_ref === alerta.id_cliente_ref) mismoCliente = true;
+      if (!mismoCliente && alerta.num_cliente && String(o.num_cliente) === String(alerta.num_cliente)) mismoCliente = true;
+      if (!mismoCliente && alerta.nombre_cliente && o.nombre_cliente &&
+          o.nombre_cliente.trim().toLowerCase() === alerta.nombre_cliente.trim().toLowerCase()) mismoCliente = true;
+
+      var mismaFrac = (o.fraccion || 'INM') === fraccion;
+      var fechaOp   = new Date(o.fecha_pago || o.fecha_registro || '2000-01-01');
+      return mismoCliente && mismaFrac && fechaOp >= hace6m;
+    });
+
+    if (!opsAMarcar.length) {
+      console.log('[ALERTA] No hay ops pendientes de reportar para esta alerta');
+      return;
+    }
+
+    var contador = 0;
+    opsAMarcar.forEach(function(o) {
+      var datosActualizado = JSON.parse(JSON.stringify(o)); // copia completa
+      datosActualizado.reportada = true;
+      datosActualizado.ref_aviso_reportado = folio;
+      spUpdate('PLD_Ops_Liq', o.id, datosActualizado, function() {
+        contador++;
+        if (contador === opsAMarcar.length) {
+          toast(contador + ' operacion(es) marcadas como reportadas (folio: ' + folio + ')', 's');
+          console.log('[ALERTA] Ops marcadas como reportadas:', contador, '| folio:', folio);
+        }
+      });
+    });
   });
 }
 
@@ -2286,12 +2341,17 @@ function subirAcuseSAT(input, alertaId, nomCliente) {
           var a = null;
           lista.forEach(function(x){ if(String(x.id)===String(alertaId)) a=x; });
           if (!a) return;
+          var estatusAnterior = a.estatus_atencion || 'Pendiente';
           a.url_acuse = d.webUrl;
           a.estatus_atencion = 'Reportada';
           a.fecha_acuse = hoy();
           spUpdate('PLD_Alertas', alertaId, a, function(){
             toast('Acuse SAT cargado — estatus cambiado a Reportada','s');
             renderFichaAlerta(a);
+            // Marcar ops del cliente como reportadas si el estatus cambia a Reportada
+            if (estatusAnterior !== 'Reportada') {
+              marcarOpsReportadasDeAlerta(a, a.folio_acuse || ('ALT-'+alertaId));
+            }
           });
         });
       } else { toast('Error al subir acuse','e'); }
@@ -3607,28 +3667,60 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
 }
 
 function crearAlertaUmbral(datos) {
-  var alerta = {
-    Title: 'ALT-UMBRAL-' + Date.now(),
-    nombre_cliente: datos.nombre_cliente,
-    num_cliente: datos.num_cliente || '',
-    id_cliente_ref: datos.id_cliente_ref || '',
-    fraccion: datos.fraccion,
-    tipo: datos.tipo,
-    nivel: datos.nivel,
-    descripcion: datos.descripcion,
-    monto_acumulado: datos.monto_acumulado,
-    monto_umbral: datos.monto_umbral,
-    num_operaciones: datos.num_operaciones,
-    estatus: 'Abierta',
-    estatus_atencion: 'Pendiente',
-    folio_acuse: '',
-    url_acuse: '',
-    registrado_por: App.cuenta.username,
-    fecha_registro: hoy(),
-    entidad_id: App.entidadActual ? App.entidadActual.id : '',
-    entidad_nombre: App.entidadActual ? App.entidadActual.nombre : ''
-  };
-  spCreate('PLD_Alertas', alerta, null);
+  // Buscar si ya existe una alerta de umbral abierta para este cliente+fracción
+  spGet('PLD_Alertas', function(listaAlt) {
+    var alertaExistente = null;
+    listaAlt.forEach(function(a) {
+      if (alertaExistente) return;
+      var mismoCliente = false;
+      if (datos.id_cliente_ref && a.id_cliente_ref === datos.id_cliente_ref) mismoCliente = true;
+      if (!mismoCliente && datos.num_cliente && String(a.num_cliente) === String(datos.num_cliente)) mismoCliente = true;
+      var mismaFrac = (a.fraccion || 'INM') === datos.fraccion;
+      var estaAbierta = (a.estatus_atencion || 'Pendiente') !== 'Reportada' && (a.estatus_atencion || 'Pendiente') !== 'Cerrada';
+      var esUmbral = a.tipo && (a.tipo.indexOf('Umbral') >= 0 || a.tipo.indexOf('umbral') >= 0);
+      if (mismoCliente && mismaFrac && estaAbierta && esUmbral) alertaExistente = a;
+    });
+
+    if (alertaExistente) {
+      // Actualizar la alerta existente con los nuevos montos acumulados
+      alertaExistente.monto_acumulado  = datos.monto_acumulado;
+      alertaExistente.monto_umbral     = datos.monto_umbral;
+      alertaExistente.num_operaciones  = datos.num_operaciones;
+      alertaExistente.descripcion      = datos.descripcion;
+      alertaExistente.fecha_actualizacion = hoy();
+      if (datos.meses_califican !== undefined) alertaExistente.meses_califican = datos.meses_califican;
+      spUpdate('PLD_Alertas', alertaExistente.id, alertaExistente, function() {
+        console.log('[UMBRAL] Alerta existente actualizada, id:', alertaExistente.id,
+          '| nuevo acumulado:', datos.monto_acumulado);
+      });
+    } else {
+      // No hay alerta abierta — crear una nueva
+      var alerta = {
+        Title: 'ALT-UMBRAL-' + Date.now(),
+        nombre_cliente: datos.nombre_cliente,
+        num_cliente: datos.num_cliente || '',
+        id_cliente_ref: datos.id_cliente_ref || '',
+        fraccion: datos.fraccion,
+        tipo: datos.tipo,
+        nivel: datos.nivel,
+        descripcion: datos.descripcion,
+        monto_acumulado: datos.monto_acumulado,
+        monto_umbral: datos.monto_umbral,
+        num_operaciones: datos.num_operaciones,
+        estatus: 'Abierta',
+        estatus_atencion: 'Pendiente',
+        folio_acuse: '',
+        url_acuse: '',
+        registrado_por: App.cuenta.username,
+        fecha_registro: hoy(),
+        entidad_id: App.entidadActual ? App.entidadActual.id : '',
+        entidad_nombre: App.entidadActual ? App.entidadActual.nombre : ''
+      };
+      if (datos.meses_califican !== undefined) alerta.meses_califican = datos.meses_califican;
+      spCreate('PLD_Alertas', alerta, null);
+      console.log('[UMBRAL] Nueva alerta de umbral creada para', datos.nombre_cliente, '| fraccion:', datos.fraccion);
+    }
+  });
 }
 
 // ── GUARDAR OPERACIÓN ────────────────────────────────────────
