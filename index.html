@@ -4010,20 +4010,24 @@ var SCR_LISTAS = [
     id: 'ofac_sdn',
     nombre: 'OFAC SDN',
     fuente: 'U.S. Treasury / OFAC',
+    // CSV sin encabezado. Valores nulos = "-0-". col0=uid, col1=nombre, col2=tipo, col3=programa
     url: 'https://www.treasury.gov/ofac/downloads/sdn.csv',
     tipo: 'csv',
+    sinEncabezado: true,
     activa: true,
     color: 'var(--rj)',
     color3: 'var(--rj3)',
-    _datos: null,   // caché en memoria
+    _datos: null,
     _fechaCarga: null
   },
   {
     id: 'ofac_cons',
     nombre: 'OFAC Consolidated (Non-SDN)',
     fuente: 'U.S. Treasury / OFAC',
+    // Mismo formato que SDN pero lista non-SDN (FSE, SSI, NS-ISA, NS-PLC, Part 561)
     url: 'https://www.treasury.gov/ofac/downloads/consolidated/consolidated.csv',
     tipo: 'csv',
+    sinEncabezado: true,
     activa: true,
     color: 'var(--am)',
     color3: 'var(--am3)',
@@ -4034,6 +4038,7 @@ var SCR_LISTAS = [
     id: 'onu',
     nombre: 'ONU Lista Consolidada',
     fuente: 'Naciones Unidas — UNSC',
+    // XML con nodos INDIVIDUAL / ENTITY. Incluye alias en nodos ALIAS.
     url: 'https://scsanctions.un.org/resources/xml/en/consolidated.xml',
     tipo: 'xml',
     activa: true,
@@ -4045,9 +4050,10 @@ var SCR_LISTAS = [
   {
     id: 'ue',
     nombre: 'UE Lista Consolidada',
-    fuente: 'Unión Europea — CFSP',
-    url: 'https://webgate.ec.europa.eu/fsd/fsf/public/files/csvFullSanctionsList_1_1/content?token=dG9rZW4tMjAxNw',
-    tipo: 'csv',
+    fuente: 'Unión Europea — EEAS/CFSP',
+    // XML v1.1 público (no requiere token). Nodos <sanctionEntity> con <nameAlias>.
+    url: 'https://webgate.ec.europa.eu/fsd/fsf/public/files/xmlFullSanctionsList_1_1/content',
+    tipo: 'xml',
     activa: true,
     color: 'var(--mo)',
     color3: 'var(--mo3)',
@@ -4058,17 +4064,27 @@ var SCR_LISTAS = [
     id: 'sat_69b',
     nombre: 'Lista 69-B SAT (México)',
     fuente: 'SAT — Servicio de Administración Tributaria',
-    url: 'https://omawww.sat.gob.mx/cifras_sat/Documents/Lista_69B.csv',
+    // CSV encoding Windows-1250. 3 filas de metadata antes del encabezado real.
+    // col1=RFC, col3=nombre/razón social, col4=supuesto (Presunto/Definitivo/Desvirtuado)
+    url: 'http://omawww.sat.gob.mx/cifras_sat/Documents/Listado_Completo_69-B.csv',
     tipo: 'csv',
+    encoding: 'windows-1250',
+    saltarFilas: 3,   // las primeras 3 filas son metadata del SAT
     activa: true,
     color: 'var(--vd)',
     color3: 'var(--vd3)',
     _datos: null,
     _fechaCarga: null
   }
-  // Para agregar más listas en el futuro:
-  // { id:'nueva', nombre:'...', fuente:'...', url:'...', tipo:'csv'|'xml',
-  //   activa:true, color:'var(--xx)', color3:'var(--xx3)', _datos:null, _fechaCarga:null }
+  // ── Para agregar una nueva lista en el futuro ──────────────────
+  // { id:'nueva_id', nombre:'Nombre visible', fuente:'Organismo',
+  //   url:'https://...', tipo:'csv'|'xml',
+  //   sinEncabezado: false,   // true si el CSV no tiene fila de encabezados
+  //   encoding: 'utf-8',      // omitir para utf-8; 'windows-1250' para SAT
+  //   saltarFilas: 0,         // filas a ignorar antes del encabezado real
+  //   activa: true,
+  //   color:'var(--xx)', color3:'var(--xx3)',
+  //   _datos: null, _fechaCarga: null }
 ];
 
 // ── Estado del módulo ─────────────────────────────────────────
@@ -4138,144 +4154,236 @@ function scrParseCSV(texto) {
 // Extrae entradas normalizadas de cada lista según su formato
 function scrParsearLista(lista, texto) {
   var entradas = [];
-  if (lista.tipo === 'csv') {
-    var filas = scrParseCSV(texto);
-    if (!filas.length) return entradas;
 
+  if (lista.tipo === 'csv') {
+    var todasFilas = scrParseCSV(texto);
+    if (!todasFilas.length) return entradas;
+
+    // ── OFAC SDN / OFAC Consolidated ─────────────────────────
+    // Formato: CSV sin encabezado. Valores nulos = "-0-"
+    // col0=uid, col1=nombre, col2=tipo(individual/entity/vessel/aircraft), col3=programa
     if (lista.id === 'ofac_sdn' || lista.id === 'ofac_cons') {
-      // Formato OFAC CSV: col 0=uid, col 1=nombre, col 2=tipo, col 11=fecha_nacimiento, col 2=pais
-      filas.forEach(function(f) {
-        var nombre = (f[1]||'').replace(/^"|"$/g,'');
-        if (!nombre || nombre === 'SDN_Name' || nombre === 'Ent_Name') return;
+      todasFilas.forEach(function(f) {
+        var nombre = (f[1] || '').replace(/^"|"$/g, '').trim();
+        if (!nombre || nombre === '-0-') return;
+        var tipo = (f[2] || '').trim();
+        var prog = (f[3] || '').replace(/-0-/g,'').trim();
         entradas.push({
           nombre: nombre,
-          tipo: f[2]||'',
-          pais: f[3]||'',
-          programa: f[10]||'',
-          uid: f[0]||''
+          tipo: tipo,
+          pais: '',          // el pais está en el archivo ADD separado; no incluido en SDN.csv
+          programa: prog,
+          uid: (f[0] || '').trim()
         });
       });
-    } else if (lista.id === 'ue') {
-      // Formato UE CSV: buscar columnas name_alias / wholeName
-      var header = filas[0] || [];
-      var iNombre = -1, iTipo = -1, iPais = -1, iRef = -1;
-      header.forEach(function(h,i){
-        var hh = (h||'').toLowerCase();
-        if (hh.indexOf('wholename') >= 0 || hh.indexOf('name_alias') >= 0) iNombre = i;
-        if (hh === 'entity_type' || hh === 'subjecttype') iTipo = i;
-        if (hh.indexOf('country') >= 0 && iPais < 0) iPais = i;
-        if (hh.indexOf('reference') >= 0 || hh.indexOf('eu_reference') >= 0) iRef = i;
+
+    // ── SAT Lista 69-B ────────────────────────────────────────
+    // Encoding: Windows-1250 (ya decodificado antes de llegar aquí)
+    // Las primeras N filas (saltarFilas) son metadata del SAT, luego viene el encabezado
+    // Encabezado real: Número | RFC | Nombre/Razón Social | Supuesto | Situacion
+    } else if (lista.id === 'sat_69b') {
+      var saltar = lista.saltarFilas || 0;
+      var header69 = todasFilas[saltar] || [];
+      var iRfc = 1, iNom = 2, iSup = 3, iSit = 4;
+      header69.forEach(function(h, i) {
+        var hh = scrNorm(h);
+        if (hh.indexOf('rfc') >= 0) iRfc = i;
+        else if (hh.indexOf('nombre') >= 0 || hh.indexOf('razon') >= 0) iNom = i;
+        else if (hh.indexOf('supuesto') >= 0) iSup = i;
+        else if (hh.indexOf('situacion') >= 0 || hh.indexOf('situaci') >= 0) iSit = i;
       });
-      if (iNombre < 0) iNombre = 1; // fallback
-      for (var r=1; r<filas.length; r++) {
-        var f = filas[r];
-        var nombre = (f[iNombre]||'').replace(/^"|"$/g,'');
+      for (var r = saltar + 1; r < todasFilas.length; r++) {
+        var f = todasFilas[r];
+        var nombre = (f[iNom] || '').replace(/^"|"$/g, '').trim();
         if (!nombre) continue;
+        var supuesto = (f[iSup] || '').trim();
+        var situacion = (f[iSit] || '').trim();
         entradas.push({
           nombre: nombre,
-          tipo: iTipo >= 0 ? (f[iTipo]||'') : '',
-          pais: iPais >= 0 ? (f[iPais]||'') : '',
-          programa: '',
-          uid: iRef >= 0 ? (f[iRef]||'') : ''
+          tipo: supuesto || 'EFOS',
+          pais: 'México',
+          programa: situacion || supuesto,
+          uid: (f[iRfc] || '').trim()
         });
       }
-    } else if (lista.id === 'sat_69b') {
-      // SAT 69-B: col 0=RFC, col 1=nombre/razón social, col 2=supuesto
-      var header69 = filas[0] || [];
-      var iRfc = 0, iNom = 1, iSup = 2;
-      header69.forEach(function(h,i){
-        var hh=(h||'').toLowerCase();
-        if (hh.indexOf('rfc') >= 0) iRfc = i;
-        if (hh.indexOf('nombre') >= 0 || hh.indexOf('razon') >= 0) iNom = i;
-        if (hh.indexOf('supuesto') >= 0 || hh.indexOf('situacion') >= 0) iSup = i;
+
+    // ── Genérico: CSV con encabezado ──────────────────────────
+    } else {
+      var header = todasFilas[0] || [];
+      var iN = -1, iT = -1, iP = -1, iU = -1, iProg = -1;
+      header.forEach(function(h, i) {
+        var hh = scrNorm(h);
+        if ((hh.indexOf('nombre') >= 0 || hh.indexOf('name') >= 0 || hh.indexOf('wholename') >= 0) && iN < 0) iN = i;
+        if (hh === 'entity_type' || hh === 'subjecttype' || hh === 'tipo') iT = i;
+        if ((hh.indexOf('country') >= 0 || hh.indexOf('pais') >= 0) && iP < 0) iP = i;
+        if (hh.indexOf('reference') >= 0 || hh.indexOf('uid') >= 0 || hh.indexOf('id') === 0) iU = i;
+        if (hh.indexOf('program') >= 0 || hh.indexOf('programa') >= 0 || hh.indexOf('regime') >= 0) iProg = i;
       });
-      for (var r=1; r<filas.length; r++) {
-        var f = filas[r];
-        var nombre = (f[iNom]||'').replace(/^"|"$/g,'');
-        if (!nombre) continue;
+      if (iN < 0) iN = 1;
+      for (var r2 = 1; r2 < todasFilas.length; r2++) {
+        var fila = todasFilas[r2];
+        var nom = (fila[iN] || '').replace(/^"|"$/g, '').trim();
+        if (!nom) continue;
         entradas.push({
-          nombre: nombre,
-          tipo: 'PF/PM',
-          pais: 'México',
-          programa: (f[iSup]||''),
-          uid: (f[iRfc]||'')
+          nombre: nom,
+          tipo: iT >= 0 ? (fila[iT] || '').trim() : '',
+          pais: iP >= 0 ? (fila[iP] || '').trim() : '',
+          programa: iProg >= 0 ? (fila[iProg] || '').trim() : '',
+          uid: iU >= 0 ? (fila[iU] || '').trim() : ''
         });
       }
     }
+
   } else if (lista.tipo === 'xml') {
-    // ONU XML — parsear con DOMParser
     try {
       var parser = new DOMParser();
       var doc = parser.parseFromString(texto, 'text/xml');
-      // Nodos INDIVIDUAL y ENTITY
-      var nodos = Array.from(doc.querySelectorAll('INDIVIDUAL, ENTITY'));
-      if (!nodos.length) nodos = Array.from(doc.querySelectorAll('individual, entity'));
-      nodos.forEach(function(n) {
-        // Nombre principal
-        var primerNombre = n.querySelector('FIRST_NAME, firstName') || n.querySelector('SECOND_NAME, secondName');
-        var segundoNombre = n.querySelector('SECOND_NAME, secondName');
-        var tercerNombre  = n.querySelector('THIRD_NAME, thirdName');
-        var nombreEnt     = n.querySelector('FIRST_NAME, NAME, name');
-        var nombre = [
-          primerNombre  ? primerNombre.textContent  : '',
-          segundoNombre ? segundoNombre.textContent : '',
-          tercerNombre  ? tercerNombre.textContent  : ''
-        ].filter(Boolean).join(' ').trim() || (nombreEnt ? nombreEnt.textContent : '');
-        if (!nombre) return;
-        var pais = n.querySelector('NATIONALITY > VALUE, nationality');
-        var uid  = n.getAttribute('dataId') || n.getAttribute('DATAID') || '';
-        entradas.push({
-          nombre: nombre,
-          tipo: n.tagName.toUpperCase().indexOf('INDIVIDUAL') >= 0 ? 'Individual' : 'Entidad',
-          pais: pais ? pais.textContent : '',
-          programa: 'ONU',
-          uid: uid
+
+      // ── ONU XML ───────────────────────────────────────────
+      // Estructura: <INDIVIDUALS><INDIVIDUAL dataId="..."> <FIRST_NAME> <SECOND_NAME> <THIRD_NAME>
+      //             <ENTITIES><ENTITY dataId="..."> <FIRST_NAME>
+      //             Alias en <INDIVIDUAL_ALIAS><ALIAS_NAME>
+      if (lista.id === 'onu') {
+        var nIndiv = Array.from(doc.querySelectorAll('INDIVIDUAL'));
+        var nEnt   = Array.from(doc.querySelectorAll('ENTITY'));
+
+        nIndiv.forEach(function(n) {
+          var p1 = n.querySelector('FIRST_NAME');
+          var p2 = n.querySelector('SECOND_NAME');
+          var p3 = n.querySelector('THIRD_NAME');
+          var p4 = n.querySelector('FOURTH_NAME');
+          var nombre = [p1,p2,p3,p4].map(function(x){ return x ? x.textContent.trim() : ''; }).filter(Boolean).join(' ');
+          if (!nombre) return;
+          var uid = n.getAttribute('dataId') || '';
+          var pais = n.querySelector('NATIONALITY > VALUE');
+          entradas.push({
+            nombre: nombre, tipo: 'Individual',
+            pais: pais ? pais.textContent.trim() : '',
+            programa: 'ONU', uid: uid
+          });
+          // Alias
+          n.querySelectorAll('INDIVIDUAL_ALIAS').forEach(function(al) {
+            var alNom = al.querySelector('ALIAS_NAME');
+            if (alNom && alNom.textContent.trim()) {
+              entradas.push({ nombre: alNom.textContent.trim(), tipo: 'Alias ONU', pais: '', programa: 'ONU', uid: uid });
+            }
+          });
         });
-        // También agregar alias
-        n.querySelectorAll('ALIAS, alias').forEach(function(al) {
-          var alNom = al.querySelector('ALIAS_NAME, aliasName, name');
-          if (alNom && alNom.textContent.trim()) {
-            entradas.push({ nombre: alNom.textContent.trim(), tipo: 'Alias', pais: '', programa: 'ONU', uid: uid });
-          }
+
+        nEnt.forEach(function(n) {
+          var fn = n.querySelector('FIRST_NAME');
+          var nombre = fn ? fn.textContent.trim() : '';
+          if (!nombre) return;
+          var uid = n.getAttribute('dataId') || '';
+          entradas.push({ nombre: nombre, tipo: 'Entidad', pais: '', programa: 'ONU', uid: uid });
+          n.querySelectorAll('ENTITY_ALIAS').forEach(function(al) {
+            var alNom = al.querySelector('ALIAS_NAME');
+            if (alNom && alNom.textContent.trim()) {
+              entradas.push({ nombre: alNom.textContent.trim(), tipo: 'Alias ONU', pais: '', programa: 'ONU', uid: uid });
+            }
+          });
         });
-      });
-    } catch(e) { console.error('[SCR] Error parseando XML ONU:', e); }
+
+      // ── UE XML v1.1 ───────────────────────────────────────
+      // Estructura: <export><sanctionEntity> con <nameAlias wholeName="..."> y <subjectType>
+      } else if (lista.id === 'ue') {
+        var nUE = Array.from(doc.querySelectorAll('sanctionEntity'));
+        nUE.forEach(function(n) {
+          var uid = n.getAttribute('euReferenceNumber') || n.getAttribute('logicalId') || '';
+          var subtipo = n.querySelector('subjectType');
+          var tipo = subtipo ? (subtipo.getAttribute('classificationCode') || subtipo.textContent.trim()) : '';
+          var paiEl = n.querySelector('citizenship > country, nationality > country');
+          var pais = paiEl ? (paiEl.getAttribute('iso2Code') || paiEl.textContent.trim()) : '';
+          var prog = n.getAttribute('programme') || '';
+
+          // Todos los alias (incluyendo el nombre principal wholeName)
+          n.querySelectorAll('nameAlias').forEach(function(al) {
+            var wholeName = al.getAttribute('wholeName') || '';
+            var firstName = al.getAttribute('firstName') || '';
+            var lastName  = al.getAttribute('lastName')  || al.getAttribute('middleName') || '';
+            var nombre = wholeName || [firstName, lastName].filter(Boolean).join(' ');
+            nombre = nombre.trim();
+            if (!nombre) return;
+            entradas.push({ nombre: nombre, tipo: tipo, pais: pais, programa: prog || 'UE', uid: uid });
+          });
+        });
+
+      // ── XML genérico: intentar extraer texto de nodos comunes ─
+      } else {
+        var nodos = Array.from(doc.querySelectorAll('entity, individual, person, record, entry'));
+        nodos.forEach(function(n) {
+          var nombre = '';
+          ['name','fullName','wholeName','firstName','lastName'].forEach(function(tag) {
+            if (!nombre) {
+              var el = n.querySelector(tag) || n.querySelector('[' + tag + ']');
+              if (el) nombre = (el.textContent || el.getAttribute(tag) || '').trim();
+            }
+          });
+          if (!nombre) return;
+          entradas.push({ nombre: nombre, tipo: n.tagName, pais: '', programa: '', uid: n.getAttribute('id') || '' });
+        });
+      }
+    } catch(e) { console.error('[SCR] Error parseando XML', lista.id, e); }
   }
+
   console.log('[SCR] Lista', lista.id, 'parseada:', entradas.length, 'entradas');
   return entradas;
 }
 
 // ── Carga de lista (con caché en memoria por sesión) ──────────
 function scrCargarLista(lista, cb) {
-  // Si ya está en caché y tiene datos, reutilizar
   if (lista._datos && lista._datos.length > 0) { cb(lista._datos); return; }
 
   SCR.cargando[lista.id] = true;
   scrActualizarEstadoListas();
 
-  // Las listas externas requieren un proxy CORS en producción.
-  // Usamos allorigins.win como proxy público para descargar los CSV/XML.
+  // Proxy CORS público para evitar bloqueos cross-origin desde GitHub Pages
   var proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(lista.url);
 
-  fetch(proxyUrl)
-    .then(function(r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.text();
-    })
-    .then(function(texto) {
-      lista._datos = scrParsearLista(lista, texto);
-      lista._fechaCarga = new Date().toLocaleTimeString('es-MX');
-      SCR.cargando[lista.id] = false;
-      scrActualizarEstadoListas();
-      cb(lista._datos);
-    })
-    .catch(function(err) {
-      console.error('[SCR] Error cargando lista', lista.id, err);
-      SCR.cargando[lista.id] = false;
-      lista._error = 'No disponible: ' + err.message;
-      scrActualizarEstadoListas();
-      cb([]);
-    });
+  // Si el archivo tiene encoding especial (windows-1250), necesitamos leerlo como ArrayBuffer
+  if (lista.encoding && lista.encoding !== 'utf-8') {
+    fetch(proxyUrl)
+      .then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.arrayBuffer();
+      })
+      .then(function(buffer) {
+        var decoder = new TextDecoder(lista.encoding);
+        var texto = decoder.decode(buffer);
+        lista._datos = scrParsearLista(lista, texto);
+        lista._fechaCarga = new Date().toLocaleTimeString('es-MX');
+        SCR.cargando[lista.id] = false;
+        scrActualizarEstadoListas();
+        cb(lista._datos);
+      })
+      .catch(function(err) {
+        console.error('[SCR] Error cargando lista', lista.id, err);
+        SCR.cargando[lista.id] = false;
+        lista._error = 'No disponible: ' + err.message;
+        scrActualizarEstadoListas();
+        cb([]);
+      });
+  } else {
+    fetch(proxyUrl)
+      .then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      })
+      .then(function(texto) {
+        lista._datos = scrParsearLista(lista, texto);
+        lista._fechaCarga = new Date().toLocaleTimeString('es-MX');
+        SCR.cargando[lista.id] = false;
+        scrActualizarEstadoListas();
+        cb(lista._datos);
+      })
+      .catch(function(err) {
+        console.error('[SCR] Error cargando lista', lista.id, err);
+        SCR.cargando[lista.id] = false;
+        lista._error = 'No disponible: ' + err.message;
+        scrActualizarEstadoListas();
+        cb([]);
+      });
+  }
 }
 
 // ── Buscar en una lista ya cargada ────────────────────────────
