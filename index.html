@@ -1827,6 +1827,7 @@ function renderFicha(c) {
     +(c.tipo==='PM_SIMP'?'<div class="ftab" onclick="fichaTab(this,\'fd-rl\')">Representante / funcionario</div>':'')
     +'<div class="ftab" onclick="fichaTab(this,\'fd-duen\')">Dueno beneficiario</div>'
     +'<div class="ftab" onclick="fichaTab(this,\'fd-docs\');renderDocs()">Documentos</div>'
+    +'<div class="ftab" onclick="fichaTab(this,\'fd-ops\');renderOpsCliente()">Operaciones</div>'
     +'</div>'
     +'<div class="card" style="border-radius:0 0 var(--rl) var(--rl)">'
     +'<div id="fd-datos" class="card-b">'+renderDatosGenerales(c)+'</div>'
