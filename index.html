@@ -1046,8 +1046,86 @@ function optsScian(sel) {
   return h;
 }
 function fg(lbl,name,req){return '<div class="fg'+(req?' req-field':'')+'"><label class="lbl">'+lbl+(req?'<span class="req">*</span>':'')+' <span style="font-size:10px;font-weight:400;color:var(--tx3);text-transform:none"></span></label>';}
-function fi(name,v,ph,cls){return '<input class="inp'+(cls?' '+cls:'')+'" name="'+name+'" value="'+(v||'')+'" placeholder="'+(ph||'')+'"></div>';}
+function fi(name,v,ph,cls){
+  var extra = name.indexOf('curp')>=0 ? ' oninput="autoCompletarCURP(this)" style="text-transform:uppercase"' : '';
+  return '<input class="inp'+(cls?' '+cls:'')+'" name="'+name+'" value="'+(v||'')+'" placeholder="'+(ph||'')+'\"'+extra+'></div>';
+}
 function fs(name,opHtml){return '<select class="sel" name="'+name+'">'+opHtml+'</select></div>';}
+
+// ── CURP: extracción automática de datos ─────────────────────
+var CURP_ESTADOS = {
+  AS:'Aguascalientes', BC:'Baja California', BS:'Baja California Sur',
+  CC:'Campeche', CL:'Colima', CM:'Colima', CS:'Chiapas', CH:'Chihuahua',
+  DF:'Ciudad de Mexico', DG:'Durango', GT:'Guanajuato', GR:'Guerrero',
+  HG:'Hidalgo', JC:'Jalisco', MC:'Mexico', MN:'Michoacan', MS:'Morelos',
+  NT:'Nayarit', NL:'Nuevo Leon', OC:'Oaxaca', PL:'Puebla', QT:'Queretaro',
+  QR:'Quintana Roo', SP:'San Luis Potosi', SL:'Sinaloa', SR:'Sonora',
+  TC:'Tabasco', TS:'Tamaulipas', TL:'Tlaxcala', VZ:'Veracruz',
+  YN:'Yucatan', ZS:'Zacatecas', NE:'Extranjero'
+};
+
+function parseCURP(curp) {
+  curp = (curp||'').toUpperCase().trim();
+  if (!/^[A-Z]{4}\d{6}[HM][A-Z]{2}[B-DF-HJ-NP-TV-Z]{3}[A-Z0-9]\d$/.test(curp) &&
+      !/^[A-Z]{4}\d{6}[HM][A-Z]{2}[B-DF-HJ-NP-TV-Z]{3}[A-Z][A-Z]$/.test(curp)) {
+    return null;
+  }
+  var yy   = curp.substring(4,6);
+  var mm   = curp.substring(6,8);
+  var dd   = curp.substring(8,10);
+  var sexo = curp.charAt(10);
+  var edo  = curp.substring(11,13);
+  var dig18= curp.charAt(17);
+
+  // Siglo: dígito → 1900s, letra → 2000s
+  var anio = /[A-Z]/.test(dig18) ? '20'+yy : '19'+yy;
+
+  return {
+    fecha_nac : dd+'-'+mm+'-'+anio,
+    anio      : parseInt(anio),
+    sexo      : sexo === 'H' ? 'Masculino' : 'Femenino',
+    estado_nac: CURP_ESTADOS[edo] || '',
+    extranjero: edo === 'NE',
+    valida    : true
+  };
+}
+
+function autoCompletarCURP(input) {
+  var curp = input.value.toUpperCase();
+  input.value = curp;
+  if (curp.length < 18) return;
+  var datos = parseCURP(curp);
+  if (!datos) { toast('CURP no tiene formato válido','e'); return; }
+
+  // Derivar prefijo del campo: "rl_curp" → "rl_", "bc_0_curp" → "bc_0_", "curp" → ""
+  var fieldName = input.name || '';
+  var pref = fieldName.replace(/curp$/,'');
+
+  var frm = input.closest('form') || document.getElementById('frm') || document;
+
+  function setVal(name, val) {
+    var el = frm.querySelector('[name="'+name+'"]');
+    if (!el) return;
+    el.value = val;
+    el.dispatchEvent(new Event('change'));
+  }
+
+  setVal(pref+'fecha_nac', datos.fecha_nac);
+
+  // Sexo — si existe el campo
+  setVal(pref+'sexo', datos.sexo);
+
+  // País de nacimiento
+  if (datos.extranjero) {
+    // Dejar que el usuario elija el país
+  } else {
+    setVal(pref+'pais_nac',  'Mexico');
+    setVal(pref+'pais_nac2', 'Mexico');
+  }
+
+  // Mostrar resumen como toast informativo
+  toast('CURP válida · '+(datos.sexo==='Masculino'?'Hombre':'Mujer')+' · Nac. '+datos.fecha_nac+(datos.estado_nac?' · '+datos.estado_nac:''), 's');
+}
 function fiFull(lbl,name,v,ph,req){return '<div class="fg full"><label class="lbl">'+lbl+(req?'<span class="req">*</span>':'')+' </label><input class="inp" name="'+name+'" value="'+(v||'')+'" placeholder="'+(ph||'')+'"></div>';}
 function fsFull(lbl,name,opHtml){return '<div class="fg full"><label class="lbl">'+lbl+'</label><select class="sel" name="'+name+'">'+opHtml+'</select></div>';}
 function ftxt(lbl,name,v){return '<div class="fg full"><label class="lbl">'+lbl+'</label><textarea class="txa" name="'+name+'" rows="2">'+(v||'')+'</textarea></div>';}
