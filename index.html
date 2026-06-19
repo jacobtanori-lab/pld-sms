@@ -1294,7 +1294,7 @@ function pgDash() {
       +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">'
       +'<div class="card"><div class="card-h"><span class="card-t">Accesos rapidos</span></div>'
       +'<div class="card-b" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
-      +'<button class="btn" onclick="abrirMo(\'mo-tipo\')">+ Nuevo cliente</button>'
+      +'<button class="btn" onclick="abrirNuevoCliente()">+ Nuevo cliente</button>'
       +'<button class="btn" onclick="irA(\'clientes\')">Ver clientes</button>'
       +'<button class="btn" onclick="irA(\'alertas\')">Alertas</button>'
       +'<button class="btn" onclick="irA(\'reportes\')">Reportes</button>'
@@ -1320,7 +1320,7 @@ function pgClientes() {
     +'<div class="sb-item on">Todos</div>'
     +(esConsolidada
       ? '<div class="sb-item" style="opacity:.4;cursor:not-allowed;pointer-events:none" title="Selecciona una entidad para crear clientes">+ Nuevo cliente</div>'
-      : '<div class="sb-item" onclick="abrirMo(\'mo-tipo\')">+ Nuevo cliente</div>')
+      : '<div class="sb-item" onclick="abrirNuevoCliente()">+ Nuevo cliente</div>')
     +'<div class="sb-sec">Filtrar tipo</div>'
     +'<div class="sb-item" onclick="tabTipo(\'PF_MEX\')">Personas fisicas</div>'
     +'<div class="sb-item" onclick="tabTipo(\'PF_EXT\')">PF extranjeras</div>'
@@ -1333,7 +1333,7 @@ function pgClientes() {
     +'<div class="sb-item" onclick="tabRiesgo(\'Bajo\')">Bajo</div>');
   setMain('<div class="phdr">'
     +'<div><div class="ptit">Clientes - Expedientes KYC/KYB</div><div class="psub">LFPIORPI - Debida diligencia</div></div>'
-    +'<button class="btn btn-p" onclick="abrirMo(\'mo-tipo\')">+ Nuevo cliente</button>'
+    +'<button class="btn btn-p" onclick="abrirNuevoCliente()">+ Nuevo cliente</button>'
     +'</div>'
     +'<div class="tabs">'
     +'<div class="tab on" id="tab-todos" onclick="tabTipoTab(this,\'\')">Todos</div>'
@@ -1416,7 +1416,19 @@ function buscarC(q){
 // ================================================================
 //  FORMULARIOS POR TIPO
 // ================================================================
+function abrirNuevoCliente() {
+  if (App.entidadActual && App.entidadActual.id === 'TODAS') {
+    toast('Selecciona una entidad específica para crear un expediente', 'e');
+    return;
+  }
+  abrirNuevoCliente();
+}
+
 function iniciarForm(tipo, datos) {
+  if (!datos && App.entidadActual && App.entidadActual.id === 'TODAS') {
+    toast('Selecciona una entidad específica para crear un expediente', 'e');
+    return;
+  }
   cerrarMo('mo-tipo');
   setMain(htmlFormBase(tipo, datos||{}));
 }
