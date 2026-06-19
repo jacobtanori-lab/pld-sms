@@ -2509,8 +2509,11 @@ function _subirDocsPendientes(numCliente, nombreCliente) {
   docs.forEach(function(d) {
     var reader = new FileReader();
     reader.onload = function(e) {
-      var nombre = d.tipo + '_' + d.file.name;
-      var url = GRAPH+'/sites/'+App.siteId+'/drive/root:/'+carpeta+'/'+nombre+':/content';
+      // Limpiar nombre de archivo: solo alfanuméricos, guiones y punto de extensión
+      var ext = d.file.name.split('.').pop() || 'pdf';
+      var nombre = d.tipo + '.' + ext;
+      var rutaCodificada = encodeURIComponent(carpeta) + '/' + encodeURIComponent(nombre);
+      var url = GRAPH+'/sites/'+App.siteId+'/drive/root:/'+rutaCodificada+':/content';
       fetch(url, {
         method: 'PUT',
         headers: {'Authorization':'Bearer '+App.token, 'Content-Type': d.file.type||'application/octet-stream'},
@@ -2518,7 +2521,8 @@ function _subirDocsPendientes(numCliente, nombreCliente) {
       }).then(function(r){ return r.json(); })
         .then(function(res){
           if (res && res.id) toast('📎 '+d.tipo.replace(/_/g,' ')+' guardado en el expediente','s');
-        }).catch(function(){});
+          else toast('No se pudo guardar '+d.tipo+' en el expediente','e');
+        }).catch(function(err){ toast('Error al guardar '+d.tipo+': '+(err.message||err),'e'); });
     };
     reader.readAsArrayBuffer(d.file);
   });
