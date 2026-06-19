@@ -4211,7 +4211,10 @@ function procesarExcel(data, fraccion) {
 //  REPORTES
 // ================================================================
 function pgReportes() {
-  setSB('<div class="sb-sec">Reportes</div><div class="sb-item on">Todos</div>');
+  setSB('<div class="sb-sec">Reportes</div>'
+    +'<div class="sb-item on">Avisos regulatorios</div>'
+    +'<div class="sb-sec">Exportar</div>'
+    +'<div class="sb-item" onclick="exportarClientesXLS()">&#x2193; Clientes (XLS)</div>');
   setMain('<div class="phdr"><div><div class="ptit">Reportes regulatorios</div><div class="psub">LFPIORPI - Avisos SPPLD/SAT/UIF</div></div>'
     +'<button class="btn btn-p" onclick="nuevoRepForm()">+ Generar reporte</button></div>'
     +'<div id="reps-ct"><div class="empty"><div class="spin" style="margin:0 auto"></div></div></div>');
@@ -4269,6 +4272,147 @@ function guardarRep(){
   datos.entidad_id = App.entidadActual ? App.entidadActual.id : '';
   datos.entidad_nombre = App.entidadActual ? App.entidadActual.nombre : '';
   spCreate('PLD_Reportes',datos,function(item){if(item){toast('Reporte '+folio+' generado','s');pgReportes();}});
+}
+
+// ================================================================
+//  EXPORTACIÓN XLS — REPORTE DE CLIENTES
+// ================================================================
+function exportarClientesXLS() {
+  toast('Generando reporte, espera...', 'i');
+  var entId = App.entidadActual ? App.entidadActual.id : null;
+  var esConsolidada = entId === 'TODAS' || !entId;
+
+  var datos = {clientes:null, ops:null, liq:null, alertas:null, avisos:null};
+  var pendientes = 5;
+
+  function intentarGenerar() {
+    pendientes--;
+    if (pendientes > 0) return;
+
+    var clientes = datos.clientes || [];
+    if (!esConsolidada) clientes = clientes.filter(function(c){ return c.entidad_id === entId; });
+
+    // Índices por num_cliente
+    var sumaOps={}, cntOps={}, cntLiq={}, sumaLiq={}, cntAlt={}, cntAvi={};
+    (datos.ops||[]).forEach(function(o){
+      var k = o.num_cliente;
+      if (!k) return;
+      sumaOps[k] = (sumaOps[k]||0) + parseFloat(o.monto||0);
+      cntOps[k]  = (cntOps[k]||0) + 1;
+    });
+    (datos.liq||[]).forEach(function(o){
+      var k = o.num_cliente;
+      if (!k) return;
+      sumaLiq[k] = (sumaLiq[k]||0) + parseFloat(o.monto||0);
+      cntLiq[k]  = (cntLiq[k]||0) + 1;
+    });
+    (datos.alertas||[]).forEach(function(a){
+      var k = a.num_cliente;
+      if (k) cntAlt[k] = (cntAlt[k]||0) + 1;
+    });
+    (datos.avisos||[]).forEach(function(r){
+      var k = r.num_cliente;
+      if (k) cntAvi[k] = (cntAvi[k]||0) + 1;
+    });
+
+    // Encabezados
+    var cols = [
+      'Num. Cliente','Entidad','Nombre / Razon social','Tipo','RFC','CURP',
+      'Fecha nacimiento / constitucion','Pais nacimiento','Nacionalidad',
+      'Actividad / giro','Fraccion LFPIORPI','Nivel de riesgo','Puntaje EBR',
+      'Domicilio','Colonia','Municipio','Estado','CP','Pais',
+      'Registrado por','Fecha registro',
+      'Ops. inmobiliarias (cant)','Ops. inmobiliarias (monto MXN)',
+      'Liquidaciones (cant)','Liquidaciones (monto MXN)',
+      'Alertas PLD','Avisos regulatorios'
+    ];
+
+    function xCell(v, tipo) {
+      var t = tipo || 'String';
+      var s = (v===null||v===undefined) ? '' : String(v);
+      s = s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      if (t === 'Number') return '<Cell><Data ss:Type="Number">'+(parseFloat(v)||0)+'</Data></Cell>';
+      return '<Cell><Data ss:Type="String">'+s+'</Data></Cell>';
+    }
+
+    function xRow(cells) { return '<Row>'+cells.join('')+'</Row>'; }
+
+    var headerStyle = '<Style ss:ID="h"><Font ss:Bold="1"/><Interior ss:Color="#1E3A5F" ss:Pattern="Solid"/>'
+      +'<Font ss:Bold="1" ss:Color="#FFFFFF"/><Alignment ss:Horizontal="Center"/></Style>';
+    var altStyle = '<Style ss:ID="a"><Interior ss:Color="#F5F7FA" ss:Pattern="Solid"/></Style>';
+
+    var headerRow = '<Row ss:StyleID="h">'
+      + cols.map(function(c){ return '<Cell ss:StyleID="h"><Data ss:Type="String">'+c+'</Data></Cell>'; }).join('')
+      +'</Row>';
+
+    var rows = clientes.map(function(c, i){
+      var k = c.num_cliente;
+      var sid = (i%2===1) ? ' ss:StyleID="a"' : '';
+      var domicilio = [c.calle, c.num_ext ? 'No.'+c.num_ext : '', c.num_int ? 'Int.'+c.num_int : ''].filter(Boolean).join(' ');
+      return '<Row'+sid+'>'
+        + xCell(nStr(k))
+        + xCell(c.entidad_nombre || c.entidad_id || '')
+        + xCell(c.Title || nombreCliente(c))
+        + xCell(labelTipo(c.tipo))
+        + xCell(c.rfc || '')
+        + xCell(c.curp || '')
+        + xCell(c.fecha_nac || c.fecha_const || '')
+        + xCell(c.pais_nac || '')
+        + xCell(c.pais_nac2 || c.pais_nac || '')
+        + xCell(c.actividad || c.giro || '')
+        + xCell(c.fraccion || '')
+        + xCell(c.riesgo || '')
+        + xCell(c.puntaje_ebr || 0, 'Number')
+        + xCell(domicilio)
+        + xCell(c.colonia || '')
+        + xCell(c.municipio || '')
+        + xCell(c.estado || '')
+        + xCell(c.cp || '')
+        + xCell(c.pais || 'Mexico')
+        + xCell(c.registrado_por || '')
+        + xCell(c.fecha_registro || '')
+        + xCell(cntOps[k] || 0, 'Number')
+        + xCell(sumaOps[k] || 0, 'Number')
+        + xCell(cntLiq[k] || 0, 'Number')
+        + xCell(sumaLiq[k] || 0, 'Number')
+        + xCell(cntAlt[k] || 0, 'Number')
+        + xCell(cntAvi[k] || 0, 'Number')
+        +'</Row>';
+    }).join('');
+
+    var entNombre = esConsolidada ? 'Todas las entidades' : (App.entidadActual.nombre || entId);
+    var fecha = hoy();
+    var xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+      +'<?mso-application progid="Excel.Sheet"?>\n'
+      +'<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" '
+      +'xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">\n'
+      +'<Styles>'+headerStyle+altStyle+'</Styles>\n'
+      +'<Worksheet ss:Name="Clientes">\n'
+      +'<Table>\n'
+      + headerRow + rows
+      +'</Table>\n</Worksheet>\n'
+      +'<Worksheet ss:Name="Info">\n<Table>\n'
+      +'<Row><Cell><Data ss:Type="String">Entidad</Data></Cell><Cell><Data ss:Type="String">'+entNombre+'</Data></Cell></Row>\n'
+      +'<Row><Cell><Data ss:Type="String">Fecha de exportacion</Data></Cell><Cell><Data ss:Type="String">'+fecha+'</Data></Cell></Row>\n'
+      +'<Row><Cell><Data ss:Type="String">Total de clientes</Data></Cell><Cell><Data ss:Type="Number">'+clientes.length+'</Data></Cell></Row>\n'
+      +'</Table>\n</Worksheet>\n'
+      +'</Workbook>';
+
+    var blob = new Blob([xml], {type:'application/vnd.ms-excel;charset=utf-8'});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'Clientes_PLD_'+(esConsolidada?'TODAS':entId)+'_'+fecha.replace(/-/g,'')+'.xls';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    toast('Reporte exportado: '+clientes.length+' clientes', 's');
+  }
+
+  spGet('PLD_Clientes',    function(r){ datos.clientes=r; intentarGenerar(); });
+  spGet('PLD_Operaciones', function(r){ datos.ops=r;      intentarGenerar(); });
+  spGet('PLD_Ops_Liq',     function(r){ datos.liq=r;      intentarGenerar(); });
+  spGet('PLD_Alertas',     function(r){ datos.alertas=r;  intentarGenerar(); });
+  spGet('PLD_Reportes',    function(r){ datos.avisos=r;   intentarGenerar(); });
 }
 
 // ================================================================
