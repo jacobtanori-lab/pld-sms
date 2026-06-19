@@ -4051,10 +4051,10 @@ var SCR_LISTAS = [
     id: 'ue',
     nombre: 'UE Lista Consolidada',
     fuente: 'Unión Europea — EEAS/CFSP',
-    // XML v1.1. Nodos <sanctionEntity> con <nameAlias>.
-    // URL migrada al portal open data de la UE (webgate.ec.europa.eu requiere auth desde 2025)
-    url: 'https://data.europa.eu/api/hub/repo/files/ef1e0b7d-73ea-4d2b-9c04-7a35aca14f4c/download',
-    tipo: 'xml',
+    // CSV v1.1. Columnas clave: NameAlias_wholeName, Entity_subject_type,
+    // Entity_citizenship_countryIso2Code, Entity_regulation_programme, Entity_logical_id
+    url: 'https://webgate.ec.europa.eu/fsd/fsf/public/files/csvFullSanctionsList_1_1/content?token=dG9rZW4tMjAxNw',
+    tipo: 'csv',
     activa: true,
     color: 'var(--mo)',
     color3: 'var(--mo3)',
@@ -4067,7 +4067,7 @@ var SCR_LISTAS = [
     fuente: 'SAT — Servicio de Administración Tributaria',
     // CSV encoding Windows-1250. 3 filas de metadata antes del encabezado real.
     // col1=RFC, col3=nombre/razón social, col4=supuesto (Presunto/Definitivo/Desvirtuado)
-    url: 'https://omawww.sat.gob.mx/cifras_sat/Documents/Listado_Completo_69-B.csv',
+    url: 'https://wu1agsprosta001.blob.core.windows.net/agsc-publicaciones/Datos_abiertos/Documents_AGAFF/Listado_completo_69-B.csv',
     tipo: 'csv',
     encoding: 'windows-1250',
     saltarFilas: 3,   // las primeras 3 filas son metadata del SAT
@@ -4214,10 +4214,10 @@ function scrParsearLista(lista, texto) {
       var iN = -1, iT = -1, iP = -1, iU = -1, iProg = -1;
       header.forEach(function(h, i) {
         var hh = scrNorm(h);
-        if ((hh.indexOf('nombre') >= 0 || hh.indexOf('name') >= 0 || hh.indexOf('wholename') >= 0) && iN < 0) iN = i;
-        if (hh === 'entity_type' || hh === 'subjecttype' || hh === 'tipo') iT = i;
+        if ((hh.indexOf('wholename') >= 0 || hh.indexOf('nombre') >= 0 || hh.indexOf('name') >= 0) && iN < 0) iN = i;
+        if (hh.indexOf('subject') >= 0 || hh === 'entity_type' || hh === 'subjecttype' || hh === 'tipo') iT = i;
         if ((hh.indexOf('country') >= 0 || hh.indexOf('pais') >= 0) && iP < 0) iP = i;
-        if (hh.indexOf('reference') >= 0 || hh.indexOf('uid') >= 0 || hh.indexOf('id') === 0) iU = i;
+        if (hh.indexOf('logical_id') >= 0 || hh.indexOf('reference') >= 0 || hh.indexOf('uid') >= 0 || hh.indexOf('id') === 0) iU = i;
         if (hh.indexOf('program') >= 0 || hh.indexOf('programa') >= 0 || hh.indexOf('regime') >= 0) iProg = i;
       });
       if (iN < 0) iN = 1;
@@ -4439,6 +4439,7 @@ function scrSubirManual(listaId, input) {
       var entradas = scrParsearLista(lista, contenido);
       lista._datos = entradas;
       lista._error = null;
+      lista._fechaISO = new Date().toISOString();
       lista._fechaCarga = new Date().toLocaleString('es-MX');
       SCR.cargando[listaId] = false;
       // Actualizar fecha en config
@@ -4598,6 +4599,9 @@ function scrActualizarListasVencidas(onProgress, onFin) {
 // ── Al abrir el módulo, verificar si hay listas vencidas ──────
 function scrVerificarYActualizarAlAbrir() {
   scrLeerConfigFechas(function(fechas) {
+    // Propagar fechas de config a cada lista para mostrar días en el sidebar
+    SCR_LISTAS.forEach(function(l) { if (fechas[l.id]) l._fechaISO = fechas[l.id]; });
+    scrActualizarEstadoListas();
     var vencidas = SCR_LISTAS.filter(function(l) { return l.activa && scrNecesitaActualizar(l.id, fechas); });
     if (!vencidas.length) return;
     var logEl = document.getElementById('scr-log-actualizacion');
@@ -4737,9 +4741,18 @@ function scrActualizarEstadoListas() {
     } else if (lista._error) {
       el.innerHTML = '<span style="color:var(--rj);font-size:11px" title="' + lista._error + '">✗ Error</span>';
     } else if (lista._datos && lista._datos.length > 0) {
-      el.innerHTML = '<span style="color:var(--vd);font-size:11px" title="Cargada ' + (lista._fechaCarga||'') + '">✓ ' + lista._datos.length.toLocaleString() + '</span>';
+      var diasTxt = '';
+      if (lista._fechaISO) {
+        var dias = Math.floor((Date.now() - new Date(lista._fechaISO).getTime()) / (1000*60*60*24));
+        var diasCol = dias >= 30 ? 'var(--rj)' : dias >= 14 ? 'var(--am)' : 'var(--tx3)';
+        diasTxt = ' <span style="color:' + diasCol + ';font-size:10px">(' + dias + 'd)</span>';
+      }
+      el.innerHTML = '<span style="color:var(--vd);font-size:11px" title="Cargada ' + (lista._fechaCarga||lista._fechaISO||'') + '">✓ ' + lista._datos.length.toLocaleString() + '</span>' + diasTxt;
     } else {
-      el.innerHTML = '<span style="color:var(--tx3);font-size:11px">—</span>';
+      var sinFechaTxt = lista._fechaISO
+        ? (function(){ var d=Math.floor((Date.now()-new Date(lista._fechaISO).getTime())/(1000*60*60*24)); return '<span style="color:var(--tx3);font-size:11px">No cargada <span style="color:'+(d>=30?'var(--rj)':d>=14?'var(--am)':'var(--tx3)')+'">(' + d + 'd)</span></span>'; })()
+        : '<span style="color:var(--tx3);font-size:11px">—</span>';
+      el.innerHTML = sinFechaTxt;
     }
   });
 }
