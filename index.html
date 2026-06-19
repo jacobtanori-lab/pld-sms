@@ -1052,6 +1052,179 @@ function fi(name,v,ph,cls){
 }
 function fs(name,opHtml){return '<select class="sel" name="'+name+'">'+opHtml+'</select></div>';}
 
+// ── CSF: Constancia de Situación Fiscal SAT ──────────────────
+function iniciarLecturaCSF(input, pref) {
+  var file = input.files[0];
+  input.value = '';
+  if (!file) return;
+  toast('Leyendo constancia SAT...', 'i');
+  cargarOCRLibs(function(){ leerCSF(file, pref||''); });
+}
+
+function leerCSF(file, pref) {
+  var isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+  if (isPDF) {
+    // PDF del SAT: extraer texto directamente sin OCR — resultado perfecto
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      pdfjsLib.getDocument({data: e.target.result}).promise.then(function(pdf) {
+        var promesas = [];
+        for (var p = 1; p <= Math.min(pdf.numPages, 3); p++) {
+          promesas.push(pdf.getPage(p).then(function(page) {
+            return page.getTextContent().then(function(tc) {
+              return tc.items.map(function(it){ return it.str; }).join('\n');
+            });
+          }));
+        }
+        Promise.all(promesas).then(function(paginas) {
+          var datos = _extraerDatosCSF(paginas.join('\n'));
+          _preRellenarDesdeCSF(datos, pref);
+        });
+      }).catch(function(){ toast('No se pudo leer el PDF del SAT','e'); });
+    };
+    reader.readAsArrayBuffer(file);
+  } else {
+    // Imagen: OCR con preprocesamiento
+    _preprocesarImagen(URL.createObjectURL(file), function(canvas) {
+      Tesseract.recognize(canvas, 'spa', {
+        logger: function(m){
+          if (m.status==='recognizing text')
+            toast('OCR: '+Math.round((m.progress||0)*100)+'%...','i');
+        }
+      }).then(function(r){
+        var datos = _extraerDatosCSF(r.data.text);
+        _preRellenarDesdeCSF(datos, pref);
+      }).catch(function(e){ toast('Error OCR: '+(e.message||e),'e'); });
+    });
+  }
+}
+
+function _extraerDatosCSF(txt) {
+  var d = {};
+  var t = txt.replace(/\r/g,'');
+  var tUp = t.toUpperCase();
+
+  function campo(etiquetas, texto) {
+    // Busca la primera etiqueta que aparezca y toma el valor en la misma línea o la siguiente
+    var lineas = texto.split('\n');
+    for (var i = 0; i < lineas.length; i++) {
+      var l = lineas[i].trim();
+      for (var e = 0; e < etiquetas.length; e++) {
+        var et = etiquetas[e].toUpperCase();
+        var lUp = l.toUpperCase();
+        if (lUp.indexOf(et) >= 0) {
+          // Valor en la misma línea después de ":"
+          var pos = lUp.indexOf(et) + et.length;
+          var resto = l.substring(pos).replace(/^[\s:]+/,'').trim();
+          if (resto.length > 0) return resto;
+          // Valor en la siguiente línea
+          if (i+1 < lineas.length) return lineas[i+1].trim();
+        }
+      }
+    }
+    return '';
+  }
+
+  // RFC
+  d.rfc = campo(['RFC'], t).toUpperCase().replace(/\s/g,'').substring(0,13);
+
+  // Nombre / Razón Social
+  var nombreCompleto = campo(['Nombre / Razón Social','NOMBRE / RAZÓN SOCIAL','Nombre/Razón Social'], t);
+  if (nombreCompleto) d.nombre_completo = nombreCompleto;
+
+  // Para PF: nombre y apellidos por separado (el CSF los tiene en secciones)
+  var apPat = campo(['Primer Apellido','PRIMER APELLIDO'], t);
+  var apMat = campo(['Segundo Apellido','SEGUNDO APELLIDO'], t);
+  var nombre = campo(['Nombre\n','Nombre ','NOMBRE\n','NOMBRE '], t);
+  if (apPat) d.ap_pat = apPat;
+  if (apMat) d.ap_mat = apMat;
+  if (nombre && nombre.length > 1) d.nombre = nombre;
+
+  // CURP
+  var cm = tUp.match(/[A-Z]{4}\d{6}[HM][A-Z]{2}[B-DF-HJ-NP-TV-Z]{3}[A-Z0-9][\dA-Z]/);
+  if (cm) d.curp = cm[0];
+
+  // Fecha de nacimiento
+  var fn = t.match(/Fecha.*?[Nn]ac.*?(\d{2})[\/\-](\d{2})[\/\-](\d{4})/);
+  if (fn) d.fecha_nac = fn[1]+'-'+fn[2]+'-'+fn[3];
+
+  // Domicilio fiscal
+  d.calle    = campo(['Nombre de Vialidad','Calle o Vialidad','NOMBRE DE VIALIDAD'], t);
+  d.num_ext  = campo(['Número Exterior','Numero Exterior','NÚMERO EXTERIOR'], t);
+  d.num_int  = campo(['Número Interior','Numero Interior','NÚMERO INTERIOR'], t);
+  d.colonia  = campo(['Nombre de la Colonia','Colonia','NOMBRE DE LA COLONIA'], t);
+  d.municipio= campo(['Nombre del Municipio','Municipio o Delegación','MUNICIPIO'], t);
+  d.ciudad   = campo(['Ciudad','Población','CIUDAD'], t);
+  d.cp       = campo(['Código Postal','Codigo Postal','CP'], t).replace(/\D/g,'').substring(0,5);
+  var edoCampo = campo(['Nombre de la Entidad Federativa','Entidad Federativa','Estado','ENTIDAD FEDERATIVA'], t);
+  if (edoCampo) d.estado = edoCampo;
+
+  // Contacto
+  d.email    = campo(['Correo Electrónico','Correo Electronico','CORREO'], t).toLowerCase();
+  d.telefono = campo(['Teléfono Móvil','Telefono Movil','Teléfono Fijo','TELÉFONO'], t).replace(/\D/g,'').substring(0,10);
+
+  // Régimen fiscal (puede haber varios — tomamos el primero)
+  var regMatch = t.match(/Régimen\s*:?\s*([^\n]{5,80})/i);
+  if (regMatch) d.regimen = regMatch[1].trim();
+
+  return d;
+}
+
+function _preRellenarDesdeCSF(datos, pref) {
+  var frm = document.getElementById('frm') || document;
+  var llenados = 0;
+
+  function setV(name, val) {
+    if (!val || !val.trim || !val.trim()) return;
+    var el = frm.querySelector('[name="'+name+'"]');
+    if (!el) return;
+    if (el.value && el.value.trim() !== '') return; // no sobreescribir
+    el.value = val.trim();
+    el.dispatchEvent(new Event('change'));
+    llenados++;
+  }
+
+  // Datos personales (solo si no hay nada de la CURP)
+  setV(pref+'rfc',       datos.rfc);
+  setV(pref+'curp',      datos.curp);
+  setV(pref+'ap_pat',    datos.ap_pat);
+  setV(pref+'ap_mat',    datos.ap_mat);
+  setV(pref+'nombre',    datos.nombre);
+  setV(pref+'fecha_nac', datos.fecha_nac);
+  setV(pref+'email',     datos.email);
+  setV(pref+'telefono',  datos.telefono);
+
+  // Domicilio fiscal
+  setV(pref+'calle',     datos.calle);
+  setV(pref+'num_ext',   datos.num_ext);
+  setV(pref+'num_int',   datos.num_int);
+  setV(pref+'colonia',   datos.colonia);
+  setV(pref+'municipio', datos.municipio);
+  setV(pref+'ciudad',    datos.ciudad);
+  setV(pref+'cp',        datos.cp);
+
+  // Estado es un <select> — buscar opción que contenga el texto
+  if (datos.estado) {
+    var selEdo = frm.querySelector('[name="'+pref+'estado"]');
+    if (selEdo) {
+      var edoUp = datos.estado.toUpperCase();
+      Array.from(selEdo.options).forEach(function(opt){
+        if (opt.text.toUpperCase().indexOf(edoUp) >= 0 ||
+            edoUp.indexOf(opt.text.toUpperCase()) >= 0) {
+          selEdo.value = opt.value;
+          llenados++;
+        }
+      });
+    }
+  }
+
+  if (llenados > 0) {
+    toast('✓ '+llenados+' campos prellenados desde constancia SAT', 's');
+  } else {
+    toast('No se extrajeron datos de la constancia SAT. Verifica que sea el PDF del SAT.', 'e');
+  }
+}
+
 // ── OCR: Lectura de constancia CURP ──────────────────────────
 function cargarOCRLibs(cb) {
   var pendientes = (window.Tesseract ? 0 : 1) + (window.pdfjsLib ? 0 : 1);
@@ -1852,13 +2025,16 @@ function htmlIdPF(d, pref, esMexicana) {
     ? '<div style="grid-column:1/-1;margin-bottom:4px;display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg2);border:1px dashed var(--brd);border-radius:8px;flex-wrap:wrap">'
       +'<span style="font-size:20px">📄</span>'
       +'<div style="flex:1;min-width:160px"><div style="font-size:12px;font-weight:600;color:var(--tx1)">Prellenar desde documento</div>'
-      +'<div style="font-size:11px;color:var(--tx3)">Sube la constancia CURP primero, luego el INE para completar el domicilio</div></div>'
+      +'<div style="font-size:11px;color:var(--tx3)">Sube la constancia CURP → luego INE o Const. SAT para completar domicilio y RFC</div></div>'
       +'<label class="btn btn-p" style="cursor:pointer;font-size:12px;white-space:nowrap">📋 Constancia CURP'
       +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
       +'onchange="iniciarLecturaCURP(this,\''+pref+'\',false)"></label>'
       +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap">🪪 INE / IFE'
       +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
       +'onchange="iniciarLecturaCURP(this,\''+pref+'\',true)"></label>'
+      +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap">🧾 Const. SAT'
+      +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
+      +'onchange="iniciarLecturaCSF(this,\''+pref+'\')"></label>'
       +'</div>'
     : '';
   return '<div class="fgrid">'
