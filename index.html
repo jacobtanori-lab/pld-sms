@@ -1048,7 +1048,7 @@ function optsScian(sel) {
 function fg(lbl,name,req){return '<div class="fg'+(req?' req-field':'')+'"><label class="lbl">'+lbl+(req?'<span class="req">*</span>':'')+' <span style="font-size:10px;font-weight:400;color:var(--tx3);text-transform:none"></span></label>';}
 function fi(name,v,ph,cls){
   var extra = name.indexOf('curp')>=0 ? ' oninput="autoCompletarCURP(this)" style="text-transform:uppercase"' : '';
-  return '<input class="inp'+(cls?' '+cls:'')+'" name="'+name+'" value="'+(v||'')+'" placeholder="'+(ph||'')+'\"'+extra+'></div>';
+  return '<input class="inp'+(cls?' '+cls:'')+'" name="'+name+'" value="'+(v||'')+'" placeholder="'+(ph||'')+'"'+extra+'></div>';
 }
 function fs(name,opHtml){return '<select class="sel" name="'+name+'">'+opHtml+'</select></div>';}
 
