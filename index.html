@@ -4066,7 +4066,7 @@ var SCR_LISTAS = [
     fuente: 'SAT — Servicio de Administración Tributaria',
     // CSV encoding Windows-1250. 3 filas de metadata antes del encabezado real.
     // col1=RFC, col3=nombre/razón social, col4=supuesto (Presunto/Definitivo/Desvirtuado)
-    url: 'http://omawww.sat.gob.mx/cifras_sat/Documents/Listado_Completo_69-B.csv',
+    url: 'https://omawww.sat.gob.mx/cifras_sat/Documents/Listado_Completo_69-B.csv',
     tipo: 'csv',
     encoding: 'windows-1250',
     saltarFilas: 3,   // las primeras 3 filas son metadata del SAT
@@ -4330,60 +4330,81 @@ function scrParsearLista(lista, texto) {
   return entradas;
 }
 
+// ── Proxies CORS disponibles (se intentan en orden hasta que uno funcione) ────
+// Cada función recibe la URL original y devuelve la URL del proxy
+var SCR_PROXIES = [
+  function(url) { return 'https://corsproxy.io/?' + encodeURIComponent(url); },
+  function(url) { return 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url); },
+  function(url) { return 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(url); },
+  function(url) { return 'https://thingproxy.freeboard.io/fetch/' + url; }
+];
+
+// Intenta un fetch con reintentos sobre la cadena de proxies
+// Si necesita ArrayBuffer (encoding especial), pasa useBinary=true
+function scrFetchConProxy(urlOriginal, useBinary, cb) {
+  var proxies = SCR_PROXIES.slice(); // copia para no mutar
+  var intentos = 0;
+
+  function intentar() {
+    if (!proxies.length) {
+      cb(null, new Error('Todos los proxies fallaron para: ' + urlOriginal));
+      return;
+    }
+    var proxyFn = proxies.shift();
+    var proxyUrl = proxyFn(urlOriginal);
+    intentos++;
+
+    fetch(proxyUrl, { signal: AbortSignal.timeout(20000) })
+      .then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status + ' (proxy ' + intentos + ')');
+        return useBinary ? r.arrayBuffer() : r.text();
+      })
+      .then(function(data) {
+        console.log('[SCR] OK con proxy #' + intentos + ' para', urlOriginal.split('/').pop());
+        cb(data, null);
+      })
+      .catch(function(err) {
+        console.warn('[SCR] Proxy #' + intentos + ' falló:', err.message, '— intentando siguiente...');
+        intentar(); // siguiente proxy
+      });
+  }
+  intentar();
+}
+
 // ── Carga de lista (con caché en memoria por sesión) ──────────
 function scrCargarLista(lista, cb) {
   if (lista._datos && lista._datos.length > 0) { cb(lista._datos); return; }
 
   SCR.cargando[lista.id] = true;
+  lista._error = null;
   scrActualizarEstadoListas();
 
-  // Proxy CORS público para evitar bloqueos cross-origin desde GitHub Pages
-  var proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(lista.url);
+  var useBinary = !!(lista.encoding && lista.encoding !== 'utf-8');
 
-  // Si el archivo tiene encoding especial (windows-1250), necesitamos leerlo como ArrayBuffer
-  if (lista.encoding && lista.encoding !== 'utf-8') {
-    fetch(proxyUrl)
-      .then(function(r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.arrayBuffer();
-      })
-      .then(function(buffer) {
-        var decoder = new TextDecoder(lista.encoding);
-        var texto = decoder.decode(buffer);
-        lista._datos = scrParsearLista(lista, texto);
-        lista._fechaCarga = new Date().toLocaleTimeString('es-MX');
-        SCR.cargando[lista.id] = false;
-        scrActualizarEstadoListas();
-        cb(lista._datos);
-      })
-      .catch(function(err) {
-        console.error('[SCR] Error cargando lista', lista.id, err);
-        SCR.cargando[lista.id] = false;
-        lista._error = 'No disponible: ' + err.message;
-        scrActualizarEstadoListas();
-        cb([]);
-      });
-  } else {
-    fetch(proxyUrl)
-      .then(function(r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.text();
-      })
-      .then(function(texto) {
-        lista._datos = scrParsearLista(lista, texto);
-        lista._fechaCarga = new Date().toLocaleTimeString('es-MX');
-        SCR.cargando[lista.id] = false;
-        scrActualizarEstadoListas();
-        cb(lista._datos);
-      })
-      .catch(function(err) {
-        console.error('[SCR] Error cargando lista', lista.id, err);
-        SCR.cargando[lista.id] = false;
-        lista._error = 'No disponible: ' + err.message;
-        scrActualizarEstadoListas();
-        cb([]);
-      });
-  }
+  scrFetchConProxy(lista.url, useBinary, function(data, err) {
+    if (err) {
+      console.error('[SCR] Error definitivo cargando lista', lista.id, err);
+      SCR.cargando[lista.id] = false;
+      lista._error = 'Sin acceso a la lista';
+      scrActualizarEstadoListas();
+      cb([]);
+      return;
+    }
+
+    var texto;
+    if (useBinary) {
+      var decoder = new TextDecoder(lista.encoding);
+      texto = decoder.decode(data);
+    } else {
+      texto = data;
+    }
+
+    lista._datos = scrParsearLista(lista, texto);
+    lista._fechaCarga = new Date().toLocaleTimeString('es-MX');
+    SCR.cargando[lista.id] = false;
+    scrActualizarEstadoListas();
+    cb(lista._datos);
+  });
 }
 
 // ── Buscar en una lista ya cargada ────────────────────────────
@@ -4509,12 +4530,12 @@ function scrActualizarEstadoListas() {
     if (!el) return;
     if (SCR.cargando[lista.id]) {
       el.innerHTML = '<span class="spin" style="width:12px;height:12px;border-width:2px;display:inline-block"></span>';
-    } else if (lista._datos) {
-      el.innerHTML = '<span style="color:var(--vd);font-size:11px">✓ ' + lista._datos.length.toLocaleString() + '</span>';
     } else if (lista._error) {
-      el.innerHTML = '<span style="color:var(--rj);font-size:11px">Error</span>';
+      el.innerHTML = '<span style="color:var(--rj);font-size:11px" title="' + lista._error + '">✗ Error</span>';
+    } else if (lista._datos && lista._datos.length > 0) {
+      el.innerHTML = '<span style="color:var(--vd);font-size:11px" title="Cargada ' + (lista._fechaCarga||'') + '">✓ ' + lista._datos.length.toLocaleString() + '</span>';
     } else {
-      el.innerHTML = '<span style="color:var(--tx3);font-size:11px">No cargada</span>';
+      el.innerHTML = '<span style="color:var(--tx3);font-size:11px">—</span>';
     }
   });
 }
