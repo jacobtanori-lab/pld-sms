@@ -4394,13 +4394,21 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
     }]);
 
     if (esARI) {
-      // ── LÓGICA Fr. XV: DOS NIVELES ─────────────────────────
+      // ── LÓGICA Fr. XV (CORREGIDA): DOS NIVELES ─────────────────────────
+      // Mensual directo : mes con operaciones que individual o agregadas ≥ 3,210 UMAs → alerta
+      // Semestral       : meses cuyos totales ≥ 1,605 UMAs califican;
+      //                   si su suma en 6 meses ≥ 3,210 UMAs → alerta semestral
+      // Reset semestral : operaciones reportadas en avisos se excluyen (ya filtrado arriba)
+
+      var UMA_DIRECTO_ARI    = uma * 3210;  // umbral de alerta mensual directa
+      var UMA_CALIFICA_ARI   = uma * 1605;  // umbral para que un mes califique al semestral
+      var UMA_SEMESTRAL_ARI  = uma * 3210;  // umbral de alerta semestral acumulada
 
       // Paso 1: Agrupar por mes calendario
       var porMes = {};
       todasConNueva.forEach(function(o) {
         var fecha = new Date(o.fecha_pago || o.fecha_registro || hoy());
-        var key = fecha.getFullYear() + '-' + pad(fecha.getMonth() + 1); // AAAA-MM
+        var key = fecha.getFullYear() + '-' + pad(fecha.getMonth() + 1);
         if (!porMes[key]) porMes[key] = { total: 0, ops: 0 };
         porMes[key].total += parseFloat(o.monto || 0);
         porMes[key].ops++;
@@ -4408,46 +4416,51 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
 
       console.log('[UMBRAL ARI] Resumen por mes:', JSON.stringify(porMes));
 
-      // Paso 2: Solo contar meses que superan 1,605 UMAs
+      var mesActual      = ahora.getFullYear() + '-' + pad(ahora.getMonth() + 1);
+      var totalMesActual = porMes[mesActual] ? porMes[mesActual].total : 0;
+      var totalMesAntes  = totalMesActual - nuevaMonto;
+
+      // Paso 2: Alerta mensual directa — mes cruza 3,210 UMAs con esta operación
+      if (totalMesActual >= UMA_DIRECTO_ARI && totalMesAntes < UMA_DIRECTO_ARI) {
+        console.log('[UMBRAL ARI] ALERTA MENSUAL DIRECTA');
+        crearAlertaUmbral({
+          nombre_cliente: nomCli||'Sin nombre', num_cliente: numCli,
+          id_cliente_ref: idCli, fraccion: 'ARI',
+          tipo: 'Umbral mensual directo Fr.XV', nivel: 'Alto',
+          descripcion: 'Acumulado mensual de $' + totalMesActual.toLocaleString('es-MX')
+            + ' en ' + mesActual + ' supera el umbral mensual de $' + UMA_DIRECTO_ARI.toLocaleString('es-MX')
+            + ' (3,210 UMAs Fr.XV)',
+          monto_acumulado: totalMesActual, monto_umbral: UMA_DIRECTO_ARI,
+          num_operaciones: porMes[mesActual].ops, estatus_atencion: 'Pendiente'
+        });
+        toast('ALERTA UMBRAL MENSUAL Fr.XV: $' + totalMesActual.toLocaleString('es-MX'), 'w');
+      }
+
+      // Paso 3: Acumulado semestral — sumar meses que ≥ 1,605 UMAs
       var mesesQueCalifican = [];
       var acumSemestral = 0;
       Object.keys(porMes).forEach(function(mes) {
         var totalMes = porMes[mes].total;
-        if (totalMes >= UMBRAL_MENSUAL_ARI) {
+        if (totalMes >= UMA_CALIFICA_ARI) {
           mesesQueCalifican.push({ mes: mes, total: totalMes });
           acumSemestral += totalMes;
-          console.log('[UMBRAL ARI] Mes', mes, 'califica: $' + totalMes.toLocaleString('es-MX'));
+          console.log('[UMBRAL ARI] Mes', mes, 'califica para semestral: $' + totalMes.toLocaleString('es-MX'));
         } else {
-          console.log('[UMBRAL ARI] Mes', mes, 'NO califica: $' + totalMes.toLocaleString('es-MX'),
-            '(umbral mensual: $' + UMBRAL_MENSUAL_ARI.toLocaleString('es-MX') + ')');
+          console.log('[UMBRAL ARI] Mes', mes, 'no califica: $' + totalMes.toLocaleString('es-MX'));
         }
       });
 
-      console.log('[UMBRAL ARI] Meses que califican:', mesesQueCalifican.length,
-        '| Acum semestral calificado: $' + acumSemestral.toLocaleString('es-MX'),
-        '| Umbral semestral: $' + UMBRAL_SEMESTRAL_ARI.toLocaleString('es-MX'));
+      console.log('[UMBRAL ARI] Acum semestral calificado: $' + acumSemestral.toLocaleString('es-MX'),
+        '| Umbral: $' + UMA_SEMESTRAL_ARI.toLocaleString('es-MX'));
 
-      // Paso 3: Verificar si el mes actual califica con la nueva operación
-      var mesActual = ahora.getFullYear() + '-' + pad(ahora.getMonth() + 1);
-      var totalMesActual = porMes[mesActual] ? porMes[mesActual].total : 0;
-      var mesActualCalificaPrev = totalMesActual - nuevaMonto >= UMBRAL_MENSUAL_ARI;
-      var mesActualCalificaConNueva = totalMesActual >= UMBRAL_MENSUAL_ARI;
-
-      // Alerta si el mes actual acaba de cruzar el umbral mensual
-      if (mesActualCalificaConNueva && !mesActualCalificaPrev) {
-        toast('Mes ' + mesActual + ': acumulado de $' + totalMesActual.toLocaleString('es-MX')
-          + ' supera umbral mensual Fr.XV (1,605 UMAs)', 'w');
-      }
-
-      // Alerta semestral: acumulado de meses calificados supera 3,210 UMAs
-      // Solo alertar si antes de esta operación no se había cruzado
+      // Solo crear alerta si esta operación es la que cruzó el semestral
       var acumSemestralPrev = 0;
       mesesQueCalifican.forEach(function(m) {
-        if (m.mes !== mesActual) acumSemestralPrev += m.total;
-        else acumSemestralPrev += (m.total - nuevaMonto); // mes actual sin la nueva op
+        var prevTotal = m.mes === mesActual ? Math.max(0, m.total - nuevaMonto) : m.total;
+        if (prevTotal >= UMA_CALIFICA_ARI) acumSemestralPrev += prevTotal;
       });
 
-      if (acumSemestral >= UMBRAL_SEMESTRAL_ARI && acumSemestralPrev < UMBRAL_SEMESTRAL_ARI) {
+      if (acumSemestral >= UMA_SEMESTRAL_ARI && acumSemestralPrev < UMA_SEMESTRAL_ARI) {
         console.log('[UMBRAL ARI] ALERTA SEMESTRAL');
         var descMeses = mesesQueCalifican.map(function(m){
           return m.mes + ' ($' + m.total.toLocaleString('es-MX') + ')';
@@ -4456,10 +4469,10 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
           nombre_cliente: nomCli||'Sin nombre', num_cliente: numCli,
           id_cliente_ref: idCli, fraccion: 'ARI',
           tipo: 'Umbral acumulado semestral Fr.XV', nivel: 'Alto',
-          descripcion: 'Acumulado semestral calificado de $' + acumSemestral.toLocaleString('es-MX')
-            + ' supera umbral de $' + UMBRAL_SEMESTRAL_ARI.toLocaleString('es-MX')
-            + ' (3,210 UMAs). Meses que califican: ' + descMeses,
-          monto_acumulado: acumSemestral, monto_umbral: UMBRAL_SEMESTRAL_ARI,
+          descripcion: 'Acumulado semestral de $' + acumSemestral.toLocaleString('es-MX')
+            + ' supera umbral de $' + UMA_SEMESTRAL_ARI.toLocaleString('es-MX')
+            + ' (3,210 UMAs). Meses calificados (≥1,605 UMAs c/u): ' + descMeses,
+          monto_acumulado: acumSemestral, monto_umbral: UMA_SEMESTRAL_ARI,
           num_operaciones: todasConNueva.length,
           meses_califican: mesesQueCalifican.length,
           estatus_atencion: 'Pendiente'
