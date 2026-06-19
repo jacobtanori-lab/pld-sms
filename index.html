@@ -2509,13 +2509,19 @@ function _subirDocsPendientes(numCliente, nombreCliente) {
   docs.forEach(function(d) {
     var reader = new FileReader();
     reader.onload = function(e) {
-      // Sanitizar nombre original: quitar espacios y caracteres especiales
+      // Prefijo = label exacto del catálogo DOCS para que renderDocs lo encuentre por indexOf
+      var TIPO_A_LABEL = {
+        'Constancia_CURP': 'Constancia CURP',
+        'INE_IFE':         'Identificacion oficial vigente',
+        'Constancia_SAT':  'Constancia de Situacion Fiscal (RFC)'
+      };
+      var labelDoc = (TIPO_A_LABEL[d.tipo] || d.tipo).replace(/\s/g,'_').replace(/[^a-zA-Z0-9_]/g,'');
+      // Sanitizar nombre original del archivo
       var nombreLimpio = d.file.name
-        .normalize('NFD').replace(/[̀-ͯ]/g,'') // quitar acentos
-        .replace(/[^a-zA-Z0-9._-]/g,'_')                // reemplazar especiales por _
-        .replace(/_+/g,'_')                              // colapsar guiones bajos múltiples
-        .replace(/^_|_$/g,'');                           // quitar _ al inicio/fin
-      var nombre = d.tipo + '_' + nombreLimpio;
+        .normalize('NFD').replace(/[̀-ͯ]/g,'')
+        .replace(/[^a-zA-Z0-9._-]/g,'_')
+        .replace(/_+/g,'_').replace(/^_|_$/g,'');
+      var nombre = labelDoc + '_' + nombreLimpio;
       // Codificar cada segmento del path sin tocar las barras
       var rutaCodificada = carpeta.split('/').map(encodeURIComponent).join('/') + '/' + encodeURIComponent(nombre);
       var url = GRAPH+'/sites/'+App.siteId+'/drive/root:/'+rutaCodificada+':/content';
