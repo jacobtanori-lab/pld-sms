@@ -2516,7 +2516,8 @@ function _subirDocsPendientes(numCliente, nombreCliente) {
         .replace(/_+/g,'_')                              // colapsar guiones bajos múltiples
         .replace(/^_|_$/g,'');                           // quitar _ al inicio/fin
       var nombre = d.tipo + '_' + nombreLimpio;
-      var rutaCodificada = encodeURIComponent(carpeta) + '/' + encodeURIComponent(nombre);
+      // Codificar cada segmento del path sin tocar las barras
+      var rutaCodificada = carpeta.split('/').map(encodeURIComponent).join('/') + '/' + encodeURIComponent(nombre);
       var url = GRAPH+'/sites/'+App.siteId+'/drive/root:/'+rutaCodificada+':/content';
       fetch(url, {
         method: 'PUT',
