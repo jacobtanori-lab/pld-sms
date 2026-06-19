@@ -1127,6 +1127,20 @@ function cargarEntidadesConfig(cb) {
       _entidadesConfigId = item.id;
       ENTIDADES.length = 0;
       item.entidades.forEach(function(e){ ENTIDADES.push(e); });
+      // Migración: renombrar IDs y nombres obsoletos
+      var migraciones = {
+        'GIN': {id:'CIN', nombre:'Corporativo Industrial Nexxus, SA de CV'},
+        'AIV': {id:'VAI', nombre:'Vali Asesores Inmobiliarios SA de CV'}
+      };
+      var necesitaMigrar = false;
+      ENTIDADES.forEach(function(e, i){
+        if (migraciones[e.id]) {
+          ENTIDADES[i].id     = migraciones[e.id].id;
+          ENTIDADES[i].nombre = migraciones[e.id].nombre;
+          necesitaMigrar = true;
+        }
+      });
+      if (necesitaMigrar) guardarEntidades(function(){});
     } else {
       // Primera vez: migrar las hardcoded a SharePoint
       guardarEntidades(function(){});
