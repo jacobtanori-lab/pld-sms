@@ -1076,15 +1076,15 @@ function cargarOCRLibs(cb) {
   }
 }
 
-function iniciarLecturaCURP(input, pref) {
+function iniciarLecturaCURP(input, pref, esINE) {
   var file = input.files[0];
   input.value = '';
   if (!file) return;
   toast('Cargando librería OCR...', 'i');
-  cargarOCRLibs(function(){ leerConstanciaCURP(file, pref||''); });
+  cargarOCRLibs(function(){ leerConstanciaCURP(file, pref||'', !!esINE); });
 }
 
-function leerConstanciaCURP(file, pref) {
+function leerConstanciaCURP(file, pref, esINE) {
   toast('Leyendo documento...', 'i');
   var isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
   if (isPDF) {
@@ -1096,27 +1096,33 @@ function leerConstanciaCURP(file, pref) {
           var canvas = document.createElement('canvas');
           canvas.width = vp.width; canvas.height = vp.height;
           page.render({canvasContext:canvas.getContext('2d'), viewport:vp}).promise.then(function(){
-            _runOCR(canvas, pref);
+            _runOCR(canvas, pref, esINE);
           });
         });
       }).catch(function(){ toast('No se pudo leer el PDF','e'); });
     };
     reader.readAsArrayBuffer(file);
   } else {
-    _runOCR(URL.createObjectURL(file), pref);
+    _runOCR(URL.createObjectURL(file), pref, esINE);
   }
 }
 
-function _runOCR(source, pref) {
-  toast('Analizando documento con OCR (puede tardar unos segundos)...', 'i');
+function _runOCR(source, pref, esINE) {
+  toast('Analizando documento con OCR...', 'i');
   Tesseract.recognize(source, 'spa', {
     logger: function(m){
       if (m.status==='recognizing text')
         toast('OCR: '+Math.round((m.progress||0)*100)+'%...', 'i');
     }
   }).then(function(result){
-    var datos = _extraerDatosConstancia(result.data.text);
-    _preRellenarDesdeCURP(datos, pref);
+    var txt = result.data.text;
+    if (esINE) {
+      var datos = _extraerDatosINE(txt);
+      _preRellenarDesdeCURP(datos, pref, true); // true = solo campos vacíos
+    } else {
+      var datos = _extraerDatosConstancia(txt);
+      _preRellenarDesdeCURP(datos, pref, false);
+    }
   }).catch(function(e){ toast('Error OCR: '+(e.message||e),'e'); });
 }
 
@@ -1189,7 +1195,75 @@ function _extraerDatosConstancia(txt) {
   return d;
 }
 
-function _preRellenarDesdeCURP(datos, pref) {
+function _extraerDatosINE(txt) {
+  var d = {};
+  var tUp = txt.toUpperCase().replace(/\r/g, '');
+
+  // CURP (si aparece en el INE)
+  var cm = tUp.match(/[A-Z]{4}\d{6}[HM][A-Z]{2}[B-DF-HJ-NP-TV-Z]{3}[A-Z0-9][\dA-Z]/);
+  if (cm) d.curp = cm[0];
+
+  // Nombre completo (misma lógica que constancia, apoyada en CURP)
+  if (d.curp && d.curp.length === 18) {
+    var letraAP = d.curp[0], letraAM = d.curp[2], letraNom = d.curp[3];
+    var lineas = tUp.split('\n').map(function(l){ return l.trim(); });
+    for (var i = 0; i < lineas.length; i++) {
+      var l = lineas[i];
+      if (l.length < 4 || /\d/.test(l) || /[^A-ZÁÉÍÓÚÜÑ\s]/.test(l)) continue;
+      var palabras = l.split(/\s+/).filter(Boolean);
+      if (palabras.length < 2) continue;
+      var ini = palabras.map(function(w){ return w[0]; });
+      if (ini.indexOf(letraAP) >= 0 && ini.indexOf(letraNom) >= 0) {
+        var usados = [], idxAP = -1, idxAM = -1;
+        for (var p = 0; p < palabras.length; p++) {
+          if (palabras[p][0] === letraAP) { idxAP = p; usados.push(p); break; }
+        }
+        for (var m = 0; m < palabras.length; m++) {
+          if (usados.indexOf(m) < 0 && palabras[m][0] === letraAM) { idxAM = m; usados.push(m); break; }
+        }
+        var nomParts = palabras.filter(function(_,k){ return usados.indexOf(k)<0 && palabras[k].length>1; });
+        if (idxAP >= 0) d.ap_pat = palabras[idxAP];
+        if (idxAM >= 0) d.ap_mat = palabras[idxAM];
+        if (nomParts.length > 0) d.nombre = nomParts.join(' ');
+        break;
+      }
+    }
+  }
+
+  // Fecha de nacimiento DD/MM/AAAA
+  var fm = tUp.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{4})/);
+  if (fm) d.fecha_nac = fm[1]+'-'+fm[2]+'-'+fm[3];
+
+  // Domicilio — el INE imprime la dirección en líneas separadas
+  // Buscar patrón: calle + número, colonia, municipio/estado CP
+  var lineas = tUp.split('\n').map(function(l){ return l.trim(); }).filter(Boolean);
+  for (var i = 0; i < lineas.length; i++) {
+    var l = lineas[i];
+    // Calle y número: línea con letra seguida de dígitos (ej. "CALLE PINO 123")
+    if (!d.calle && /^[A-ZÁÉÍÓÚÜÑ\s]{4,}\s+\d+/.test(l)) {
+      var partes = l.match(/^([A-ZÁÉÍÓÚÜÑ\s]+?)\s+(\d+\s*(?:INT\.?\s*\d+)?)$/);
+      if (partes) { d.calle = partes[1].trim(); d.num_ext = partes[2].trim(); }
+      else d.calle = l;
+    }
+    // Colonia: línea que empieza con COL o COLONIA
+    if (!d.colonia && /^COL(?:ONIA)?[\s\.]+/.test(l))
+      d.colonia = l.replace(/^COL(?:ONIA)?[\s\.]+/,'').trim();
+    // CP: 5 dígitos
+    if (!d.cp) { var cpm = l.match(/\b(\d{5})\b/); if (cpm) d.cp = cpm[1]; }
+  }
+
+  // Clave de elector (18 chars alfanumérico que no sea CURP)
+  var claves = tUp.match(/\b[A-Z]{6}\d{8}[HM]\d{3}\b/);
+  if (claves) d.clave_elector = claves[0];
+
+  // Vigencia (año 4 dígitos al final, típicamente 202X o 203X)
+  var vigm = tUp.match(/VIGENCIA[\s:]+(\d{4})/);
+  if (vigm) d.vigencia = vigm[1];
+
+  return d;
+}
+
+function _preRellenarDesdeCURP(datos, pref, soloVacios) {
   var frm = document.getElementById('frm') || document;
   var llenados = 0;
 
@@ -1197,12 +1271,13 @@ function _preRellenarDesdeCURP(datos, pref) {
     if (!val) return;
     var el = frm.querySelector('[name="'+name+'"]');
     if (!el) return;
+    // Si soloVacios=true, no sobreescribir campos que ya tienen valor
+    if (soloVacios && el.value && el.value.trim() !== '') return;
     el.value = String(val).trim();
     el.dispatchEvent(new Event('change'));
     llenados++;
   }
 
-  // Datos del documento
   if (datos.curp) {
     setV(pref+'curp', datos.curp);
     var parsed = parseCURP(datos.curp);
@@ -1212,15 +1287,22 @@ function _preRellenarDesdeCURP(datos, pref) {
       setV(pref+'pais_nac2', 'Mexico');
     }
   }
-  setV(pref+'ap_pat',    datos.ap_pat);
-  setV(pref+'ap_mat',    datos.ap_mat);
-  setV(pref+'nombre',    datos.nombre);
-  if (datos.fecha_nac) setV(pref+'fecha_nac', datos.fecha_nac);
+  setV(pref+'ap_pat',   datos.ap_pat);
+  setV(pref+'ap_mat',   datos.ap_mat);
+  setV(pref+'nombre',   datos.nombre);
+  if (datos.fecha_nac)  setV(pref+'fecha_nac', datos.fecha_nac);
 
+  // Campos de domicilio (principalmente del INE)
+  setV(pref+'calle',    datos.calle);
+  setV(pref+'num_ext',  datos.num_ext);
+  setV(pref+'colonia',  datos.colonia);
+  setV(pref+'cp',       datos.cp);
+
+  var fuente = soloVacios ? 'INE' : 'constancia CURP';
   if (llenados > 0) {
-    toast('✓ '+llenados+' campos prellenados desde la constancia', 's');
+    toast('✓ '+llenados+' campos prellenados desde '+fuente, 's');
   } else {
-    toast('No se extrajeron datos. Intenta con una imagen más clara o en PDF digital.', 'e');
+    toast('No se extrajeron datos del '+fuente+'. Intenta con imagen más clara.', 'e');
   }
 }
 
@@ -1720,13 +1802,16 @@ function htmlIdPF(d, pref, esMexicana) {
   pref = pref||'';
   var tipoIdLabel = esMexicana?'Tipo de identificacion':'Documento de identificacion / pasaporte';
   var btnOCR = esMexicana
-    ? '<div style="grid-column:1/-1;margin-bottom:4px;display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg2);border:1px dashed var(--brd);border-radius:8px">'
+    ? '<div style="grid-column:1/-1;margin-bottom:4px;display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg2);border:1px dashed var(--brd);border-radius:8px;flex-wrap:wrap">'
       +'<span style="font-size:20px">📄</span>'
-      +'<div style="flex:1"><div style="font-size:12px;font-weight:600;color:var(--tx1)">Leer constancia CURP</div>'
-      +'<div style="font-size:11px;color:var(--tx3)">Sube el PDF o foto — se prerellenan nombre, apellidos, fecha y CURP automáticamente</div></div>'
-      +'<label class="btn btn-p" style="cursor:pointer;font-size:12px;white-space:nowrap">Subir archivo'
+      +'<div style="flex:1;min-width:160px"><div style="font-size:12px;font-weight:600;color:var(--tx1)">Prellenar desde documento</div>'
+      +'<div style="font-size:11px;color:var(--tx3)">Sube la constancia CURP primero, luego el INE para completar el domicilio</div></div>'
+      +'<label class="btn btn-p" style="cursor:pointer;font-size:12px;white-space:nowrap">📋 Constancia CURP'
       +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
-      +'onchange="iniciarLecturaCURP(this,\''+pref+'\')"></label>'
+      +'onchange="iniciarLecturaCURP(this,\''+pref+'\',false)"></label>'
+      +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap">🪪 INE / IFE'
+      +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
+      +'onchange="iniciarLecturaCURP(this,\''+pref+'\',true)"></label>'
       +'</div>'
     : '';
   return '<div class="fgrid">'
