@@ -4330,82 +4330,223 @@ function scrParsearLista(lista, texto) {
   return entradas;
 }
 
-// ── Proxies CORS disponibles (se intentan en orden hasta que uno funcione) ────
-// Cada función recibe la URL original y devuelve la URL del proxy
+// ── Configuración de almacenamiento en OneDrive ──────────────
+var SCR_CARPETA_OD = 'PLD_SMS/listas_sanciones';   // carpeta en OneDrive del sitio
+var SCR_DIAS_REFRESCO = 3;                           // días entre actualizaciones automáticas
+var SCR_CONFIG_KEY = 'scr_listas_config';            // clave en PLD_Config para fechas
+
+// ── Subir archivo a OneDrive ──────────────────────────────────
+function scrSubirArchivoOD(nombreArchivo, contenido, esBinario, cb) {
+  var url = GRAPH + '/sites/' + App.siteId + '/drive/root:/'
+    + SCR_CARPETA_OD + '/' + nombreArchivo + ':/content';
+  fetch(url, {
+    method: 'PUT',
+    headers: {
+      'Authorization': 'Bearer ' + App.token,
+      'Content-Type': 'application/octet-stream'
+    },
+    body: esBinario ? contenido : new TextEncoder().encode(contenido)
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) { cb(d && d.id ? null : new Error('Sin id en respuesta'), d); })
+  .catch(function(e) { cb(e, null); });
+}
+
+// ── Leer archivo desde OneDrive ──────────────────────────────
+function scrLeerArchivoOD(nombreArchivo, encoding, cb) {
+  var url = GRAPH + '/sites/' + App.siteId + '/drive/root:/'
+    + SCR_CARPETA_OD + '/' + nombreArchivo + ':/content';
+  fetch(url, { headers: { 'Authorization': 'Bearer ' + App.token } })
+  .then(function(r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return encoding && encoding !== 'utf-8' ? r.arrayBuffer() : r.text();
+  })
+  .then(function(data) {
+    if (encoding && encoding !== 'utf-8') {
+      data = new TextDecoder(encoding).decode(data);
+    }
+    cb(null, data);
+  })
+  .catch(function(e) { cb(e, null); });
+}
+
+// ── Obtener/guardar config de fechas de actualización ─────────
+function scrLeerConfigFechas(cb) {
+  spGet('PLD_Config', function(lista) {
+    var item = null;
+    (lista || []).forEach(function(c) {
+      if (c.clave === SCR_CONFIG_KEY) item = c;
+    });
+    cb(item ? (item.fechas || {}) : {}, item ? item.id : null);
+  });
+}
+function scrGuardarConfigFechas(fechas, itemId) {
+  var datos = { clave: SCR_CONFIG_KEY, fechas: fechas, Title: SCR_CONFIG_KEY };
+  if (itemId) {
+    spUpdate('PLD_Config', itemId, datos, null);
+  } else {
+    spCreate('PLD_Config', datos, null);
+  }
+}
+
+// ── Verificar si una lista necesita actualizarse ──────────────
+function scrNecesitaActualizar(listaId, fechas) {
+  var ultima = fechas[listaId];
+  if (!ultima) return true;
+  var dias = (Date.now() - new Date(ultima).getTime()) / (1000 * 60 * 60 * 24);
+  return dias >= SCR_DIAS_REFRESCO;
+}
+
+// ── Nombre del archivo en OneDrive para cada lista ────────────
+function scrNombreArchivo(lista) {
+  return 'lista_' + lista.id + (lista.tipo === 'xml' ? '.xml' : '.csv');
+}
+
+// ── Descargar lista desde fuente oficial y guardar en OneDrive ─
+// Usa proxy CORS solo para la descarga inicial a OneDrive (no para screening)
 var SCR_PROXIES = [
   function(url) { return 'https://corsproxy.io/?' + encodeURIComponent(url); },
   function(url) { return 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url); },
-  function(url) { return 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(url); },
-  function(url) { return 'https://thingproxy.freeboard.io/fetch/' + url; }
+  function(url) { return 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(url); }
 ];
 
-// Intenta un fetch con reintentos sobre la cadena de proxies
-// Si necesita ArrayBuffer (encoding especial), pasa useBinary=true
-function scrFetchConProxy(urlOriginal, useBinary, cb) {
-  var proxies = SCR_PROXIES.slice(); // copia para no mutar
+function scrDescargarFuenteYGuardar(lista, onProgress, cb) {
+  var proxies = SCR_PROXIES.slice();
   var intentos = 0;
+  var useBinary = !!(lista.encoding && lista.encoding !== 'utf-8');
 
-  function intentar() {
-    if (!proxies.length) {
-      cb(null, new Error('Todos los proxies fallaron para: ' + urlOriginal));
-      return;
-    }
+  function intentarProxy() {
+    if (!proxies.length) { cb(new Error('No se pudo descargar ' + lista.nombre)); return; }
     var proxyFn = proxies.shift();
-    var proxyUrl = proxyFn(urlOriginal);
+    var proxyUrl = proxyFn(lista.url);
     intentos++;
+    if (onProgress) onProgress('Descargando ' + lista.nombre + ' (intento ' + intentos + ')...');
 
-    fetch(proxyUrl, { signal: AbortSignal.timeout(20000) })
+    fetch(proxyUrl, { signal: AbortSignal.timeout(30000) })
       .then(function(r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status + ' (proxy ' + intentos + ')');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
         return useBinary ? r.arrayBuffer() : r.text();
       })
       .then(function(data) {
-        console.log('[SCR] OK con proxy #' + intentos + ' para', urlOriginal.split('/').pop());
-        cb(data, null);
+        if (onProgress) onProgress('Guardando ' + lista.nombre + ' en OneDrive...');
+        // Guardar en OneDrive como texto UTF-8 o como binario original
+        var contenidoGuardar;
+        if (useBinary) {
+          // Decodificar a texto para guardar normalizado
+          contenidoGuardar = new TextDecoder(lista.encoding).decode(data);
+        } else {
+          contenidoGuardar = data;
+        }
+        scrSubirArchivoOD(scrNombreArchivo(lista), contenidoGuardar, false, function(err) {
+          if (err) { console.warn('[SCR] Error guardando en OD:', err); cb(err); return; }
+          console.log('[SCR] Lista', lista.id, 'guardada en OneDrive');
+          cb(null, contenidoGuardar);
+        });
       })
       .catch(function(err) {
-        console.warn('[SCR] Proxy #' + intentos + ' falló:', err.message, '— intentando siguiente...');
-        intentar(); // siguiente proxy
+        console.warn('[SCR] Proxy #' + intentos + ' falló para', lista.id, ':', err.message);
+        intentarProxy();
       });
   }
-  intentar();
+  intentarProxy();
 }
 
-// ── Carga de lista (con caché en memoria por sesión) ──────────
+// ── Carga de lista: leer desde OneDrive (o descargar si hace falta) ──
 function scrCargarLista(lista, cb) {
+  // 1. Si ya está en caché en memoria, usar directamente
   if (lista._datos && lista._datos.length > 0) { cb(lista._datos); return; }
 
   SCR.cargando[lista.id] = true;
   lista._error = null;
   scrActualizarEstadoListas();
 
-  var useBinary = !!(lista.encoding && lista.encoding !== 'utf-8');
-
-  scrFetchConProxy(lista.url, useBinary, function(data, err) {
-    if (err) {
-      console.error('[SCR] Error definitivo cargando lista', lista.id, err);
+  // 2. Intentar leer desde OneDrive primero
+  scrLeerArchivoOD(scrNombreArchivo(lista), 'utf-8', function(err, texto) {
+    if (!err && texto && texto.length > 100) {
+      // Archivo existe en OneDrive → parsear y cachear
+      lista._datos = scrParsearLista(lista, texto);
+      lista._fechaCarga = new Date().toLocaleTimeString('es-MX');
+      lista._fuente = 'OneDrive';
       SCR.cargando[lista.id] = false;
-      lista._error = 'Sin acceso a la lista';
       scrActualizarEstadoListas();
-      cb([]);
+      cb(lista._datos);
+    } else {
+      // Archivo no existe o está vacío → descargar desde fuente
+      console.log('[SCR] Archivo no encontrado en OD para', lista.id, '— descargando...');
+      scrDescargarFuenteYGuardar(lista, null, function(errD, texto2) {
+        if (errD) {
+          console.error('[SCR] Error definitivo:', errD);
+          SCR.cargando[lista.id] = false;
+          lista._error = 'Sin acceso: ' + errD.message;
+          scrActualizarEstadoListas();
+          cb([]);
+          return;
+        }
+        lista._datos = scrParsearLista(lista, texto2);
+        lista._fechaCarga = new Date().toLocaleTimeString('es-MX');
+        lista._fuente = 'Descargada';
+        SCR.cargando[lista.id] = false;
+        scrActualizarEstadoListas();
+        cb(lista._datos);
+      });
+    }
+  });
+}
+
+// ── Actualizar todas las listas que tengan más de X días ──────
+function scrActualizarListasVencidas(onProgress, onFin) {
+  scrLeerConfigFechas(function(fechas, configId) {
+    var listasActivas = SCR_LISTAS.filter(function(l) { return l.activa; });
+    var listasVencidas = listasActivas.filter(function(l) { return scrNecesitaActualizar(l.id, fechas); });
+
+    if (!listasVencidas.length) {
+      if (onProgress) onProgress('Todas las listas están actualizadas.');
+      if (onFin) onFin(0);
       return;
     }
 
-    var texto;
-    if (useBinary) {
-      var decoder = new TextDecoder(lista.encoding);
-      texto = decoder.decode(data);
-    } else {
-      texto = data;
-    }
+    if (onProgress) onProgress(listasVencidas.length + ' lista(s) requieren actualización...');
+    var pendientes = listasVencidas.length;
+    var actualizadas = 0;
 
-    lista._datos = scrParsearLista(lista, texto);
-    lista._fechaCarga = new Date().toLocaleTimeString('es-MX');
-    SCR.cargando[lista.id] = false;
-    scrActualizarEstadoListas();
-    cb(lista._datos);
+    listasVencidas.forEach(function(lista) {
+      lista._datos = null; // limpiar caché para forzar recarga
+      scrDescargarFuenteYGuardar(lista, onProgress, function(err, texto) {
+        if (!err && texto) {
+          lista._datos = scrParsearLista(lista, texto);
+          lista._fechaCarga = new Date().toLocaleTimeString('es-MX');
+          fechas[lista.id] = new Date().toISOString();
+          actualizadas++;
+        } else {
+          if (onProgress) onProgress('⚠ Error actualizando ' + lista.nombre);
+        }
+        pendientes--;
+        if (pendientes === 0) {
+          scrGuardarConfigFechas(fechas, configId);
+          scrActualizarEstadoListas();
+          if (onProgress) onProgress('✓ ' + actualizadas + ' lista(s) actualizada(s) en OneDrive.');
+          if (onFin) onFin(actualizadas);
+        }
+      });
+    });
   });
 }
+
+// ── Al abrir el módulo, verificar si hay listas vencidas ──────
+function scrVerificarYActualizarAlAbrir() {
+  scrLeerConfigFechas(function(fechas) {
+    var vencidas = SCR_LISTAS.filter(function(l) { return l.activa && scrNecesitaActualizar(l.id, fechas); });
+    if (!vencidas.length) return;
+    var logEl = document.getElementById('scr-log-actualizacion');
+    if (logEl) logEl.innerHTML = '<div style="color:var(--am);font-size:12px">⟳ Actualizando '
+      + vencidas.length + ' lista(s) en segundo plano...</div>';
+    scrActualizarListasVencidas(
+      function(msg) { if (logEl) logEl.innerHTML = '<div style="color:var(--tx3);font-size:12px">' + msg + '</div>'; },
+      function(n) { if (logEl && n > 0) logEl.innerHTML = '<div style="color:var(--vd);font-size:12px">✓ Listas actualizadas</div>'; }
+    );
+  });
+}
+
 
 // ── Buscar en una lista ya cargada ────────────────────────────
 function scrBuscarEnLista(nombre, datos, umbral) {
@@ -4556,9 +4697,35 @@ function pgScreening() {
       + '</div>';
   });
 
+  sbHtml += '<div style="padding:8px 12px">'
+    + '<button class="btn" style="width:100%;font-size:11px" onclick="scrForzarActualizacion()">↻ Actualizar listas</button>'
+    + '</div>'
+    + '<div id="scr-log-actualizacion" style="padding:4px 12px"></div>';
+
   setSB(sbHtml);
   scrVistaManual();
   scrActualizarEstadoListas();
+  // Verificar listas vencidas al abrir el módulo
+  setTimeout(scrVerificarYActualizarAlAbrir, 500);
+}
+
+function scrForzarActualizacion() {
+  // Limpiar caché en memoria para todas las listas
+  SCR_LISTAS.forEach(function(l) { l._datos = null; l._error = null; });
+  var logEl = document.getElementById('scr-log-actualizacion');
+  if (logEl) logEl.innerHTML = '<div style="color:var(--am);font-size:12px">Actualizando todas las listas...</div>';
+  scrLeerConfigFechas(function(fechas, configId) {
+    // Forzar todas como vencidas
+    SCR_LISTAS.forEach(function(l) { fechas[l.id] = null; });
+    scrActualizarListasVencidas(
+      function(msg) { if (logEl) logEl.innerHTML = '<div style="color:var(--tx3);font-size:12px">' + msg + '</div>'; },
+      function(n) {
+        if (logEl) logEl.innerHTML = '<div style="color:var(--vd);font-size:12px">✓ ' + n + ' lista(s) actualizadas</div>';
+        scrActualizarEstadoListas();
+        toast('Listas de sanciones actualizadas en OneDrive', 's');
+      }
+    );
+  });
 }
 
 function scrVistaManual() {
