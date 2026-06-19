@@ -2509,9 +2509,13 @@ function _subirDocsPendientes(numCliente, nombreCliente) {
   docs.forEach(function(d) {
     var reader = new FileReader();
     reader.onload = function(e) {
-      // Limpiar nombre de archivo: solo alfanuméricos, guiones y punto de extensión
-      var ext = d.file.name.split('.').pop() || 'pdf';
-      var nombre = d.tipo + '.' + ext;
+      // Sanitizar nombre original: quitar espacios y caracteres especiales
+      var nombreLimpio = d.file.name
+        .normalize('NFD').replace(/[̀-ͯ]/g,'') // quitar acentos
+        .replace(/[^a-zA-Z0-9._-]/g,'_')                // reemplazar especiales por _
+        .replace(/_+/g,'_')                              // colapsar guiones bajos múltiples
+        .replace(/^_|_$/g,'');                           // quitar _ al inicio/fin
+      var nombre = d.tipo + '_' + nombreLimpio;
       var rutaCodificada = encodeURIComponent(carpeta) + '/' + encodeURIComponent(nombre);
       var url = GRAPH+'/sites/'+App.siteId+'/drive/root:/'+rutaCodificada+':/content';
       fetch(url, {
