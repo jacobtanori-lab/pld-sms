@@ -1107,23 +1107,70 @@ function leerConstanciaCURP(file, pref, esINE) {
   }
 }
 
+function _preprocesarImagen(source, cb) {
+  // Preprocesamiento para mejorar OCR: escala de grises + umbral de contraste
+  var procesarCanvas = function(canvas) {
+    var ctx = canvas.getContext('2d');
+    var img2 = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    var data = img2.data;
+    for (var i = 0; i < data.length; i += 4) {
+      // Escala de grises ponderada
+      var g = 0.299*data[i] + 0.587*data[i+1] + 0.114*data[i+2];
+      // Umbral adaptativo: texto oscuro → negro, fondo claro → blanco
+      var v = g < 150 ? 0 : 255;
+      data[i] = data[i+1] = data[i+2] = v;
+    }
+    ctx.putImageData(img2, 0, 0);
+    cb(canvas);
+  };
+
+  if (source && source.tagName === 'CANVAS') {
+    // Ya es canvas (PDF renderizado)
+    procesarCanvas(source);
+  } else {
+    // URL de imagen
+    var img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = function() {
+      var escala = Math.min(4, 2400 / Math.max(img.naturalWidth || 800, img.naturalHeight || 600));
+      var canvas = document.createElement('canvas');
+      canvas.width  = img.naturalWidth  * escala;
+      canvas.height = img.naturalHeight * escala;
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      procesarCanvas(canvas);
+    };
+    img.onerror = function(){ cb(source); }; // fallback sin preprocesar
+    img.src = source;
+  }
+}
+
 function _runOCR(source, pref, esINE) {
   toast('Analizando documento con OCR...', 'i');
-  Tesseract.recognize(source, 'spa', {
-    logger: function(m){
-      if (m.status==='recognizing text')
-        toast('OCR: '+Math.round((m.progress||0)*100)+'%...', 'i');
-    }
-  }).then(function(result){
-    var txt = result.data.text;
-    if (esINE) {
-      var datos = _extraerDatosINE(txt);
-      _preRellenarDesdeCURP(datos, pref, true); // true = solo campos vacíos
-    } else {
-      var datos = _extraerDatosConstancia(txt);
-      _preRellenarDesdeCURP(datos, pref, false);
-    }
-  }).catch(function(e){ toast('Error OCR: '+(e.message||e),'e'); });
+
+  function ejecutarOCR(src) {
+    Tesseract.recognize(src, 'spa', {
+      logger: function(m){
+        if (m.status==='recognizing text')
+          toast('OCR: '+Math.round((m.progress||0)*100)+'%...', 'i');
+      }
+    }).then(function(result){
+      var txt = result.data.text;
+      if (esINE) {
+        var datos = _extraerDatosINE(txt);
+        _preRellenarDesdeCURP(datos, pref, true);
+      } else {
+        var datos = _extraerDatosConstancia(txt);
+        _preRellenarDesdeCURP(datos, pref, false);
+      }
+    }).catch(function(e){ toast('Error OCR: '+(e.message||e),'e'); });
+  }
+
+  if (esINE) {
+    // Para INE siempre preprocesar para mejorar lectura sobre fondo de seguridad
+    _preprocesarImagen(source, function(canvas){ ejecutarOCR(canvas); });
+  } else {
+    ejecutarOCR(source);
+  }
 }
 
 function _extraerDatosConstancia(txt) {
