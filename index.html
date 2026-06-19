@@ -1121,51 +1121,68 @@ function _runOCR(source, pref) {
 }
 
 function _extraerDatosConstancia(txt) {
-  var t = txt.toUpperCase().replace(/\r/g, '');
   var d = {};
+  var tUp = txt.toUpperCase().replace(/\r/g, '');
 
-  // CURP (18 chars — patrón fijo)
-  var cm = t.match(/[A-Z]{4}\d{6}[HM][A-Z]{2}[B-DF-HJ-NP-TV-Z]{3}[A-Z0-9][\dA-Z]/);
+  // 1. CURP
+  var cm = tUp.match(/[A-Z]{4}\d{6}[HM][A-Z]{2}[B-DF-HJ-NP-TV-Z]{3}[A-Z0-9][\dA-Z]/);
   if (cm) d.curp = cm[0];
 
-  // Fecha DD/MM/AAAA o DD-MM-AAAA
-  var fm = t.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{4})/);
+  // 2. Fecha (si viene explícita en el doc; si no, la deriva parseCURP en _preRellenarDesdeCURP)
+  var fm = tUp.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{4})/);
   if (fm) d.fecha_nac = fm[1]+'-'+fm[2]+'-'+fm[3];
 
-  // Sexo
-  if (/SEXO[\s:]*HOMBRE/.test(t)) d.sexo = 'H';
-  else if (/SEXO[\s:]*MUJER/.test(t)) d.sexo = 'M';
+  // 3. Nombre completo — la constancia RENAPO actual solo muestra una línea con el nombre
+  //    completo (ej. "JACOB CASTILLO TANORI"). Usamos la CURP para separar los componentes:
+  //    CURP[0]=primera letra ap_pat, CURP[2]=primera letra ap_mat, CURP[3]=primera letra nombre
+  if (d.curp && d.curp.length === 18) {
+    var letraAP  = d.curp[0]; // C → Castillo
+    var letraAM  = d.curp[2]; // T → Tanori
+    var letraNom = d.curp[3]; // J → Jacob
 
-  // Para nombres usamos enfoque línea a línea — más robusto ante variaciones de OCR
-  var lineas = t.split('\n').map(function(l){ return l.trim(); }).filter(Boolean);
+    // Buscar línea que sea solo letras y espacios (sin dígitos ni símbolos)
+    // y cuyas iniciales incluyan las letras del CURP
+    var lineas = tUp.split('\n').map(function(l){ return l.trim(); });
+    var nombreCompleto = '';
 
-  function valorDespuesDeEtiqueta(etiqueta, lineas) {
     for (var i = 0; i < lineas.length; i++) {
       var l = lineas[i];
-      // El valor puede estar en la misma línea después de ":" o en la siguiente
-      if (l.indexOf(etiqueta) >= 0) {
-        // Mismo renglón: "NOMBRE(S): JUAN"
-        var partes = l.replace(etiqueta, '').replace(/^[\s:]+/, '');
-        if (partes.length > 1) return partes;
-        // Siguiente renglón
-        if (i+1 < lineas.length) return lineas[i+1];
+      if (l.length < 4) continue;
+      if (/\d/.test(l)) continue;                          // descarta líneas con números
+      if (/[^A-ZÁÉÍÓÚÜÑ\s]/.test(l)) continue;            // solo letras y espacios
+      var palabras = l.split(/\s+/).filter(Boolean);
+      if (palabras.length < 2) continue;
+      var iniciales = palabras.map(function(w){ return w[0]; });
+      if (iniciales.indexOf(letraAP) >= 0 && iniciales.indexOf(letraNom) >= 0) {
+        nombreCompleto = l;
+        break;
       }
     }
-    return '';
+
+    if (nombreCompleto) {
+      var palabras = nombreCompleto.split(/\s+/).filter(Boolean);
+      var usados = [];
+      var idxAP = -1, idxAM = -1;
+
+      // Identificar ap_pat
+      for (var p = 0; p < palabras.length; p++) {
+        if (palabras[p][0] === letraAP) { idxAP = p; usados.push(p); break; }
+      }
+      // Identificar ap_mat
+      for (var m = 0; m < palabras.length; m++) {
+        if (usados.indexOf(m) < 0 && palabras[m][0] === letraAM) { idxAM = m; usados.push(m); break; }
+      }
+      // El resto son el nombre (puede ser compuesto: JOSE MARIA)
+      var nombreParts = [];
+      for (var k = 0; k < palabras.length; k++) {
+        if (usados.indexOf(k) < 0) nombreParts.push(palabras[k]);
+      }
+
+      if (idxAP >= 0) d.ap_pat = palabras[idxAP];
+      if (idxAM >= 0) d.ap_mat = palabras[idxAM];
+      if (nombreParts.length > 0) d.nombre = nombreParts.join(' ');
+    }
   }
-
-  function soloNombre(s) {
-    // Limpia números, caracteres raros que el OCR pueda agregar
-    return s.replace(/[^A-ZÁÉÍÓÚÜÑ\s]/g,'').replace(/\s+/g,' ').trim();
-  }
-
-  d.nombre  = soloNombre(valorDespuesDeEtiqueta('NOMBRE', lineas));
-  d.ap_pat  = soloNombre(valorDespuesDeEtiqueta('PRIMER APELLIDO', lineas));
-  d.ap_mat  = soloNombre(valorDespuesDeEtiqueta('SEGUNDO APELLIDO', lineas));
-
-  // Si "NOMBRE(S)" devuelve algo que parece un apellido, probablemente el label
-  // estaba en la misma línea que el valor y lo tomamos bien; si no, ignorar
-  if (d.nombre && (d.nombre === 'S' || d.nombre.length < 2)) d.nombre = '';
 
   return d;
 }
