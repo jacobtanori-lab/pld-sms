@@ -1121,32 +1121,51 @@ function _runOCR(source, pref) {
 }
 
 function _extraerDatosConstancia(txt) {
-  var t = txt.toUpperCase().replace(/\r/g,'');
+  var t = txt.toUpperCase().replace(/\r/g, '');
   var d = {};
 
-  // CURP (18 chars)
+  // CURP (18 chars — patrón fijo)
   var cm = t.match(/[A-Z]{4}\d{6}[HM][A-Z]{2}[B-DF-HJ-NP-TV-Z]{3}[A-Z0-9][\dA-Z]/);
   if (cm) d.curp = cm[0];
 
-  // Nombres — busca etiqueta flexible
-  var nm = t.match(/NOMBRE[S)]{0,2}[\s:]+([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s]{1,50?)(?:\n|APELLIDO|RFC|FECHA)/);
-  if (nm) d.nombre = nm[1].trim().replace(/\s+/g,' ');
-
-  // Primer apellido
-  var pm = t.match(/PRIMER\s+APELLIDO[\s:]+([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s]{1,30?)(?:\n|SEGUNDO|NOMBRE|FECHA)/);
-  if (pm) d.ap_pat = pm[1].trim().replace(/\s+/g,' ');
-
-  // Segundo apellido
-  var sm = t.match(/SEGUNDO\s+APELLIDO[\s:]+([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s]{1,30?)(?:\n|NOMBRE|FECHA|SEXO|RFC)/);
-  if (sm) d.ap_mat = sm[1].trim().replace(/\s+/g,' ');
-
-  // Fecha — DD/MM/AAAA o DD-MM-AAAA
-  var fm = t.match(/FECHA\s+DE\s+NACIMIENTO[\s:]+(\d{2})[\/\-](\d{2})[\/\-](\d{4})/);
+  // Fecha DD/MM/AAAA o DD-MM-AAAA
+  var fm = t.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{4})/);
   if (fm) d.fecha_nac = fm[1]+'-'+fm[2]+'-'+fm[3];
 
   // Sexo
-  if (/SEXO[\s:]+HOMBRE/.test(t)) d.sexo = 'H';
-  else if (/SEXO[\s:]+MUJER/.test(t)) d.sexo = 'M';
+  if (/SEXO[\s:]*HOMBRE/.test(t)) d.sexo = 'H';
+  else if (/SEXO[\s:]*MUJER/.test(t)) d.sexo = 'M';
+
+  // Para nombres usamos enfoque línea a línea — más robusto ante variaciones de OCR
+  var lineas = t.split('\n').map(function(l){ return l.trim(); }).filter(Boolean);
+
+  function valorDespuesDeEtiqueta(etiqueta, lineas) {
+    for (var i = 0; i < lineas.length; i++) {
+      var l = lineas[i];
+      // El valor puede estar en la misma línea después de ":" o en la siguiente
+      if (l.indexOf(etiqueta) >= 0) {
+        // Mismo renglón: "NOMBRE(S): JUAN"
+        var partes = l.replace(etiqueta, '').replace(/^[\s:]+/, '');
+        if (partes.length > 1) return partes;
+        // Siguiente renglón
+        if (i+1 < lineas.length) return lineas[i+1];
+      }
+    }
+    return '';
+  }
+
+  function soloNombre(s) {
+    // Limpia números, caracteres raros que el OCR pueda agregar
+    return s.replace(/[^A-ZÁÉÍÓÚÜÑ\s]/g,'').replace(/\s+/g,' ').trim();
+  }
+
+  d.nombre  = soloNombre(valorDespuesDeEtiqueta('NOMBRE', lineas));
+  d.ap_pat  = soloNombre(valorDespuesDeEtiqueta('PRIMER APELLIDO', lineas));
+  d.ap_mat  = soloNombre(valorDespuesDeEtiqueta('SEGUNDO APELLIDO', lineas));
+
+  // Si "NOMBRE(S)" devuelve algo que parece un apellido, probablemente el label
+  // estaba en la misma línea que el valor y lo tomamos bien; si no, ignorar
+  if (d.nombre && (d.nombre === 'S' || d.nombre.length < 2)) d.nombre = '';
 
   return d;
 }
