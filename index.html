@@ -1180,6 +1180,8 @@ function _extraerDatosConstancia(txt) {
 
       if (idxAP >= 0) d.ap_pat = palabras[idxAP];
       if (idxAM >= 0) d.ap_mat = palabras[idxAM];
+      // Filtrar artefactos OCR: palabras de 1 carácter o que no sean letras reales
+      nombreParts = nombreParts.filter(function(w){ return w.length > 1; });
       if (nombreParts.length > 0) d.nombre = nombreParts.join(' ');
     }
   }
