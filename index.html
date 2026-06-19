@@ -4292,119 +4292,77 @@ function exportarClientesXLS() {
     var clientes = datos.clientes || [];
     if (!esConsolidada) clientes = clientes.filter(function(c){ return c.entidad_id === entId; });
 
-    // Índices por num_cliente
-    var sumaOps={}, cntOps={}, cntLiq={}, sumaLiq={}, cntAlt={}, cntAvi={};
+    var sumaOps={}, cntOps={}, sumaLiq={}, cntLiq={}, cntAlt={}, cntAvi={};
     (datos.ops||[]).forEach(function(o){
-      var k = o.num_cliente;
-      if (!k) return;
-      sumaOps[k] = (sumaOps[k]||0) + parseFloat(o.monto||0);
-      cntOps[k]  = (cntOps[k]||0) + 1;
+      var k=o.num_cliente; if(!k) return;
+      sumaOps[k]=(sumaOps[k]||0)+parseFloat(o.monto||0); cntOps[k]=(cntOps[k]||0)+1;
     });
     (datos.liq||[]).forEach(function(o){
-      var k = o.num_cliente;
-      if (!k) return;
-      sumaLiq[k] = (sumaLiq[k]||0) + parseFloat(o.monto||0);
-      cntLiq[k]  = (cntLiq[k]||0) + 1;
+      var k=o.num_cliente; if(!k) return;
+      sumaLiq[k]=(sumaLiq[k]||0)+parseFloat(o.monto||0); cntLiq[k]=(cntLiq[k]||0)+1;
     });
-    (datos.alertas||[]).forEach(function(a){
-      var k = a.num_cliente;
-      if (k) cntAlt[k] = (cntAlt[k]||0) + 1;
-    });
-    (datos.avisos||[]).forEach(function(r){
-      var k = r.num_cliente;
-      if (k) cntAvi[k] = (cntAvi[k]||0) + 1;
-    });
-
-    // Encabezados
-    var cols = [
-      'Num. Cliente','Entidad','Nombre / Razon social','Tipo','RFC','CURP',
-      'Fecha nacimiento / constitucion','Pais nacimiento','Nacionalidad',
-      'Actividad / giro','Fraccion LFPIORPI','Nivel de riesgo','Puntaje EBR',
-      'Domicilio','Colonia','Municipio','Estado','CP','Pais',
-      'Registrado por','Fecha registro',
-      'Ops. inmobiliarias (cant)','Ops. inmobiliarias (monto MXN)',
-      'Liquidaciones (cant)','Liquidaciones (monto MXN)',
-      'Alertas PLD','Avisos regulatorios'
-    ];
-
-    function xCell(v, tipo) {
-      var t = tipo || 'String';
-      var s = (v===null||v===undefined) ? '' : String(v);
-      s = s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-      if (t === 'Number') return '<Cell><Data ss:Type="Number">'+(parseFloat(v)||0)+'</Data></Cell>';
-      return '<Cell><Data ss:Type="String">'+s+'</Data></Cell>';
-    }
-
-    function xRow(cells) { return '<Row>'+cells.join('')+'</Row>'; }
-
-    var headerStyle = '<Style ss:ID="h"><Font ss:Bold="1"/><Interior ss:Color="#1E3A5F" ss:Pattern="Solid"/>'
-      +'<Font ss:Bold="1" ss:Color="#FFFFFF"/><Alignment ss:Horizontal="Center"/></Style>';
-    var altStyle = '<Style ss:ID="a"><Interior ss:Color="#F5F7FA" ss:Pattern="Solid"/></Style>';
-
-    var headerRow = '<Row ss:StyleID="h">'
-      + cols.map(function(c){ return '<Cell ss:StyleID="h"><Data ss:Type="String">'+c+'</Data></Cell>'; }).join('')
-      +'</Row>';
-
-    var rows = clientes.map(function(c, i){
-      var k = c.num_cliente;
-      var sid = (i%2===1) ? ' ss:StyleID="a"' : '';
-      var domicilio = [c.calle, c.num_ext ? 'No.'+c.num_ext : '', c.num_int ? 'Int.'+c.num_int : ''].filter(Boolean).join(' ');
-      return '<Row'+sid+'>'
-        + xCell(nStr(k))
-        + xCell(c.entidad_nombre || c.entidad_id || '')
-        + xCell(c.Title || nombreCliente(c))
-        + xCell(labelTipo(c.tipo))
-        + xCell(c.rfc || '')
-        + xCell(c.curp || '')
-        + xCell(c.fecha_nac || c.fecha_const || '')
-        + xCell(c.pais_nac || '')
-        + xCell(c.pais_nac2 || c.pais_nac || '')
-        + xCell(c.actividad || c.giro || '')
-        + xCell(c.fraccion || '')
-        + xCell(c.riesgo || '')
-        + xCell(c.puntaje_ebr || 0, 'Number')
-        + xCell(domicilio)
-        + xCell(c.colonia || '')
-        + xCell(c.municipio || '')
-        + xCell(c.estado || '')
-        + xCell(c.cp || '')
-        + xCell(c.pais || 'Mexico')
-        + xCell(c.registrado_por || '')
-        + xCell(c.fecha_registro || '')
-        + xCell(cntOps[k] || 0, 'Number')
-        + xCell(sumaOps[k] || 0, 'Number')
-        + xCell(cntLiq[k] || 0, 'Number')
-        + xCell(sumaLiq[k] || 0, 'Number')
-        + xCell(cntAlt[k] || 0, 'Number')
-        + xCell(cntAvi[k] || 0, 'Number')
-        +'</Row>';
-    }).join('');
+    (datos.alertas||[]).forEach(function(a){ var k=a.num_cliente; if(k) cntAlt[k]=(cntAlt[k]||0)+1; });
+    (datos.avisos||[]).forEach(function(r){ var k=r.num_cliente; if(k) cntAvi[k]=(cntAvi[k]||0)+1; });
 
     var entNombre = esConsolidada ? 'Todas las entidades' : (App.entidadActual.nombre || entId);
     var fecha = hoy();
-    var xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
-      +'<?mso-application progid="Excel.Sheet"?>\n'
-      +'<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" '
-      +'xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">\n'
-      +'<Styles>'+headerStyle+altStyle+'</Styles>\n'
-      +'<Worksheet ss:Name="Clientes">\n'
-      +'<Table>\n'
-      + headerRow + rows
-      +'</Table>\n</Worksheet>\n'
-      +'<Worksheet ss:Name="Info">\n<Table>\n'
-      +'<Row><Cell><Data ss:Type="String">Entidad</Data></Cell><Cell><Data ss:Type="String">'+entNombre+'</Data></Cell></Row>\n'
-      +'<Row><Cell><Data ss:Type="String">Fecha de exportacion</Data></Cell><Cell><Data ss:Type="String">'+fecha+'</Data></Cell></Row>\n'
-      +'<Row><Cell><Data ss:Type="String">Total de clientes</Data></Cell><Cell><Data ss:Type="Number">'+clientes.length+'</Data></Cell></Row>\n'
-      +'</Table>\n</Worksheet>\n'
-      +'</Workbook>';
 
-    var blob = new Blob([xml], {type:'application/vnd.ms-excel;charset=utf-8'});
+    function esc(v){ return String(v===null||v===undefined?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function td(v, num){ return '<td'+(num?' style="mso-number-format:\'#\\,##0.00\'"':'')+'>' + esc(num ? (parseFloat(v)||0) : v) + '</td>'; }
+
+    var cols = ['Num. Cliente','Entidad','Nombre / Razon social','Tipo','RFC','CURP',
+      'Fecha nac / const','Pais nacimiento','Nacionalidad','Actividad / giro','Fraccion LFPIORPI',
+      'Nivel de riesgo','Puntaje EBR','Domicilio','Colonia','Municipio','Estado','CP','Pais',
+      'Registrado por','Fecha registro',
+      'Ops. inmob. (cant)','Ops. inmob. (MXN)','Liquidaciones (cant)','Liquidaciones (MXN)',
+      'Alertas PLD','Avisos regulatorios'];
+
+    var thead = '<tr>' + cols.map(function(c){
+      return '<th style="background:#1E3A5F;color:#fff;font-weight:bold;white-space:nowrap">'+esc(c)+'</th>';
+    }).join('') + '</tr>';
+
+    var tbody = clientes.map(function(c, i){
+      var k = c.num_cliente;
+      var bg = i%2===1 ? 'background:#F5F7FA;' : '';
+      var domicilio = [c.calle, c.num_ext?'No.'+c.num_ext:'', c.num_int?'Int.'+c.num_int:''].filter(Boolean).join(' ');
+      return '<tr style="'+bg+'">'
+        + td(nStr(k))
+        + td(c.entidad_nombre||c.entidad_id||'')
+        + td(c.Title||nombreCliente(c))
+        + td(labelTipo(c.tipo))
+        + td(c.rfc||'') + td(c.curp||'')
+        + td(c.fecha_nac||c.fecha_const||'')
+        + td(c.pais_nac||'') + td(c.pais_nac2||c.pais_nac||'')
+        + td(c.actividad||c.giro||'') + td(c.fraccion||'')
+        + td(c.riesgo||'') + td(c.puntaje_ebr||0, true)
+        + td(domicilio) + td(c.colonia||'') + td(c.municipio||'')
+        + td(c.estado||'') + td(c.cp||'') + td(c.pais||'Mexico')
+        + td(c.registrado_por||'') + td(c.fecha_registro||'')
+        + td(cntOps[k]||0, true) + td(sumaOps[k]||0, true)
+        + td(cntLiq[k]||0, true) + td(sumaLiq[k]||0, true)
+        + td(cntAlt[k]||0, true) + td(cntAvi[k]||0, true)
+        + '</tr>';
+    }).join('');
+
+    var html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" '
+      +'xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">'
+      +'<head><meta charset="UTF-8">'
+      +'<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets>'
+      +'<x:ExcelWorksheet><x:Name>Clientes</x:Name>'
+      +'<x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>'
+      +'</x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->'
+      +'<style>td,th{border:1px solid #ccc;padding:4px 8px;font-size:11px;font-family:Calibri,Arial}table{border-collapse:collapse}</style>'
+      +'</head><body>'
+      +'<p style="font-size:11px;color:#666">Entidad: <b>'+esc(entNombre)+'</b> &nbsp;|&nbsp; Fecha: <b>'+fecha+'</b> &nbsp;|&nbsp; Total clientes: <b>'+clientes.length+'</b></p>'
+      +'<table><thead>'+thead+'</thead><tbody>'+tbody+'</tbody></table>'
+      +'</body></html>';
+
+    var bom = '﻿';
+    var blob = new Blob([bom+html], {type:'application/vnd.ms-excel;charset=utf-8'});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = 'Clientes_PLD_'+(esConsolidada?'TODAS':entId)+'_'+fecha.replace(/-/g,'')+'.xls';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
     toast('Reporte exportado: '+clientes.length+' clientes', 's');
   }
 
