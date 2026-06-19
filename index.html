@@ -4011,7 +4011,7 @@ var SCR_LISTAS = [
     nombre: 'OFAC SDN',
     fuente: 'U.S. Treasury / OFAC',
     // CSV sin encabezado. Valores nulos = "-0-". col0=uid, col1=nombre, col2=tipo, col3=programa
-    url: 'https://www.treasury.gov/ofac/downloads/sdn.csv',
+    url: 'https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.CSV',
     tipo: 'csv',
     sinEncabezado: true,
     activa: true,
@@ -4025,7 +4025,7 @@ var SCR_LISTAS = [
     nombre: 'OFAC Consolidated (Non-SDN)',
     fuente: 'U.S. Treasury / OFAC',
     // Mismo formato que SDN pero lista non-SDN (FSE, SSI, NS-ISA, NS-PLC, Part 561)
-    url: 'https://www.treasury.gov/ofac/downloads/consolidated/consolidated.csv',
+    url: 'https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/CONS_PRIM.CSV',
     tipo: 'csv',
     sinEncabezado: true,
     activa: true,
@@ -4406,8 +4406,10 @@ function scrNombreArchivo(lista) {
 // Usa proxy CORS solo para la descarga inicial a OneDrive (no para screening)
 var SCR_PROXIES = [
   function(url) { return 'https://corsproxy.io/?' + encodeURIComponent(url); },
-  function(url) { return 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url); },
-  function(url) { return 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(url); }
+  function(url) { return 'https://corsproxy.org/?' + encodeURIComponent(url); },
+  function(url) { return 'https://api.cors.lol/?url=' + encodeURIComponent(url); },
+  function(url) { return 'https://thingproxy.freeboard.io/fetch/' + url; },
+  function(url) { return 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url); }
 ];
 
 function scrDescargarFuenteYGuardar(lista, onProgress, cb) {
