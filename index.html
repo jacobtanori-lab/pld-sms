@@ -1057,6 +1057,8 @@ function iniciarLecturaCSF(input, pref) {
   var file = input.files[0];
   input.value = '';
   if (!file) return;
+  App._docsPendientes = App._docsPendientes || [];
+  App._docsPendientes.push({file: file, tipo: 'Constancia_SAT'});
   toast('Leyendo constancia SAT...', 'i');
   cargarOCRLibs(function(){ leerCSF(file, pref||''); });
 }
@@ -1237,6 +1239,9 @@ function iniciarLecturaCURP(input, pref, esINE) {
   var file = input.files[0];
   input.value = '';
   if (!file) return;
+  // Guardar archivo para subirlo al expediente tras crear el cliente
+  App._docsPendientes = App._docsPendientes || [];
+  App._docsPendientes.push({file: file, tipo: esINE ? 'INE_IFE' : 'Constancia_CURP'});
   toast('Cargando librería OCR...', 'i');
   cargarOCRLibs(function(){ leerConstanciaCURP(file, pref||'', !!esINE); });
 }
@@ -2486,12 +2491,36 @@ function submitCliente(tipo, idEx) {
       spCreate('PLD_Clientes', datos, function(item) {
         if (item) {
           toast('Expediente #'+item.num_cliente+' creado correctamente', 's');
-          // Screening automático contra listas cargadas en memoria
           scrAlertarCliente(datos.Title || nombreClienteDatos(datos), item.id, item.num_cliente);
+          _subirDocsPendientes(item.num_cliente, datos.Title || nombreClienteDatos(datos));
           pgClientes();
         }
       });
     }
+  });
+}
+
+function _subirDocsPendientes(numCliente, nombreCliente) {
+  var docs = App._docsPendientes || [];
+  App._docsPendientes = [];
+  if (!docs.length) return;
+  var nom = (nombreCliente||'').replace(/[^a-zA-Z0-9_\-]/g,'_').substring(0,40);
+  var carpeta = 'PLD_Documentos/'+nStr(numCliente)+'_'+nom;
+  docs.forEach(function(d) {
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      var nombre = d.tipo + '_' + d.file.name;
+      var url = GRAPH+'/sites/'+App.siteId+'/drive/root:/'+carpeta+'/'+nombre+':/content';
+      fetch(url, {
+        method: 'PUT',
+        headers: {'Authorization':'Bearer '+App.token, 'Content-Type': d.file.type||'application/octet-stream'},
+        body: e.target.result
+      }).then(function(r){ return r.json(); })
+        .then(function(res){
+          if (res && res.id) toast('📎 '+d.tipo.replace(/_/g,' ')+' guardado en el expediente','s');
+        }).catch(function(){});
+    };
+    reader.readAsArrayBuffer(d.file);
   });
 }
 
