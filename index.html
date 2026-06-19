@@ -1052,6 +1052,140 @@ function fi(name,v,ph,cls){
 }
 function fs(name,opHtml){return '<select class="sel" name="'+name+'">'+opHtml+'</select></div>';}
 
+// ── OCR: Lectura de constancia CURP ──────────────────────────
+function cargarOCRLibs(cb) {
+  var pendientes = (window.Tesseract ? 0 : 1) + (window.pdfjsLib ? 0 : 1);
+  if (pendientes === 0) { cb(); return; }
+  function done() { if (--pendientes === 0) cb(); }
+  if (!window.Tesseract) {
+    var s1 = document.createElement('script');
+    s1.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js';
+    s1.onload = done;
+    s1.onerror = function(){ toast('No se pudo cargar Tesseract.js','e'); };
+    document.head.appendChild(s1);
+  }
+  if (!window.pdfjsLib) {
+    var s2 = document.createElement('script');
+    s2.src = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js';
+    s2.onload = function(){
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+      done();
+    };
+    s2.onerror = function(){ toast('No se pudo cargar PDF.js','e'); };
+    document.head.appendChild(s2);
+  }
+}
+
+function iniciarLecturaCURP(input, pref) {
+  var file = input.files[0];
+  input.value = '';
+  if (!file) return;
+  toast('Cargando librería OCR...', 'i');
+  cargarOCRLibs(function(){ leerConstanciaCURP(file, pref||''); });
+}
+
+function leerConstanciaCURP(file, pref) {
+  toast('Leyendo documento...', 'i');
+  var isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+  if (isPDF) {
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      pdfjsLib.getDocument({data: e.target.result}).promise.then(function(pdf){
+        pdf.getPage(1).then(function(page){
+          var vp = page.getViewport({scale:2.5});
+          var canvas = document.createElement('canvas');
+          canvas.width = vp.width; canvas.height = vp.height;
+          page.render({canvasContext:canvas.getContext('2d'), viewport:vp}).promise.then(function(){
+            _runOCR(canvas, pref);
+          });
+        });
+      }).catch(function(){ toast('No se pudo leer el PDF','e'); });
+    };
+    reader.readAsArrayBuffer(file);
+  } else {
+    _runOCR(URL.createObjectURL(file), pref);
+  }
+}
+
+function _runOCR(source, pref) {
+  toast('Analizando documento con OCR (puede tardar unos segundos)...', 'i');
+  Tesseract.recognize(source, 'spa', {
+    logger: function(m){
+      if (m.status==='recognizing text')
+        toast('OCR: '+Math.round((m.progress||0)*100)+'%...', 'i');
+    }
+  }).then(function(result){
+    var datos = _extraerDatosConstancia(result.data.text);
+    _preRellenarDesdeCURP(datos, pref);
+  }).catch(function(e){ toast('Error OCR: '+(e.message||e),'e'); });
+}
+
+function _extraerDatosConstancia(txt) {
+  var t = txt.toUpperCase().replace(/\r/g,'');
+  var d = {};
+
+  // CURP (18 chars)
+  var cm = t.match(/[A-Z]{4}\d{6}[HM][A-Z]{2}[B-DF-HJ-NP-TV-Z]{3}[A-Z0-9][\dA-Z]/);
+  if (cm) d.curp = cm[0];
+
+  // Nombres — busca etiqueta flexible
+  var nm = t.match(/NOMBRE[S)]{0,2}[\s:]+([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s]{1,50?)(?:\n|APELLIDO|RFC|FECHA)/);
+  if (nm) d.nombre = nm[1].trim().replace(/\s+/g,' ');
+
+  // Primer apellido
+  var pm = t.match(/PRIMER\s+APELLIDO[\s:]+([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s]{1,30?)(?:\n|SEGUNDO|NOMBRE|FECHA)/);
+  if (pm) d.ap_pat = pm[1].trim().replace(/\s+/g,' ');
+
+  // Segundo apellido
+  var sm = t.match(/SEGUNDO\s+APELLIDO[\s:]+([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s]{1,30?)(?:\n|NOMBRE|FECHA|SEXO|RFC)/);
+  if (sm) d.ap_mat = sm[1].trim().replace(/\s+/g,' ');
+
+  // Fecha — DD/MM/AAAA o DD-MM-AAAA
+  var fm = t.match(/FECHA\s+DE\s+NACIMIENTO[\s:]+(\d{2})[\/\-](\d{2})[\/\-](\d{4})/);
+  if (fm) d.fecha_nac = fm[1]+'-'+fm[2]+'-'+fm[3];
+
+  // Sexo
+  if (/SEXO[\s:]+HOMBRE/.test(t)) d.sexo = 'H';
+  else if (/SEXO[\s:]+MUJER/.test(t)) d.sexo = 'M';
+
+  return d;
+}
+
+function _preRellenarDesdeCURP(datos, pref) {
+  var frm = document.getElementById('frm') || document;
+  var llenados = 0;
+
+  function setV(name, val) {
+    if (!val) return;
+    var el = frm.querySelector('[name="'+name+'"]');
+    if (!el) return;
+    el.value = String(val).trim();
+    el.dispatchEvent(new Event('change'));
+    llenados++;
+  }
+
+  // Datos del documento
+  if (datos.curp) {
+    setV(pref+'curp', datos.curp);
+    var parsed = parseCURP(datos.curp);
+    if (parsed) {
+      setV(pref+'fecha_nac', parsed.fecha_nac);
+      setV(pref+'pais_nac',  'Mexico');
+      setV(pref+'pais_nac2', 'Mexico');
+    }
+  }
+  setV(pref+'ap_pat',    datos.ap_pat);
+  setV(pref+'ap_mat',    datos.ap_mat);
+  setV(pref+'nombre',    datos.nombre);
+  if (datos.fecha_nac) setV(pref+'fecha_nac', datos.fecha_nac);
+
+  if (llenados > 0) {
+    toast('✓ '+llenados+' campos prellenados desde la constancia', 's');
+  } else {
+    toast('No se extrajeron datos. Intenta con una imagen más clara o en PDF digital.', 'e');
+  }
+}
+
 // ── CURP: extracción automática de datos ─────────────────────
 var CURP_ESTADOS = {
   AS:'Aguascalientes', BC:'Baja California', BS:'Baja California Sur',
@@ -1547,7 +1681,18 @@ function htmlDomicilio(d, pref) {
 function htmlIdPF(d, pref, esMexicana) {
   pref = pref||'';
   var tipoIdLabel = esMexicana?'Tipo de identificacion':'Documento de identificacion / pasaporte';
+  var btnOCR = esMexicana
+    ? '<div style="grid-column:1/-1;margin-bottom:4px;display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg2);border:1px dashed var(--brd);border-radius:8px">'
+      +'<span style="font-size:20px">📄</span>'
+      +'<div style="flex:1"><div style="font-size:12px;font-weight:600;color:var(--tx1)">Leer constancia CURP</div>'
+      +'<div style="font-size:11px;color:var(--tx3)">Sube el PDF o foto — se prerellenan nombre, apellidos, fecha y CURP automáticamente</div></div>'
+      +'<label class="btn btn-p" style="cursor:pointer;font-size:12px;white-space:nowrap">Subir archivo'
+      +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
+      +'onchange="iniciarLecturaCURP(this,\''+pref+'\')"></label>'
+      +'</div>'
+    : '';
   return '<div class="fgrid">'
+    +btnOCR
     +secHdr('Identificacion personal')
     +fg('Apellido paterno',pref+'ap_pat',true)+fi(pref+'ap_pat',d[pref+'ap_pat']||'','Sin abreviaturas')
     +fg('Apellido materno',pref+'ap_mat',false)+fi(pref+'ap_mat',d[pref+'ap_mat']||'','')
