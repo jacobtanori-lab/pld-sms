@@ -1101,71 +1101,55 @@ function leerCSF(file, pref) {
 
 function _extraerDatosCSF(txt) {
   var d = {};
-  var t = txt.replace(/\r/g,'');
-  var tUp = t.toUpperCase();
+  var t = txt.replace(/\r/g, '');
 
-  function campo(etiquetas, texto) {
-    // Busca la primera etiqueta que aparezca y toma el valor en la misma línea o la siguiente
-    var lineas = texto.split('\n');
-    for (var i = 0; i < lineas.length; i++) {
-      var l = lineas[i].trim();
-      for (var e = 0; e < etiquetas.length; e++) {
-        var et = etiquetas[e].toUpperCase();
-        var lUp = l.toUpperCase();
-        if (lUp.indexOf(et) >= 0) {
-          // Valor en la misma línea después de ":"
-          var pos = lUp.indexOf(et) + et.length;
-          var resto = l.substring(pos).replace(/^[\s:]+/,'').trim();
-          if (resto.length > 0) return resto;
-          // Valor en la siguiente línea
-          if (i+1 < lineas.length) return lineas[i+1].trim();
-        }
-      }
-    }
-    return '';
+  function rx(patron, texto, grupo) {
+    var m = texto.match(patron);
+    return m ? (m[grupo||1]||'').trim() : '';
   }
 
-  // RFC
-  d.rfc = campo(['RFC'], t).toUpperCase().replace(/\s/g,'').substring(0,13);
-
-  // Nombre / Razón Social
-  var nombreCompleto = campo(['Nombre / Razón Social','NOMBRE / RAZÓN SOCIAL','Nombre/Razón Social'], t);
-  if (nombreCompleto) d.nombre_completo = nombreCompleto;
-
-  // Para PF: nombre y apellidos por separado (el CSF los tiene en secciones)
-  var apPat = campo(['Primer Apellido','PRIMER APELLIDO'], t);
-  var apMat = campo(['Segundo Apellido','SEGUNDO APELLIDO'], t);
-  var nombre = campo(['Nombre\n','Nombre ','NOMBRE\n','NOMBRE '], t);
-  if (apPat) d.ap_pat = apPat;
-  if (apMat) d.ap_mat = apMat;
-  if (nombre && nombre.length > 1) d.nombre = nombre;
+  // RFC — aparece como "RFC: CATJ850406NM9"
+  d.rfc = rx(/RFC:\s*([A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3})/i, t).toUpperCase();
 
   // CURP
-  var cm = tUp.match(/[A-Z]{4}\d{6}[HM][A-Z]{2}[B-DF-HJ-NP-TV-Z]{3}[A-Z0-9][\dA-Z]/);
+  var cm = t.toUpperCase().match(/[A-Z]{4}\d{6}[HM][A-Z]{2}[B-DF-HJ-NP-TV-Z]{3}[A-Z0-9][\dA-Z]/);
   if (cm) d.curp = cm[0];
 
-  // Fecha de nacimiento
-  var fn = t.match(/Fecha.*?[Nn]ac.*?(\d{2})[\/\-](\d{2})[\/\-](\d{4})/);
-  if (fn) d.fecha_nac = fn[1]+'-'+fn[2]+'-'+fn[3];
+  // Nombre(s) — "Nombre (s): JACOB"
+  d.nombre  = rx(/Nombre\s*\([sS]\)\s*:\s*([^\n]+?)(?:\s{3,}|\n|$)/i, t);
 
-  // Domicilio fiscal
-  d.calle    = campo(['Nombre de Vialidad','Calle o Vialidad','NOMBRE DE VIALIDAD'], t);
-  d.num_ext  = campo(['Número Exterior','Numero Exterior','NÚMERO EXTERIOR'], t);
-  d.num_int  = campo(['Número Interior','Numero Interior','NÚMERO INTERIOR'], t);
-  d.colonia  = campo(['Nombre de la Colonia','Colonia','NOMBRE DE LA COLONIA'], t);
-  d.municipio= campo(['Nombre del Municipio','Municipio o Delegación','MUNICIPIO'], t);
-  d.ciudad   = campo(['Ciudad','Población','CIUDAD'], t);
-  d.cp       = campo(['Código Postal','Codigo Postal','CP'], t).replace(/\D/g,'').substring(0,5);
-  var edoCampo = campo(['Nombre de la Entidad Federativa','Entidad Federativa','Estado','ENTIDAD FEDERATIVA'], t);
-  if (edoCampo) d.estado = edoCampo;
+  // Apellidos — "Primer Apellido: CASTILLO"  "Segundo Apellido: TANORI"
+  d.ap_pat  = rx(/Primer Apellido:\s*([^\n]+?)(?:\s{3,}|\n|$)/i, t);
+  d.ap_mat  = rx(/Segundo Apellido:\s*([^\n]+?)(?:\s{3,}|\n|$)/i, t);
 
-  // Contacto
-  d.email    = campo(['Correo Electrónico','Correo Electronico','CORREO'], t).toLowerCase();
-  d.telefono = campo(['Teléfono Móvil','Telefono Movil','Teléfono Fijo','TELÉFONO'], t).replace(/\D/g,'').substring(0,10);
+  // Domicilio — el SAT pone dos campos por línea separados por espacios
+  // "Código Postal:64347 Tipo de Vialidad: CALLE"
+  d.cp      = rx(/C[oó]digo Postal:?\s*(\d{5})/i, t);
 
-  // Régimen fiscal (puede haber varios — tomamos el primero)
-  var regMatch = t.match(/Régimen\s*:?\s*([^\n]{5,80})/i);
-  if (regMatch) d.regimen = regMatch[1].trim();
+  // "Nombre de Vialidad: CERRO DE LAS CUMBRES Número Exterior: 5205"
+  d.calle   = rx(/Nombre de Vialidad:\s*(.+?)\s{2,}N[uú]mero Exterior:/i, t);
+  if (!d.calle) d.calle = rx(/Nombre de Vialidad:\s*([^\n]+)/i, t);
+  d.num_ext = rx(/N[uú]mero Exterior:\s*(\S+)/i, t);
+
+  // "Número Interior: Nombre de la Colonia: VALLE DE LAS CUMBRES"
+  d.num_int = rx(/N[uú]mero Interior:\s*([^\n]*?)\s{2,}Nombre de la Colonia:/i, t);
+  d.colonia = rx(/Nombre de la Colonia:\s*([^\n]+?)(?:\s{2,}|\n|$)/i, t);
+
+  // "Nombre de la Localidad: Nombre del Municipio o Demarcación Territorial: MONTERREY"
+  d.municipio = rx(/Nombre del Municipio[^:]*:\s*([^\n]+?)(?:\s{2,}|\n|$)/i, t);
+
+  // "Nombre de la Entidad Federativa: NUEVO LEON Entre Calle: ..."
+  d.estado  = rx(/Nombre de la Entidad Federativa:\s*([^\n]+?)\s{2,}/i, t);
+  if (!d.estado) d.estado = rx(/Nombre de la Entidad Federativa:\s*([^\n]+)/i, t)
+                              .replace(/Entre Calle:.*/i,'').trim();
+
+  // Correo y teléfono (página 2 si hay)
+  d.email   = rx(/Correo Electr[oó]nico:\s*(\S+@\S+)/i, t).toLowerCase();
+  d.telefono= rx(/Tel[eé]fono M[oó]vil:\s*(\d[\d\s\-]{8,})/i, t).replace(/\D/g,'').substring(0,10);
+
+  // Régimen — tomamos el primero que aparezca tras "Regímenes:"
+  d.regimen = rx(/Régimen\s*\n([^\n]{5,100})/i, t);
+  if (!d.regimen) d.regimen = rx(/Régimen de [^\n]{5,100}/i, t);
 
   return d;
 }
