@@ -5107,22 +5107,29 @@ var SCR_LISTAS = [
     _datos: null,
     _fechaCarga: null
   }
-  // ── Para agregar una nueva lista en el futuro ──────────────────
-  // { id:'nueva_id', nombre:'Nombre visible', fuente:'Organismo',
-  //   url:'https://...', tipo:'csv'|'xml',
-  //   sinEncabezado: false,   // true si el CSV no tiene fila de encabezados
-  //   encoding: 'utf-8',      // omitir para utf-8; 'windows-1250' para SAT
-  //   saltarFilas: 0,         // filas a ignorar antes del encabezado real
-  //   activa: true,
-  //   color:'var(--xx)', color3:'var(--xx3)',
-  //   _datos: null, _fechaCarga: null }
+  ,{
+    id: 'opensanctions',
+    nombre: 'OpenSanctions',
+    fuente: 'OpenSanctions.org — Dataset global consolidado',
+    // Usa la Match API en lugar de descarga de archivo.
+    // Endpoint: POST https://api.opensanctions.org/match/default
+    // API Key configurable en SCR.apiKeys.opensanctions (dejar vacío para modo anónimo limitado)
+    url: 'https://opensanctions.org',
+    tipo: 'api',
+    activa: true,
+    color: 'var(--az2)',
+    color3: 'var(--az3)',
+    _datos: null,
+    _fechaCarga: null
+  }
 ];
 
 // ── Estado del módulo ─────────────────────────────────────────
 var SCR = {
-  listasSeleccionadas: ['ofac_sdn','ofac_cons','onu','ue','sat_69b'],
-  cargando: {},       // { listaId: true/false }
-  umbralMatch: 75     // % mínimo para considerar un match
+  listasSeleccionadas: ['ofac_sdn','ofac_cons','onu','ue','sat_69b','opensanctions'],
+  cargando: {},
+  umbralMatch: 75,
+  apiKeys: { opensanctions: '' }  // configurar desde la pantalla de Screening
 };
 
 // ── Normalización de texto para fuzzy matching ────────────────
@@ -5645,6 +5652,52 @@ function scrVerificarYActualizarAlAbrir() {
 }
 
 
+// ── OpenSanctions Match API ───────────────────────────────────
+function scrBuscarOpenSanctions(nombre, cb) {
+  var apiKey = SCR.apiKeys.opensanctions || '';
+  var endpoint = 'https://api.opensanctions.org/match/default';
+  var headers = { 'Content-Type': 'application/json' };
+  if (apiKey) headers['Authorization'] = 'ApiKey ' + apiKey;
+
+  var body = JSON.stringify({
+    queries: { q1: { schema: 'Thing', properties: { name: [nombre] } } }
+  });
+
+  fetch(endpoint, { method: 'POST', headers: headers, body: body })
+    .then(function(r) {
+      if (r.status === 403) throw new Error('API Key inválida o sin permisos');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function(data) {
+      var resultados = (data.responses && data.responses.q1 && data.responses.q1.results) || [];
+      var matches = resultados
+        .map(function(r) {
+          var score = Math.round((r.score || 0) * 100);
+          var pais = (r.properties && r.properties.country && r.properties.country[0]) || '';
+          var programa = (r.properties && r.properties.program && r.properties.program[0])
+                      || (r.datasets && r.datasets[0]) || '';
+          return {
+            score: score,
+            entrada: {
+              nombre: r.caption || r.id,
+              tipo: r.schema || '',
+              pais: pais,
+              programa: programa,
+              uid: r.id || ''
+            }
+          };
+        })
+        .filter(function(m) { return m.score >= SCR.umbralMatch; })
+        .sort(function(a, b) { return b.score - a.score; })
+        .slice(0, 10);
+      cb(null, matches, resultados.length);
+    })
+    .catch(function(err) {
+      cb(err, [], 0);
+    });
+}
+
 // ── Buscar en una lista ya cargada ────────────────────────────
 function scrBuscarEnLista(nombre, datos, umbral) {
   var matches = [];
@@ -5695,22 +5748,41 @@ function scrEjecutar(nombre, clienteId, clienteNom, cbResultados) {
 
   if (!pendientes) { if (cbResultados) cbResultados([]); return; }
 
+  function registrarResultado(listaId, listaNombre, matches, total) {
+    resultados.push({ listaId: listaId, lista: listaNombre, matches: matches, total: total });
+    pendientes--;
+    if (pendientes === 0) {
+      resultados.sort(function(a,b){
+        var ia = SCR_LISTAS.findIndex(function(l){ return l.id===a.listaId; });
+        var ib = SCR_LISTAS.findIndex(function(l){ return l.id===b.listaId; });
+        return ia - ib;
+      });
+      scrGuardarResultado(nombre, resultados, clienteId, clienteNom);
+      if (cbResultados) cbResultados(resultados);
+    }
+  }
+
   listasActivas.forEach(function(lista) {
-    scrCargarLista(lista, function(datos) {
-      var matches = scrBuscarEnLista(nombre, datos, SCR.umbralMatch);
-      resultados.push({ listaId: lista.id, lista: lista.nombre, matches: matches, total: datos.length });
-      pendientes--;
-      if (pendientes === 0) {
-        // Ordenar según catálogo
-        resultados.sort(function(a,b){
-          var ia = SCR_LISTAS.findIndex(function(l){ return l.id===a.listaId; });
-          var ib = SCR_LISTAS.findIndex(function(l){ return l.id===b.listaId; });
-          return ia - ib;
-        });
-        scrGuardarResultado(nombre, resultados, clienteId, clienteNom);
-        if (cbResultados) cbResultados(resultados);
-      }
-    });
+    if (lista.tipo === 'api') {
+      SCR.cargando[lista.id] = true;
+      scrActualizarEstadoListas();
+      scrBuscarOpenSanctions(nombre, function(err, matches, total) {
+        SCR.cargando[lista.id] = false;
+        if (err) {
+          lista._error = err.message;
+          console.error('[SCR OpenSanctions]', err.message);
+        } else {
+          lista._error = null;
+        }
+        scrActualizarEstadoListas();
+        registrarResultado(lista.id, lista.nombre, err ? [] : matches, total);
+      });
+    } else {
+      scrCargarLista(lista, function(datos) {
+        var matches = scrBuscarEnLista(nombre, datos, SCR.umbralMatch);
+        registrarResultado(lista.id, lista.nombre, matches, datos.length);
+      });
+    }
   });
 }
 
@@ -5766,6 +5838,18 @@ function scrActualizarEstadoListas() {
   SCR_LISTAS.forEach(function(lista) {
     var el = document.getElementById('scr-estado-' + lista.id);
     if (!el) return;
+    if (lista.tipo === 'api') {
+      if (SCR.cargando[lista.id]) {
+        el.innerHTML = '<span class="spin" style="width:12px;height:12px;border-width:2px;display:inline-block"></span>';
+      } else if (lista._error) {
+        el.innerHTML = '<span style="color:var(--rj);font-size:11px" title="' + lista._error + '">✗ Error</span>';
+      } else {
+        var tieneKey = SCR.apiKeys.opensanctions && SCR.apiKeys.opensanctions.trim();
+        el.innerHTML = '<span style="color:var(--az2);font-size:11px" title="' + (tieneKey ? 'API Key configurada' : 'Sin API Key — modo anónimo limitado') + '">'
+          + (tieneKey ? '✓ API' : '○ API') + '</span>';
+      }
+      return;
+    }
     if (SCR.cargando[lista.id]) {
       el.innerHTML = '<span class="spin" style="width:12px;height:12px;border-width:2px;display:inline-block"></span>';
     } else if (lista._error) {
@@ -5870,6 +5954,10 @@ function scrVistaManual() {
           + l.nombre + '</label>';
       }).join('')
     + '</div></div>'
+    + '<div class="fg full"><label class="lbl">OpenSanctions API Key <span style="font-weight:400;color:var(--tx3)">(opcional — dejar vacío para modo anónimo)</span></label>'
+    + '<input class="inp" id="scr-os-apikey" type="password" placeholder="Pega aquí tu API Key de opensanctions.org" value="' + (SCR.apiKeys.opensanctions||'') + '" oninput="SCR.apiKeys.opensanctions=this.value.trim();scrActualizarEstadoListas()" style="font-family:monospace">'
+    + '<div class="fhint">Obtén tu API Key en <strong>opensanctions.org/api</strong>. Sin key funciona con límites de tasa.</div>'
+    + '</div>'
     + '</div>'
     + '<div style="padding:12px 16px;border-top:1px solid var(--brd);display:flex;justify-content:flex-end">'
     + '<button class="btn btn-p" onclick="scrLanzarBusquedaManual()">🔍 Buscar en listas</button>'
