@@ -3145,6 +3145,15 @@ function marcarOpsReportadasDeAlerta(alerta, folio) {
 
     var contador = 0;
     opsAMarcar.forEach(function(o) {
+      // Guardia: solo actualizar si la operación tiene datos reales (no objeto vacío por fallo de parseo)
+      if (!o.fecha_pago && !o.monto && !o.fecha_registro) {
+        console.warn('[ALERTA] Op id=' + o.id + ' sin datos reales — omitida para evitar sobreescritura');
+        contador++;
+        if (contador === opsAMarcar.length) {
+          toast(contador + ' operacion(es) procesadas (folio: ' + folio + ')', 's');
+        }
+        return;
+      }
       var datosActualizado = JSON.parse(JSON.stringify(o)); // copia completa
       datosActualizado.reportada = true;
       datosActualizado.ref_aviso_reportado = folio;
