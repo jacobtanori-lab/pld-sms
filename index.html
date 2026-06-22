@@ -198,7 +198,7 @@ tbody tr:hover td{background:#f4f3ef}
         <svg width="20" height="20" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
         Iniciar sesion con Microsoft
       </button>
-      <p style="font-size:11px;color:var(--tx3);margin-top:14px">Solo cuentas @nexxus.com.mx</p>
+      <p style="font-size:11px;color:var(--tx3);margin-top:14px">Cuentas @nexxus.com.mx y @pabellonm.com</p>
     </div>
   </div>
 </div>
@@ -313,6 +313,12 @@ var ENTIDADES = [
 
 // Usuarios globales (Oficial de Cumplimiento) — ven todas las entidades
 var USUARIOS_GLOBALES = ['jcastillo@nexxus.com.mx','plealr@nexxus.com.mx'];
+
+// Dominios con acceso restringido a ciertas entidades
+// null = sin restricción (ve todas); array = solo esas entidades
+var DOMINIOS_RESTRINGIDOS = {
+  'pabellonm.com': ['VAI', 'ITM']
+};
 
 // Catálogo de países ISO 3166-1 alpha-2 para el XML del aviso
 var PAISES_ISO = {
@@ -625,6 +631,13 @@ function cerrarSesion() {
 // ================================================================
 //  SELECTOR DE ENTIDAD
 // ================================================================
+// Filtra una lista por entidades permitidas del usuario (cuando está en vista TODAS)
+function filtrarPermitidas(lista, campo) {
+  if (!App.entidadesPermitidas) return lista;
+  campo = campo || 'entidad_id';
+  return lista.filter(function(x){ return App.entidadesPermitidas.indexOf(x[campo]) >= 0; });
+}
+
 function mostrarSelectorEntidad() {
   // Ocultar layout y mostrar selector de entidad
   document.getElementById('layout').style.display = 'none';
@@ -632,8 +645,11 @@ function mostrarSelectorEntidad() {
   document.getElementById('login-screen').style.display = 'flex';
 
   var cards = '';
-  for (var ei=0; ei<ENTIDADES.length; ei++) {
-    var e = ENTIDADES[ei];
+  var entidadesVisibles = ENTIDADES.filter(function(e){
+    return !App.entidadesPermitidas || App.entidadesPermitidas.indexOf(e.id) >= 0;
+  });
+  for (var ei=0; ei<entidadesVisibles.length; ei++) {
+    var e = entidadesVisibles[ei];
     var rfc_txt = e.rfc ? ' - ' + e.rfc : '';
     var logoSrc = LOGOS_ENTIDADES && LOGOS_ENTIDADES[e.id];
     cards += '<div data-eid="' + e.id + '" class="ent-card" style="border:1px solid var(--brd2);border-radius:var(--rl);padding:20px;cursor:pointer;transition:all .15s;background:#fff">'
@@ -933,7 +949,14 @@ function iniciarApp() {
     var ug = USUARIOS_GLOBALES[gi].toLowerCase();
     if (emailNorm === ug || emailAlt === ug) { App.esGlobal = true; break; }
   }
-  console.log('Usuario:', emailNorm, '| esGlobal:', App.esGlobal);
+  // Detectar dominio restringido
+  App.entidadesPermitidas = null; // null = acceso total
+  var dominioUsuario = (emailNorm.split('@')[1] || emailAlt.split('@')[1] || '').toLowerCase();
+  if (DOMINIOS_RESTRINGIDOS[dominioUsuario]) {
+    App.entidadesPermitidas = DOMINIOS_RESTRINGIDOS[dominioUsuario];
+    App.esGlobal = true; // mostrar selector de entidades
+  }
+  console.log('Usuario:', emailNorm, '| esGlobal:', App.esGlobal, '| entidadesPermitidas:', App.entidadesPermitidas);
 
   graph('GET', '/sites/'+SP_SITE+':'+SP_PATH, null, function(site) {
     App.siteId = site.id;
@@ -1940,6 +1963,8 @@ function pgDash() {
     var lista = listaAll || [];
     if (App.entidadActual && App.entidadActual.id !== 'TODAS') {
       lista = lista.filter(function(c){ return c.entidad_id === App.entidadActual.id; });
+    } else {
+      lista = filtrarPermitidas(lista);
     }
     App.clientes = lista;
     var total=lista.length,activos=0,alto=0,peps=0,prospectos=0;
@@ -2022,6 +2047,8 @@ function pgClientes() {
       lista = (lista||[]).filter(function(c){
         return c.entidad_id === App.entidadActual.id;
       });
+    } else {
+      lista = filtrarPermitidas(lista||[]);
     }
     App.clientes = lista || [];
     renderTblC(App.clientes);
@@ -3115,6 +3142,8 @@ function cargarAlertas(modo, valor) {
   spGet('PLD_Alertas', function(todas) {
     if (App.entidadActual && App.entidadActual.id !== 'TODAS') {
       todas = (todas||[]).filter(function(a){ return a.entidad_id===App.entidadActual.id||!a.entidad_id; });
+    } else {
+      todas = filtrarPermitidas(todas||[]);
     }
     var el = document.getElementById('alertas-ct');
     if (!el) return;
@@ -3578,6 +3607,8 @@ function cargarOps(filtroEstatus, fraccion) {
   spGet('PLD_Operaciones', function(lista) {
     if (App.entidadActual && App.entidadActual.id !== 'TODAS') {
       lista = (lista||[]).filter(function(o){ return o.entidad_id===App.entidadActual.id||!o.entidad_id; });
+    } else {
+      lista = filtrarPermitidas(lista||[]);
     }
     // Filtrar por fracción
     lista = (lista||[]).filter(function(o){ return (o.fraccion||'INM') === fraccion; });
@@ -4427,6 +4458,8 @@ function cargarOpsRegistros(fraccion) {
   spGet('PLD_Ops_Liq', function(lista) {
     if (App.entidadActual && App.entidadActual.id !== 'TODAS') {
       lista = (lista||[]).filter(function(o){ return o.entidad_id===App.entidadActual.id||!o.entidad_id; });
+    } else {
+      lista = filtrarPermitidas(lista||[]);
     }
     lista = (lista||[]).filter(function(o){ return (o.fraccion||'INM')===fraccion; });
     var el = document.getElementById('ops-main-ct');
@@ -5074,6 +5107,8 @@ function pgReportes() {
   spGet('PLD_Reportes',function(lista){
     if (App.entidadActual && App.entidadActual.id !== 'TODAS') {
       lista = (lista||[]).filter(function(r){ return r.entidad_id===App.entidadActual.id||!r.entidad_id; });
+    } else {
+      lista = filtrarPermitidas(lista||[]);
     }
     if(!lista.length){document.getElementById('reps-ct').innerHTML='<div class="empty">Sin reportes generados.</div>';return;}
     var rows=lista.map(function(r){
