@@ -995,6 +995,23 @@ function spUpdate(lista, itemId, datos, cb) {
     function(d){ if(cb) cb(d); });
 }
 
+// Actualiza solo los campos indicados sin sobreescribir el resto del registro
+function spPatch(lista, itemId, campos, cb) {
+  var lid = App.listas[lista];
+  if (!lid) { if(cb) cb(null); return; }
+  graph('GET', '/sites/'+App.siteId+'/lists/'+lid+'/items/'+itemId+'?expand=fields', null, function(item) {
+    var actual = {};
+    if (item && item.fields && item.fields.Datos) {
+      try { actual = JSON.parse(item.fields.Datos); } catch(e) {}
+    }
+    var merged = Object.assign({}, actual, campos);
+    var titulo = merged.Title || merged.nombre || merged.razon_social || ('Item-'+itemId);
+    graph('PATCH', '/sites/'+App.siteId+'/lists/'+lid+'/items/'+itemId+'/fields',
+      {Title:String(titulo).substring(0,255), Datos:JSON.stringify(merged)},
+      function(d){ if(cb) cb(d); });
+  });
+}
+
 // ================================================================
 //  NAVEGACIÓN
 // ================================================================
@@ -3154,10 +3171,7 @@ function marcarOpsReportadasDeAlerta(alerta, folio) {
         }
         return;
       }
-      var datosActualizado = JSON.parse(JSON.stringify(o)); // copia completa
-      datosActualizado.reportada = true;
-      datosActualizado.ref_aviso_reportado = folio;
-      spUpdate('PLD_Ops_Liq', o.id, datosActualizado, function() {
+      spPatch('PLD_Ops_Liq', o.id, {reportada: true, ref_aviso_reportado: folio}, function() {
         contador++;
         if (contador === opsAMarcar.length) {
           toast(contador + ' operacion(es) marcadas como reportadas (folio: ' + folio + ')', 's');
@@ -3720,7 +3734,7 @@ function submitOp(idEx, estatus) {
         if (folio && pendientes.length) {
           App._opsPendientesReportar = [];
           pendientes.forEach(function(opId){
-            spUpdate('PLD_Ops_Liq', opId, {reportada: true, ref_aviso_reportado: folio}, function(){});
+            spPatch('PLD_Ops_Liq', opId, {reportada: true, ref_aviso_reportado: folio}, function(){});
           });
         }
         toast('Operacion guardada como '+estatus,'s'); pgOps();
