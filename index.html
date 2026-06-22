@@ -314,6 +314,14 @@ var ENTIDADES = [
 // Usuarios globales (Oficial de Cumplimiento) — ven todas las entidades
 var USUARIOS_GLOBALES = ['jcastillo@nexxus.com.mx','plealr@nexxus.com.mx'];
 
+// Roles: 'admin' | 'supervisor' | 'usuario'
+var ADMINS = ['jcastillo@nexxus.com.mx','plealr@nexxus.com.mx'];
+var ROL_MODULOS = {
+  admin:      ['dashboard','clientes','alertas','avisos','operaciones','reportes','screening','config'],
+  supervisor: ['dashboard','clientes','alertas','avisos','operaciones','reportes'],
+  usuario:    ['dashboard','clientes','operaciones','reportes']
+};
+
 // Dominios con acceso restringido a ciertas entidades
 // null = sin restricción (ve todas); array = solo esas entidades
 var DOMINIOS_RESTRINGIDOS = {
@@ -962,6 +970,7 @@ function iniciarApp() {
     App.siteId = site.id;
     cargarListas(function(){
       cargarAsesoresConfig(function(){});
+      cargarRolUsuario(emailNorm, emailAlt, function(){
       cargarEntidadesConfig(function() {
         if (App.esGlobal) {
           mostrarSelectorEntidad();
@@ -975,6 +984,7 @@ function iniciarApp() {
           irA('dashboard');
         }
       });
+      }); // cargarRolUsuario
     });
   });
 }
@@ -1062,9 +1072,13 @@ function spPatch(lista, itemId, campos, cb) {
 //  NAVEGACIÓN
 // ================================================================
 function renderNav() {
-  var items = [['dashboard','Inicio'],['clientes','Clientes'],['alertas','Alertas'],['avisos','Avisos'],['operaciones','Operaciones'],['reportes','Reportes'],['screening','Screening'],['config','Config']];
+  var todos = [['dashboard','Inicio'],['clientes','Clientes'],['alertas','Alertas'],['avisos','Avisos'],['operaciones','Operaciones'],['reportes','Reportes'],['screening','Screening'],['config','Config']];
+  var permitidos = ROL_MODULOS[App.rol] || ROL_MODULOS.usuario;
   var html = '';
-  items.forEach(function(i){ html+='<div class="nav-item" id="nav-'+i[0]+'" onclick="irA(\''+i[0]+'\')">'+i[1]+'</div>'; });
+  todos.forEach(function(i){
+    if (permitidos.indexOf(i[0]) >= 0)
+      html += '<div class="nav-item" id="nav-'+i[0]+'" onclick="irA(\''+i[0]+'\')">'+i[1]+'</div>';
+  });
   document.getElementById('nav-bar').innerHTML = html;
 }
 function irA(sec) {
@@ -1664,6 +1678,7 @@ function secHdr(txt){return '<div class="sec-hdr">'+txt+'</div>';}
 //  CONFIGURACIÓN DEL SISTEMA (UMA y parámetros)
 // ================================================================
 function pgConfig() {
+  if (!tieneAcceso('config')) { sinAcceso(); return; }
   setSB('<div class="sb-sec">Configuracion</div>'
     +'<div class="sb-item on">Parametros del sistema</div>');
 
@@ -1739,7 +1754,48 @@ function pgConfig() {
     +'<input class="inp" id="new-asesor-email" placeholder="ana@empresa.com"></div>'
     +'<div class="fg" style="flex:0 0 auto;padding-top:18px">'
     +'<button class="btn btn-p" onclick="agregarAsesor()">+ Agregar</button>'
-    +'</div></div></div></div>');
+    +'</div></div></div></div>'
+
+    // Gestión de roles — solo admin
+    +(App.rol === 'admin' ? (function(){
+      return '<div class="card"><div class="card-h"><span class="card-t">Roles de usuario</span>'
+        +'<span style="font-size:12px;color:var(--tx3)">Solo administradores pueden gestionar roles</span></div>'
+        +'<div id="roles-lista-ct"><div class="empty"><div class="spin" style="margin:0 auto"></div></div></div>'
+        +'<div class="card-h" style="margin-top:8px"><span class="card-t" style="font-size:13px">+ Asignar rol</span></div>'
+        +'<div class="card-b"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
+        +'<div class="fg" style="flex:2;min-width:220px"><label class="lbl">Correo electrónico <span class="req">*</span></label>'
+        +'<input class="inp" id="new-rol-correo" placeholder="usuario@empresa.com"></div>'
+        +'<div class="fg" style="flex:0 0 160px"><label class="lbl">Rol <span class="req">*</span></label>'
+        +'<select class="sel" id="new-rol-rol"><option value="supervisor">Supervisor</option><option value="usuario">Usuario</option></select></div>'
+        +'<div class="fg" style="flex:0 0 auto;padding-top:18px">'
+        +'<button class="btn btn-p" onclick="guardarRolUsuario(document.getElementById(\'new-rol-correo\').value,document.getElementById(\'new-rol-rol\').value,null)">+ Asignar</button>'
+        +'</div></div>'
+        +'<p style="font-size:11px;color:var(--tx3);margin-top:8px">Los administradores están definidos en el código y no aparecen aquí. El rol por defecto de cualquier usuario no listado es "usuario".</p>'
+        +'</div></div>';
+    })() : ''));
+
+  // Cargar lista de roles si es admin
+  if (App.rol === 'admin') {
+    spGet('PLD_Usuarios', function(lista) {
+      var ct = document.getElementById('roles-lista-ct');
+      if (!ct) return;
+      if (!lista || !lista.length) {
+        ct.innerHTML = '<div style="padding:10px 0;color:var(--tx3);font-size:13px">Sin usuarios con rol asignado.</div>';
+        return;
+      }
+      ct.innerHTML = lista.map(function(u) {
+        return '<div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--brd)">'
+          +'<span style="flex:2;font-size:13px">'+u.correo+'</span>'
+          +'<select class="sel" id="rol-sel-'+u.id+'" style="width:140px">'
+          +'<option value="supervisor"'+(u.rol==='supervisor'?' selected':'')+'>Supervisor</option>'
+          +'<option value="usuario"'+(u.rol==='usuario'?' selected':'')+'>Usuario</option>'
+          +'</select>'
+          +'<button class="btn btn-p btn-sm" onclick="guardarRolUsuario(\''+u.correo+'\',document.getElementById(\'rol-sel-'+u.id+'\').value,\''+u.id+'\')">Guardar</button>'
+          +'<button class="btn btn-sm" style="color:var(--rj);border-color:var(--rj)" onclick="eliminarRolUsuario(\''+u.id+'\')">✕</button>'
+          +'</div>';
+      }).join('');
+    });
+  }
 }
 
 // ── Persistencia de entidades en SharePoint ───────────────────
@@ -1884,6 +1940,56 @@ function htmlSelectAsesores(valorActual) {
     opts += '<option value="'+a.id+'"'+(a.id===valorActual?' selected':'')+'>'+a.nombre+'</option>';
   });
   return opts;
+}
+
+// ── ROLES DE USUARIO ─────────────────────────────────────────
+function cargarRolUsuario(emailNorm, emailAlt, cb) {
+  // Admin fijo
+  for (var i=0; i<ADMINS.length; i++) {
+    if (emailNorm === ADMINS[i].toLowerCase() || emailAlt === ADMINS[i].toLowerCase()) {
+      App.rol = 'admin'; if (cb) cb(); return;
+    }
+  }
+  // Buscar en PLD_Usuarios
+  spGet('PLD_Usuarios', function(lista) {
+    var encontrado = null;
+    (lista||[]).forEach(function(u) {
+      var c = (u.correo||'').toLowerCase();
+      if (c === emailNorm || c === emailAlt) encontrado = u;
+    });
+    App.rol = encontrado ? (encontrado.rol || 'usuario') : 'usuario';
+    if (cb) cb();
+  });
+}
+
+function tieneAcceso(modulo) {
+  return (ROL_MODULOS[App.rol] || ROL_MODULOS.usuario).indexOf(modulo) >= 0;
+}
+
+function sinAcceso() {
+  setMain('<div class="phdr"><div><div class="ptit">Acceso restringido</div>'
+    +'<div class="psub">Tu rol no tiene permiso para ver este módulo</div></div></div>'
+    +'<div class="card"><div class="empty">Contacta al administrador del sistema para solicitar acceso.</div></div>');
+}
+
+function guardarRolUsuario(correo, rol, idEx) {
+  correo = (correo||'').toLowerCase().trim();
+  if (!correo || !rol) { toast('Correo y rol son obligatorios','e'); return; }
+  var datos = { Title: correo, correo: correo, rol: rol };
+  if (idEx) {
+    spUpdate('PLD_Usuarios', idEx, datos, function(){ toast('Rol actualizado','s'); pgConfig(); });
+  } else {
+    spCreate('PLD_Usuarios', datos, function(){ toast('Usuario agregado','s'); pgConfig(); });
+  }
+}
+
+function eliminarRolUsuario(id) {
+  if (!confirm('¿Eliminar este usuario? Quedará con rol "usuario" por defecto.')) return;
+  var lid = App.listas['PLD_Usuarios'];
+  if (!lid) return;
+  graph('DELETE', '/sites/'+App.siteId+'/lists/'+lid+'/items/'+id, null, function(){
+    toast('Usuario eliminado','s'); pgConfig();
+  });
 }
 
 function guardarUMA() {
@@ -3110,6 +3216,7 @@ function altCategoria(a) {
 }
 
 function pgAlertas() {
+  if (!tieneAcceso('alertas')) { sinAcceso(); return; }
   setSB('<div class="sb-sec">Alertas PLD/FT</div>'
     +'<div class="sb-item on" onclick="altVista(this,\'todas\',null)">Panel general</div>'
     +'<div class="sb-sec" style="margin-top:8px">Por categoría</div>'
@@ -3565,6 +3672,7 @@ function cargarConfigUMA() {
 }
 
 function pgAvisos() {
+  if (!tieneAcceso('avisos')) { sinAcceso(); return; }
   setSB('<div class="sb-sec">Avisos</div>'
     +'<div class="sb-item on av-todos">Todos</div>'
     +'<div class="sb-item av-nuevo">+ Nuevo aviso</div>'
@@ -6130,6 +6238,7 @@ function scrActualizarEstadoListas() {
 
 // ── Pantalla principal del módulo ─────────────────────────────
 function pgScreening() {
+  if (!tieneAcceso('screening')) { sinAcceso(); return; }
   var sbHtml = '<div class="sb-sec">Screening</div>'
     + '<div class="sb-item on" onclick="scrVistaManual()">Búsqueda manual</div>'
     + '<div class="sb-item" onclick="scrVistaCliente()">Por cliente</div>'
