@@ -3254,7 +3254,7 @@ function crearAvisoDesdeAlerta(alertaId) {
             forma_pago: o.forma_pago || '3',
             instrumento: o.instrumento_monetario || '7',
             moneda: o.moneda || '1',
-            monto: o.monto || 0
+            monto: o.total_operacion || o.monto || 0  // reportar total, no subtotal
           };
         })
       };
@@ -4255,12 +4255,12 @@ function cargarOpsRegistros(fraccion) {
     var html = '';
     Object.keys(porCliente).forEach(function(key) {
       var grupo = porCliente[key];
-      var totalMonto = grupo.ops.reduce(function(s,o){ return s+parseFloat(o.monto||0); }, 0);
+      var totalMonto = grupo.ops.reduce(function(s,o){ return s+parseFloat(o.total_operacion||o.monto||0); }, 0);
       html += '<div class="card" style="margin-bottom:12px">'
         +'<div class="card-h"><span class="card-t">'+grupo.nombre+'</span>'
-        +'<span style="font-size:12px;color:var(--tx3)">'+grupo.ops.length+' ops | $'+totalMonto.toLocaleString('es-MX')+'</span>'
+        +'<span style="font-size:12px;color:var(--tx3)">'+grupo.ops.length+' ops | Total: $'+totalMonto.toLocaleString('es-MX')+'</span>'
         +'</div><div class="twrap"><table>'
-        +'<thead><tr><th>Fecha pago</th><th>Forma pago</th><th>Instrumento</th><th>Moneda</th><th>Monto</th><th>Estado</th></tr></thead>'
+        +'<thead><tr><th>Fecha pago</th><th>Forma pago</th><th>Instrumento</th><th>Moneda</th><th>Subtotal</th><th>IVA</th><th>Accesorios</th><th>Total</th><th>Estado</th></tr></thead>'
         +'<tbody>';
       grupo.ops.forEach(function(op) {
         var fp = FORMAS_PAGO.find(function(x){return x.codigo===op.forma_pago;});
@@ -4269,12 +4269,19 @@ function cargarOpsRegistros(fraccion) {
         var badgeOp = op.reportada===true
           ? '<span class="pill p-vd" style="font-size:10px">Reportada: '+(op.ref_aviso_reportado||op.ref_aviso||'')+'</span>'
           : '<span class="pill p-gr" style="font-size:10px">Pendiente</span>';
+        var sub = parseFloat(op.subtotal||op.monto||0);
+        var iva = parseFloat(op.iva||0);
+        var acc = parseFloat(op.accesorios||0);
+        var tot = parseFloat(op.total_operacion||sub);
         html += '<tr>'
           +'<td>'+String(op.fecha_pago||'-').substring(0,10)+'</td>'
           +'<td>'+(fp?fp.desc:op.forma_pago||'-')+'</td>'
           +'<td>'+(im?im.desc:op.instrumento_monetario||'-')+'</td>'
           +'<td>'+(mo?mo.desc:op.moneda||'-')+'</td>'
-          +'<td style="font-weight:500">$'+(parseFloat(op.monto||0)).toLocaleString('es-MX')+'</td>'
+          +'<td>$'+sub.toLocaleString('es-MX')+'</td>'
+          +'<td>$'+iva.toLocaleString('es-MX')+'</td>'
+          +'<td>$'+acc.toLocaleString('es-MX')+'</td>'
+          +'<td style="font-weight:600">$'+tot.toLocaleString('es-MX')+'</td>'
           +'<td>'+badgeOp+'</td>'
           +'</tr>';
       });
@@ -4314,7 +4321,13 @@ function nuevaLiqForm(datos) {
     +fg('Forma de pago',null,true)+'<select class="sel" name="forma_pago_op">'+optsC2(FORMAS_PAGO,d.forma_pago||'')+'</select></div>'
     +fg('Instrumento monetario',null,true)+'<select class="sel" name="instrumento_op">'+optsC2(INSTRUMENTOS_MON,d.instrumento_monetario||'')+'</select></div>'
     +fg('Moneda',null,true)+'<select class="sel" name="moneda_op">'+optsC2(MONEDAS,d.moneda||'1')+'</select></div>'
-    +fg('Monto del pago (MXN)',null,true)+fi('monto_op',d.monto||'','0.00')
+    +'<div class="fg"><label class="lbl">Subtotal (MXN) <span class="req">*</span></label><input class="inp" name="subtotal_op" value="'+(d.subtotal||'')+'" placeholder="0.00" oninput="calcTotalOp()"></div>'
+    +'<div class="fg"><label class="lbl">IVA (MXN)</label><input class="inp" name="iva_op" value="'+(d.iva||'')+'" placeholder="0.00" oninput="calcTotalOp()"></div>'
+    +'<div class="fg"><label class="lbl">Accesorios (MXN)</label><input class="inp" name="accesorios_op" value="'+(d.accesorios||'')+'" placeholder="0.00" oninput="calcTotalOp()"></div>'
+    +'<div class="fg"><label class="lbl">Total de operacion</label>'
+    +'<div class="inp" id="total_op_display" style="background:var(--bg2);color:var(--tx2);font-weight:600">'
+    +(d.total_operacion ? '$'+parseFloat(d.total_operacion).toLocaleString('es-MX') : '$0.00')
+    +'</div></div>'
     +fg('Referencia de aviso relacionado',null,false)+fi('ref_aviso_op',d.ref_aviso||'','Opcional')
     +ftxt('Observaciones','obs_op',d.observaciones||'')
     +'</div>'
@@ -4627,6 +4640,17 @@ function crearAlertaUmbral(datos) {
   });
 }
 
+function calcTotalOp() {
+  var frm = document.getElementById('main');
+  if (!frm) return;
+  var sub = parseFloat((frm.querySelector('[name="subtotal_op"]')||{}).value||0);
+  var iva = parseFloat((frm.querySelector('[name="iva_op"]')||{}).value||0);
+  var acc = parseFloat((frm.querySelector('[name="accesorios_op"]')||{}).value||0);
+  var total = sub + iva + acc;
+  var el = document.getElementById('total_op_display');
+  if (el) el.textContent = '$' + total.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
 // ── GUARDAR OPERACIÓN ────────────────────────────────────────
 function guardarLiq(idEx) {
   var frm = document.getElementById('main');
@@ -4640,7 +4664,10 @@ function guardarLiq(idEx) {
   });
 
   var fraccion  = v('fraccion_op') || App._fraccionOps || 'INM';
-  var monto     = parseFloat(v('monto_op')||0);
+  var subtotal  = parseFloat(v('subtotal_op')||0);
+  var iva       = parseFloat(v('iva_op')||0);
+  var accesorios= parseFloat(v('accesorios_op')||0);
+  var total_operacion = subtotal + iva + accesorios;
   var formaPago = v('forma_pago_op');
 
   var datos = {
@@ -4649,7 +4676,10 @@ function guardarLiq(idEx) {
     fecha_pago: v('fecha_pago_op'),
     forma_pago: formaPago,
     instrumento_monetario: v('instrumento_op'),
-    moneda: v('moneda_op'), monto: monto,
+    moneda: v('moneda_op'),
+    subtotal: subtotal, iva: iva, accesorios: accesorios,
+    total_operacion: total_operacion,
+    monto: subtotal, // compatibilidad hacia atrás — umbrales usan subtotal
     ref_aviso: v('ref_aviso_op'),
     observaciones: v('obs_op'),
     entidad_id: App.entidadActual?App.entidadActual.id:'',
@@ -4666,7 +4696,7 @@ function guardarLiq(idEx) {
       spCreate('PLD_Ops_Liq', datos, function(item){
         if (item) {
           // Pasar el id del item recién creado para excluirlo del acumulado
-          verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, monto, datos.fecha_pago, item.id, function(){
+          verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, subtotal, datos.fecha_pago, item.id, function(){
             toast('Operacion guardada','s');
             pgOps();
           });
