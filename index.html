@@ -549,6 +549,30 @@ var LISTAS = {
 };
 
 // Documentos requeridos por tipo
+// Documentos obligatorios por tipo (la constancia de dueño beneficiario se evalúa condicionalmente)
+var DOCS_OBL = {
+  PF_MEX:    ['Identificacion oficial vigente','Constancia CURP','Constancia de Situacion Fiscal (RFC)',
+               'Comprobante de domicilio (max 3 meses)','Formato de Conocimiento del Cliente'],
+  PF_EXT:    ['Pasaporte vigente o documento migratorio INM','Comprobante de domicilio',
+               'Formato de Conocimiento del Cliente'],
+  PM_MEX:    ['Acta constitutiva (testimonio o copia certificada)','Cedula de Identificacion Fiscal (SAT)',
+               'Comprobante de domicilio (max 3 meses)','Poder notarial del representante legal',
+               'Identificacion del representante legal','Constancia declaracion de Dueno Beneficiario',
+               'Formato de Conocimiento del Cliente'],
+  PM_SIMP:   ['Documento que acredite existencia legal','Cedula de Identificacion Fiscal (SAT)',
+               'Comprobante de domicilio','Identificacion del representante / funcionario',
+               'Formato de Conocimiento del Cliente'],
+  FIDEICOMISO:['Testimonio o acta constitutiva del fideicomiso','Cedula de Identificacion Fiscal del fideicomiso',
+               'Identificacion del delegado fiduciario','Formato de Conocimiento del Cliente']
+};
+// Docs condicionalmente obligatorios: clave=nombre del doc, valor=función(cliente)→bool
+var DOCS_OBL_COND = {
+  'Constancia declaracion de Dueno Beneficiario': function(c){ return c.tiene_dueno_ben === 'SI'; }
+};
+
+var ASESORES = []; // se llena desde PLD_Config al iniciar
+var _asesoresConfigId = null;
+
 var DOCS = {
   PF_MEX:    ['Identificacion oficial vigente','Constancia CURP','Constancia de Situacion Fiscal (RFC)',
                'Comprobante de domicilio (max 3 meses)','Formato de Conocimiento del Cliente',
@@ -916,6 +940,7 @@ function iniciarApp() {
   graph('GET', '/sites/'+SP_SITE+':'+SP_PATH, null, function(site) {
     App.siteId = site.id;
     cargarListas(function(){
+      cargarAsesoresConfig(function(){});
       cargarEntidadesConfig(function() {
         if (App.esGlobal) {
           mostrarSelectorEntidad();
@@ -1671,7 +1696,29 @@ function pgConfig() {
     +'<button class="btn btn-p" onclick="agregarEntidad()">+ Agregar</button>'
     +'</div></div>'
     +'<p style="font-size:11px;color:var(--tx3);margin-top:8px">El ID debe ser único (2–6 caracteres) y no podrá cambiarse después — se usa como llave en todos los registros.</p>'
-    +'</div></div>');
+    +'</div></div>'
+
+    +'<div class="card"><div class="card-h"><span class="card-t">Asesores comerciales</span>'
+    +'<span style="font-size:12px;color:var(--tx3)">'+ASESORES.length+' asesor'+(ASESORES.length!==1?'es':'')+'</span></div>'
+    +'<div class="card-b">'
+    +(ASESORES.length ? ASESORES.map(function(a,i){
+      return '<div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--brd)">'
+        +'<input class="inp" id="asesor-nom-'+i+'" value="'+(a.nombre||'')+'" placeholder="Nombre completo" style="flex:2;min-width:180px">'
+        +'<input class="inp" id="asesor-email-'+i+'" value="'+(a.email||'')+'" placeholder="correo@empresa.com" style="flex:2;min-width:180px;font-size:12px">'
+        +'<button class="btn btn-p btn-sm" onclick="guardarDatosAsesor('+i+')">Guardar</button>'
+        +'<button class="btn btn-sm" style="color:var(--rj);border-color:var(--rj)" onclick="eliminarAsesor('+i+')">✕</button>'
+        +'</div>';
+    }).join('') : '<div style="padding:10px 0;color:var(--tx3);font-size:13px">Sin asesores registrados.</div>')
+    +'</div>'
+    +'<div class="card-h" style="margin-top:8px"><span class="card-t" style="font-size:13px">+ Agregar asesor</span></div>'
+    +'<div class="card-b"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
+    +'<div class="fg" style="flex:2;min-width:200px"><label class="lbl">Nombre completo <span class="req">*</span></label>'
+    +'<input class="inp" id="new-asesor-nom" placeholder="Ej: Ana García López"></div>'
+    +'<div class="fg" style="flex:2;min-width:200px"><label class="lbl">Correo electrónico</label>'
+    +'<input class="inp" id="new-asesor-email" placeholder="ana@empresa.com"></div>'
+    +'<div class="fg" style="flex:0 0 auto;padding-top:18px">'
+    +'<button class="btn btn-p" onclick="agregarAsesor()">+ Agregar</button>'
+    +'</div></div></div></div>');
 }
 
 // ── Persistencia de entidades en SharePoint ───────────────────
@@ -1751,6 +1798,71 @@ function eliminarEntidad(idx) {
   if (!confirm('¿Eliminar la entidad "'+e.nombre+'"?\n\nEsta acción no elimina los expedientes u operaciones ya registrados con esta entidad.')) return;
   ENTIDADES.splice(idx, 1);
   guardarEntidades(function(){ toast('Entidad eliminada','s'); pgConfig(); });
+}
+
+// ── GESTIÓN DE ASESORES ───────────────────────────────────────
+function cargarAsesoresConfig(cb) {
+  spGet('PLD_Config', function(lista) {
+    var item = null;
+    (lista||[]).forEach(function(c){ if(c.clave==='CONFIG_ASESORES') item=c; });
+    if (item && Array.isArray(item.asesores)) {
+      _asesoresConfigId = item.id;
+      ASESORES.length = 0;
+      item.asesores.forEach(function(a){ ASESORES.push(a); });
+    }
+    if (cb) cb();
+  });
+}
+
+function guardarAsesores(cb) {
+  var datos = { Title: 'CONFIG_ASESORES', clave: 'CONFIG_ASESORES', asesores: ASESORES };
+  if (_asesoresConfigId) {
+    spUpdate('PLD_Config', _asesoresConfigId, datos, function(r){ if(cb) cb(r); });
+  } else {
+    spCreate('PLD_Config', datos, function(item){
+      if (item) _asesoresConfigId = item.id;
+      if (cb) cb(item);
+    });
+  }
+}
+
+function guardarDatosAsesor(idx) {
+  var nomEl   = document.getElementById('asesor-nom-'+idx);
+  var emailEl = document.getElementById('asesor-email-'+idx);
+  if (!nomEl) return;
+  var nom = nomEl.value.trim();
+  if (!nom) { toast('El nombre no puede estar vacío','e'); return; }
+  ASESORES[idx].nombre = nom;
+  if (emailEl) ASESORES[idx].email = emailEl.value.trim().toLowerCase();
+  guardarAsesores(function(){ toast('Asesor actualizado','s'); pgConfig(); });
+}
+
+function agregarAsesor() {
+  var nomEl = document.getElementById('new-asesor-nom');
+  var emailEl = document.getElementById('new-asesor-email');
+  if (!nomEl) return;
+  var nom = nomEl.value.trim();
+  var email = emailEl ? emailEl.value.trim().toLowerCase() : '';
+  if (!nom) { toast('El nombre es obligatorio','e'); return; }
+  var id = 'ASR-' + Date.now();
+  ASESORES.push({ id: id, nombre: nom, email: email });
+  guardarAsesores(function(){ toast('Asesor "'+nom+'" agregado','s'); pgConfig(); });
+}
+
+function eliminarAsesor(idx) {
+  var a = ASESORES[idx];
+  if (!a) return;
+  if (!confirm('¿Eliminar al asesor "'+a.nombre+'"?')) return;
+  ASESORES.splice(idx, 1);
+  guardarAsesores(function(){ toast('Asesor eliminado','s'); pgConfig(); });
+}
+
+function htmlSelectAsesores(valorActual) {
+  var opts = '<option value="">-- Sin asignar --</option>';
+  ASESORES.forEach(function(a){
+    opts += '<option value="'+a.id+'"'+(a.id===valorActual?' selected':'')+'>'+a.nombre+'</option>';
+  });
+  return opts;
 }
 
 function guardarUMA() {
@@ -2124,6 +2236,7 @@ function htmlFormPF_MEX(d) {
     +fg('Estatus PEP',null,true)+fs('estatus_pep',opts(LISTAS.estatusPEP,d.estatus_pep||'NO APLICA'))
     +fg('Fecha de alta',null,true)+fi('fecha_alta',d.fecha_alta||hoy(),'')
     +fg('Fecha de baja',null,false)+fi('fecha_baja',d.fecha_baja||'','Dejar vacio si no aplica')
+    +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id"><option value="">-- Sin asignar --</option>'+ASESORES.map(function(a){ return '<option value="'+a.id+'"'+(a.id===d.asesor_id?' selected':'')+'>'+a.nombre+'</option>'; }).join('')+'</select></div>'
     +'</div></div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Identificacion - Persona fisica mexicana (Anexo 3)</span></div>'
     +htmlIdPF(d,'',true)
@@ -2160,6 +2273,7 @@ function htmlFormPF_EXT(d) {
     +fg('Estatus PEP',null,true)+fs('estatus_pep',opts(LISTAS.estatusPEP,d.estatus_pep||'NO APLICA'))
     +fg('Fecha de alta',null,true)+fi('fecha_alta',d.fecha_alta||hoy(),'')
     +fg('Fecha de baja',null,false)+fi('fecha_baja',d.fecha_baja||'','')
+    +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id">'+htmlSelectAsesores(d.asesor_id||'')+'</select></div>'
     +'</div></div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Identificacion - Persona fisica extranjera (Anexo 5)</span></div>'
     +htmlIdPF(d,'',false)
@@ -2204,6 +2318,7 @@ function htmlFormPM_MEX(d) {
     +fg('Estatus PEP',null,true)+fs('estatus_pep',opts(LISTAS.estatusPEP,d.estatus_pep||'NO APLICA'))
     +fg('Fecha de alta',null,true)+fi('fecha_alta',d.fecha_alta||hoy(),'')
     +fg('Fecha de baja',null,false)+fi('fecha_baja',d.fecha_baja||'','')
+    +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id">'+htmlSelectAsesores(d.asesor_id||'')+'</select></div>'
     +'</div></div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Identificacion - Persona moral (Anexo 4)</span></div>'
     +'<div class="fgrid">'
@@ -2268,6 +2383,7 @@ function htmlFormPM_SIMP(d) {
     +fg('Estatus PEP',null,true)+fs('estatus_pep',opts(LISTAS.estatusPEP,d.estatus_pep||'NO APLICA'))
     +fg('Fecha de alta',null,true)+fi('fecha_alta',d.fecha_alta||hoy(),'')
     +fg('Fecha de baja',null,false)+fi('fecha_baja',d.fecha_baja||'','')
+    +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id">'+htmlSelectAsesores(d.asesor_id||'')+'</select></div>'
     +'</div></div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Identificacion - Entidad regulada (Anexo 7)</span></div>'
     +'<div class="fgrid">'
@@ -2314,6 +2430,7 @@ function htmlFormFIDEICOMISO(d) {
     +fg('Estatus PEP',null,true)+fs('estatus_pep',opts(LISTAS.estatusPEP,d.estatus_pep||'NO APLICA'))
     +fg('Fecha de alta',null,true)+fi('fecha_alta',d.fecha_alta||hoy(),'')
     +fg('Fecha de baja',null,false)+fi('fecha_baja',d.fecha_baja||'','')
+    +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id">'+htmlSelectAsesores(d.asesor_id||'')+'</select></div>'
     +'</div></div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Datos del Fideicomiso (Anexo 8)</span></div>'
     +'<div class="fgrid">'
@@ -2496,6 +2613,9 @@ function submitCliente(tipo, idEx) {
       }
     }
     datos.registrado_por = App.cuenta.username;
+  // Resolver nombre del asesor seleccionado
+  var asesorObj = ASESORES.find(function(a){ return a.id === datos.asesor_id; });
+  datos.asesor_nombre = asesorObj ? asesorObj.nombre : '';
 
     // Titulo para SharePoint
     datos.Title = nombreClienteDatos(datos);
@@ -2585,8 +2705,9 @@ function renderFicha(c) {
     +'<span class="pill p-gr">EBR: '+(c.puntaje_ebr||0)+' pts</span>'
     +((['Activo','Familiar','Relacionado a PEP'].indexOf(c.estatus_pep||'')>=0)?'<span class="pill p-mo">PEP: '+c.estatus_pep+'</span>':'')
     +'</div>'
-    +'<div class="psub">'+labelTipo(c.tipo)+' - '+( c.entidad_nombre||c.entidad_id||'')
-    +' - Alta: '+String(c.fecha_alta||'-').substring(0,10)+(c.fecha_baja?' - Baja: '+String(c.fecha_baja).substring(0,10):'')+'</div>'
+    +'<div class="psub">'+labelTipo(c.tipo)+' - '+(c.entidad_nombre||c.entidad_id||'')
+    +' - Alta: '+String(c.fecha_alta||'-').substring(0,10)+(c.fecha_baja?' - Baja: '+String(c.fecha_baja).substring(0,10):'')
+    +(c.asesor_nombre?' · <span style="color:var(--az)">Asesor: '+c.asesor_nombre+'</span>':'')+'</div>'
     +'</div>'
     +'<div style="display:flex;gap:8px">'
     +'<button class="btn btn-p" onclick="iniciarForm(\''+c.tipo+'\',App.clienteActual)">Editar</button>'
@@ -2854,16 +2975,65 @@ function renderDocs() {
   var nom = nombreCliente(c).replace(/[^a-zA-Z0-9_\-]/g,'_').substring(0,40);
   var carpeta = 'PLD_Documentos/'+nStr(c.num_cliente)+'_'+nom;
 
+  // Calcular lista de obligatorios considerando condiciones
+  var oblBase = DOCS_OBL[c.tipo] || [];
+  var obligatorios = oblBase.slice();
+  Object.keys(DOCS_OBL_COND).forEach(function(docNom) {
+    var esCond = DOCS_OBL_COND[docNom](c);
+    var yaEsta = obligatorios.indexOf(docNom) >= 0;
+    if (esCond && !yaEsta) obligatorios.push(docNom);
+  });
+
   graph('GET', '/sites/'+App.siteId+'/drive/root:/'+carpeta+':/children', null, function(data) {
     var archivos = (data && data.value) ? data.value : [];
-    var rows = lista.map(function(td) {
+
+    function archivoDoc(td) {
       var arch = null;
       archivos.forEach(function(a){ if(a.name.indexOf(td.replace(/\s/g,'_').substring(0,20))>=0) arch=a; });
+      return arch;
+    }
+
+    // Progreso: obligatorios cargados
+    var oblTotal    = obligatorios.length;
+    var oblCargados = obligatorios.filter(function(td){ return !!archivoDoc(td); }).length;
+    var pct         = oblTotal ? Math.round(oblCargados / oblTotal * 100) : 100;
+    var colorBarra  = pct === 100 ? 'var(--vd)' : pct >= 50 ? 'var(--am)' : 'var(--rj)';
+
+    var header = '<div style="margin-bottom:14px">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
+      +'<span style="font-size:12px;color:var(--tx2)">Documentos obligatorios cargados</span>'
+      +'<span style="font-size:12px;font-weight:600;color:var(--tx1)">'+oblCargados+' / '+oblTotal
+      +' &nbsp;('+pct+'%)</span></div>'
+      +'<div style="height:6px;background:var(--bg2);border-radius:3px;overflow:hidden">'
+      +'<div style="height:100%;width:'+pct+'%;background:'+colorBarra+';border-radius:3px;transition:width .4s"></div>'
+      +'</div></div>';
+
+    // Separar obligatorios y complementarios
+    var rows = '';
+    var oblDocs = lista.filter(function(td){ return obligatorios.indexOf(td) >= 0; });
+    var compDocs = lista.filter(function(td){ return obligatorios.indexOf(td) < 0; });
+
+    function renderRow(td) {
+      var arch = archivoDoc(td);
+      var esObl = obligatorios.indexOf(td) >= 0;
+      var esCond = !!DOCS_OBL_COND[td];
+      var tagObl = esObl
+        ? (esCond
+            ? '<span style="font-size:10px;padding:2px 7px;border-radius:20px;background:var(--am3);color:var(--am);font-weight:600;margin-left:6px">Obligatorio si aplica</span>'
+            : '<span style="font-size:10px;padding:2px 7px;border-radius:20px;background:var(--rj3);color:var(--rj);font-weight:600;margin-left:6px">Obligatorio</span>')
+        : '';
+      var icono = !esObl
+        ? '<span style="color:var(--tx3);font-size:16px">○</span>'
+        : arch
+          ? '<span style="color:var(--vd);font-size:16px">✓</span>'
+          : '<span style="color:var(--rj);font-size:16px">✗</span>';
       return '<div class="doc-row">'
-        +'<div><div style="font-weight:500;font-size:13px">'+td+'</div>'
+        +'<div style="display:flex;align-items:center;gap:8px">'
+        +icono
+        +'<div><div style="font-weight:500;font-size:13px">'+td+tagObl+'</div>'
         +(arch?'<a href="'+arch.webUrl+'" target="_blank" style="font-size:11px;color:var(--az2)">'+arch.name+'</a>'
                :'<span style="font-size:11px;color:var(--tx3)">Sin documento</span>')
-        +'</div>'
+        +'</div></div>'
         +'<div style="display:flex;gap:8px;align-items:center">'
         +'<span class="doc-bdg'+(arch?'':' pend')+'">'+(arch?'Cargado':'Pendiente')+'</span>'
         +(arch?'<a href="'+arch.webUrl+'" target="_blank" class="btn btn-xs">Ver</a>':'')
@@ -2871,8 +3041,18 @@ function renderDocs() {
         +'<input type="file" style="display:none" onchange="subirDoc(this,\''+td+'\',\''+carpeta+'\')">'
         +'</label>'
         +'</div></div>';
-    }).join('');
-    document.getElementById('fd-docs').innerHTML = rows || '<div class="empty">Sin documentos.</div>';
+    }
+
+    if (oblDocs.length) {
+      rows += '<div style="font-size:11px;font-weight:600;color:var(--tx3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Documentos obligatorios</div>';
+      rows += oblDocs.map(renderRow).join('');
+    }
+    if (compDocs.length) {
+      rows += '<div style="font-size:11px;font-weight:600;color:var(--tx3);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 6px">Documentos complementarios</div>';
+      rows += compDocs.map(renderRow).join('');
+    }
+
+    document.getElementById('fd-docs').innerHTML = header + (rows || '<div class="empty">Sin documentos.</div>');
   });
 }
 
