@@ -5498,14 +5498,37 @@ var SCR = {
 };
 
 // ── Normalización de texto para fuzzy matching ────────────────
+// Elimina terminaciones de tipo societario (S.A. de C.V., SAS, S. de R.L., etc.)
+// para que no interfieran al comparar nombres de personas morales contra listas.
+// Opera sobre texto ya normalizado (minúsculas, sin puntuación, espacios simples).
+function scrStripLegal(s) {
+  if (!s) return s;
+  var tail  = '(?:\\s+de\\s+c\\s*v)?'; // sufijo opcional "de CV" / "de C.V."
+  var bases = [
+    's\\s*a\\s*p\\s*i',  // SAPI / S.A.P.I.
+    's\\s*a\\s*s',       // SAS  / S.A.S.
+    's\\s*de\\s*r\\s*l', // S de RL / S. de R.L.
+    's\\s*en\\s*c',      // S en C / S. en C.
+    's\\s*r\\s*l',       // SRL  / S.R.L.
+    's\\s*a',            // SA   / S.A.
+    's\\s*c',            // SC   / S.C.
+    'a\\s*c'             // AC   / A.C.
+  ];
+  var re = new RegExp('\\s+(?:' + bases.join('|') + ')' + tail + '$');
+  var prev;
+  do { prev = s; s = s.replace(re, '').trim(); } while (s !== prev && s);
+  return s;
+}
+
 function scrNorm(s) {
   if (!s) return '';
-  return String(s)
+  var n = String(s)
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // quitar acentos
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+  return scrStripLegal(n);
 }
 
 // Calcula similitud entre dos strings (0–100)
