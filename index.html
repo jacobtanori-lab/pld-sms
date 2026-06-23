@@ -4369,7 +4369,7 @@ function nuevaOpForm(datos, fraccion) {
     +fg('Fecha nacimiento / constitucion',null,false)+fi('contraparte_fecha',d.contraparte_fecha||'','AAAA-MM-DD')
     +fg('RFC de la contraparte',null,false)+fi('contraparte_rfc',d.contraparte_rfc||'','','mono')
     +fg('CURP de la contraparte (si PF)',null,false)+fi('contraparte_curp',d.contraparte_curp||'','')
-    +fg('Pais de nacionalidad ISO',null,false)+fi('contraparte_pais_iso',d.contraparte_pais_iso||'MX','Ej: MX')
+    +fg('Pais de nacionalidad',null,false)+'<select class="sel" name="contraparte_pais">'+optsPais(d.contraparte_pais||'MEXICO')+'</select></div>'
     +'</div></div>'
 
     // Características del inmueble (campos comunes + específicos por fracción)
@@ -4664,7 +4664,7 @@ function generarXML(opId) {
         xml += '                <denominacion_razon>'+limXML(op.contraparte_nombre,254)+'</denominacion_razon>\n';
         if (op.contraparte_fecha) xml += '                <fecha_constitucion>'+fechaXML(op.contraparte_fecha)+'</fecha_constitucion>\n';
         if (op.contraparte_rfc) xml += '                <rfc>'+limXML(op.contraparte_rfc,12)+'</rfc>\n';
-        xml += '                <pais_nacionalidad>'+(op.contraparte_pais_iso||'MX')+'</pais_nacionalidad>\n';
+        xml += '                <pais_nacionalidad>'+(op.contraparte_pais?paisISO(op.contraparte_pais):(op.contraparte_pais_iso||'MX'))+'</pais_nacionalidad>\n';
         xml += '                <giro_mercantil>9999999</giro_mercantil>\n';
         xml += '                <representante_apoderado>\n';
         xml += '                  <nombre>REPRESENTANTE</nombre>\n';
@@ -4680,7 +4680,7 @@ function generarXML(opId) {
         if (op.contraparte_fecha) xml += '                <fecha_nacimiento>'+fechaXML(op.contraparte_fecha)+'</fecha_nacimiento>\n';
         if (op.contraparte_rfc) xml += '                <rfc>'+limXML(op.contraparte_rfc,13)+'</rfc>\n';
         if (op.contraparte_curp) xml += '                <curp>'+limXML(op.contraparte_curp,18)+'</curp>\n';
-        xml += '                <pais_nacionalidad>'+(op.contraparte_pais_iso||'MX')+'</pais_nacionalidad>\n';
+        xml += '                <pais_nacionalidad>'+(op.contraparte_pais?paisISO(op.contraparte_pais):(op.contraparte_pais_iso||'MX'))+'</pais_nacionalidad>\n';
         xml += '                <actividad_economica>9999999</actividad_economica>\n';
         xml += '              </persona_fisica>\n';
       }
