@@ -2513,6 +2513,11 @@ function calcEBR(d) {
 // --- CAMPOS COMUNES DOMICILIO ---
 function htmlDomicilio(d, pref) {
   pref = pref || '';
+  var paisDom   = d[pref+'pais_dom'] || 'MEXICO';
+  var esExt     = normPais(paisDom) !== 'MEXICO';
+  var estadoVal = esExt ? 'Otro' : (d[pref+'estado'] || '');
+  var estadoExt = d[pref+'estado_ext'] || '';
+  var mostrarExt = esExt || estadoVal === 'Otro' || !!estadoExt;
   return '<div class="fgrid">'
     +secHdr('Domicilio '+(pref?'('+pref+')':''))
     +fiFull('Calle o vialidad',pref+'calle',d[pref+'calle']||'','Nombre de la calle, avenida o via',true)
@@ -2521,10 +2526,55 @@ function htmlDomicilio(d, pref) {
     +fg('Colonia o urbanizacion',pref+'colonia',true)+fi(pref+'colonia',d[pref+'colonia']||'','')
     +fg('Demarcacion territorial o municipio',pref+'municipio',true)+fi(pref+'municipio',d[pref+'municipio']||'','')
     +fg('Ciudad o poblacion',pref+'ciudad',false)+fi(pref+'ciudad',d[pref+'ciudad']||'','')
-    +fg('Estado o entidad federativa',pref+'estado',true)+fs(pref+'estado',opts(LISTAS.estados,d[pref+'estado']||''))
+    +fg('Pais',pref+'pais_dom',true)+'<select class="sel" name="'+pref+'pais_dom" onchange="onPaisDomChange(this,\''+pref+'\')">'+optsPais(paisDom)+'</select></div>'
+    +fg('Estado o entidad federativa',pref+'estado',true)+'<select class="sel" name="'+pref+'estado" onchange="onEstadoDomChange(this,\''+pref+'\')">'+opts(LISTAS.estados,estadoVal)+'</select></div>'
+    +'<div class="fg" id="estado-ext-wrap-'+pref+'" style="display:'+(mostrarExt?'block':'none')+'">'
+    +'<label class="lbl">Estado / entidad (extranjero) <span class="req">*</span></label>'
+    +'<input class="inp" name="'+pref+'estado_ext" id="estado-ext-'+pref+'" value="'+estadoExt+'" maxlength="100" '
+    +'placeholder="Solo A-Z 0-9 espacio , . : /" oninput="sanitizeEstadoExt(this)" style="text-transform:uppercase"></div>'
     +fg('Codigo postal',pref+'cp',false)+fi(pref+'cp',d[pref+'cp']||'','00000','mono')
-    +fg('Pais',pref+'pais_dom',true)+fs(pref+'pais_dom',optsPais(d[pref+'pais_dom']||'Mexico'))
     +'</div>';
+}
+
+// País del domicilio cambió: si es extranjero, fija Estado en "Otro" y muestra el campo de texto libre
+function onPaisDomChange(sel, pref) {
+  var esExt = normPais(sel.value) !== 'MEXICO';
+  var estadoSel = document.querySelector('[name="'+pref+'estado"]');
+  var wrap = document.getElementById('estado-ext-wrap-'+pref);
+  if (esExt) {
+    if (estadoSel) estadoSel.value = 'Otro';
+    if (wrap) wrap.style.display = 'block';
+  } else {
+    if (estadoSel && estadoSel.value === 'Otro') estadoSel.value = '';
+    if (wrap) {
+      wrap.style.display = 'none';
+      var ext = document.getElementById('estado-ext-'+pref);
+      if (ext) ext.value = '';
+    }
+  }
+}
+
+// Estado cambió manualmente: mostrar campo libre solo si eligió "Otro"
+function onEstadoDomChange(sel, pref) {
+  var wrap = document.getElementById('estado-ext-wrap-'+pref);
+  if (!wrap) return;
+  if (sel.value === 'Otro') { wrap.style.display = 'block'; }
+  else {
+    wrap.style.display = 'none';
+    var ext = document.getElementById('estado-ext-'+pref);
+    if (ext) ext.value = '';
+  }
+}
+
+// Sanitiza el estado extranjero: A-Z (sin acentos/diéresis), Ñ, 0-9, espacio , . : /
+function sanitizeEstadoExt(input) {
+  var v = (input.value || '').toUpperCase();
+  // Convertir acentos y diéresis a su letra base; Ñ se conserva
+  v = v.replace(/[ÁÀÂÄÃ]/g,'A').replace(/[ÉÈÊË]/g,'E').replace(/[ÍÌÎÏ]/g,'I')
+       .replace(/[ÓÒÔÖÕ]/g,'O').replace(/[ÚÙÛÜ]/g,'U');
+  // Eliminar cualquier carácter no permitido
+  v = v.replace(/[^A-Z0-9Ñ ,.:\/]/g,'');
+  input.value = v.substring(0,100);
 }
 
 // --- CAMPOS IDENTIFICACION PERSONA FISICA ---
@@ -3189,11 +3239,14 @@ function renderDatosGenerales(c) {
 }
 
 function renderDomicilio(c, pref) {
+  pref = pref || '';
+  var estadoMostrar = (c[pref+'estado']==='Otro' && c[pref+'estado_ext'])
+    ? c[pref+'estado_ext'] : c[pref+'estado'];
   return fgHtml(
     fcHtml('Calle o vialidad',c[pref+'calle'])+fcHtml('Num. exterior',c[pref+'num_ext'])
     +fcHtml('Num. interior',c[pref+'num_int'])+fcHtml('Colonia',c[pref+'colonia'])
     +fcHtml('Demarcacion / municipio',c[pref+'municipio'])+fcHtml('Ciudad / poblacion',c[pref+'ciudad'])
-    +fcHtml('Estado',c[pref+'estado'])+fcHtml('Codigo postal',c[pref+'cp'])
+    +fcHtml('Estado',estadoMostrar)+fcHtml('Codigo postal',c[pref+'cp'])
     +fcHtml('Pais',c[pref+'pais_dom']));
 }
 
@@ -5602,7 +5655,7 @@ function _generarXLSX() {
         actPFLabel(c.actividad_pf)||c.actividad||c.giro||'', c.fraccion||'',
         c.riesgo||'', parseFloat(c.puntaje_ebr)||0,
         domicilio, c.colonia||'', c.municipio||'',
-        c.estado||'', c.cp||'', c.pais||'Mexico',
+        (c.estado==='Otro'&&c.estado_ext?c.estado_ext:c.estado)||'', c.cp||'', c.pais_dom||c.pais||'',
         c.registrado_por||'', c.fecha_registro||'',
         cntOps[k]||0, parseFloat(sumaOps[k])||0,
         cntLiq[k]||0, parseFloat(sumaLiq[k])||0,
