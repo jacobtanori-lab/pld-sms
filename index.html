@@ -650,95 +650,120 @@ var TIPOS_OPERACION_ARI = [
 var TIPOS_OPERACION = TIPOS_OPERACION_INM;
 
 // Catálogo tipos de alerta
+// Catálogo oficial UIF de tipos de alerta — Fracción V Inmuebles
 var TIPOS_ALERTA = [
   {codigo:'100',desc:'Sin alerta'},
-  {codigo:'200',desc:'Operacion inusual'},
-  {codigo:'300',desc:'Operacion relevante'},
-  {codigo:'400',desc:'Operacion con recursos de procedencia ilicita'},
-  {codigo:'500',desc:'Operacion relacionada con terrorismo'},
-  {codigo:'521',desc:'Operacion sospechosa - inmuebles'},
-  {codigo:'600',desc:'Lista de personas bloqueadas'},
-  {codigo:'700',desc:'PEP involucrado'}
+  {codigo:'3101',desc:'El cliente se rehusa a proporcionar documentos personales que lo identifiquen'},
+  {codigo:'3102',desc:'El pago por el inmueble es realizado por un tercero sin relacion aparente con el cliente'},
+  {codigo:'3103',desc:'El cliente o personas relacionadas realizan multiples operaciones en periodo corto sin razon aparente'},
+  {codigo:'3104',desc:'Al cliente no le importa pagar precios superiores al mercado para operar fuera de parametros'},
+  {codigo:'3105',desc:'Se tiene conocimiento o sospecha de que el cliente o relacionado esta vinculado con actividades ilicitas'},
+  {codigo:'3106',desc:'El cliente no quiere ser relacionado con la compra del inmueble'},
+  {codigo:'3107',desc:'La operacion no es acorde con la actividad economica o giro declarado por el cliente'},
+  {codigo:'3108',desc:'El cliente solicita operar por contrato privado sin intencion de registrarlo ante notario'},
+  {codigo:'3109',desc:'Transacciones sucesivas de compra-venta de la misma propiedad en periodo corto con cambios de valor'},
+  {codigo:'3110',desc:'La operacion se realiza a un valor significativamente distinto al real o de mercado'},
+  {codigo:'3111',desc:'Indicios de que las partes no actuan en nombre propio y ocultan al cliente real'},
+  {codigo:'3112',desc:'Uso de divisas en efectivo sin justificacion alguna'},
+  {codigo:'3113',desc:'El cliente liquida la operacion por transferencia proveniente del extranjero'},
+  {codigo:'3114',desc:'El cliente insiste en liquidar en efectivo rebasando el umbral permitido en la Ley'},
+  {codigo:'3115',desc:'El cliente intenta sobornar, extorsionar o amenazar para operar fuera de parametros o evitar el aviso'},
+  {codigo:'3116',desc:'La informacion y documentacion presentada es inconsistente o de dificil verificacion'},
+  {codigo:'3117',desc:'Sospecha de que intermediarios del sistema financiero estan coludidos con el cliente'},
+  {codigo:'3118',desc:'El cliente es un fideicomiso y se niega a proporcionar informacion del beneficiario controlador'},
+  {codigo:'3119',desc:'El cliente opera en grupos sin parentesco o relacion entre ellos'},
+  {codigo:'3120',desc:'El cliente pretende pagar o liquidar con monedas virtuales'},
+  {codigo:'9999',desc:'Otra alerta'}
 ];
 
-// Catálogo formas de pago
+// Catálogo oficial UIF de formas de pago
 var FORMAS_PAGO = [
-  {codigo:'1',desc:'Efectivo'},
-  {codigo:'2',desc:'Cheque'},
-  {codigo:'3',desc:'Transferencia electronica'},
-  {codigo:'4',desc:'Tarjeta de debito'},
-  {codigo:'5',desc:'Tarjeta de credito'},
-  {codigo:'6',desc:'Otro instrumento bancario'}
+  {codigo:'1',desc:'Contado'},
+  {codigo:'2',desc:'Diferido o en parcialidades'},
+  {codigo:'3',desc:'Dacion en pago'},
+  {codigo:'4',desc:'Prestamo o credito'},
+  {codigo:'5',desc:'Permuta'}
 ];
 
-// Catálogo instrumentos monetarios
+// Catálogo oficial UIF de instrumentos monetarios
 var INSTRUMENTOS_MON = [
-  {codigo:'1',desc:'Moneda nacional'},
-  {codigo:'2',desc:'Moneda extranjera'},
-  {codigo:'3',desc:'Cheque de caja'},
-  {codigo:'4',desc:'Cheque certificado'},
-  {codigo:'5',desc:'Orden de pago'},
-  {codigo:'6',desc:'Giro bancario'},
-  {codigo:'7',desc:'Transferencia SPEI'},
-  {codigo:'8',desc:'Otro'}
+  {codigo:'1',desc:'Efectivo'},
+  {codigo:'2',desc:'Tarjeta de Credito'},
+  {codigo:'3',desc:'Tarjeta de Debito'},
+  {codigo:'4',desc:'Tarjeta de Prepago'},
+  {codigo:'5',desc:'Cheque Nominativo'},
+  {codigo:'6',desc:'Cheque de Caja'},
+  {codigo:'7',desc:'Cheques de Viajero'},
+  {codigo:'8',desc:'Transferencia Interbancaria'},
+  {codigo:'9',desc:'Transferencia Misma Institucion'},
+  {codigo:'10',desc:'Transferencia Internacional'},
+  {codigo:'11',desc:'Orden de Pago'},
+  {codigo:'12',desc:'Giro'},
+  {codigo:'13',desc:'Oro o Platino Amonedados'},
+  {codigo:'14',desc:'Plata Amonedada'},
+  {codigo:'15',desc:'Metales Preciosos'},
+  {codigo:'16',desc:'Activos Virtuales'},
+  {codigo:'99',desc:'Otros'}
 ];
 
-// Catálogo tipos de inmueble
+// Catálogo oficial UIF de tipos de inmueble
 var TIPOS_INMUEBLE = [
-  {codigo:'1',desc:'Casa habitacion'},
+  {codigo:'1',desc:'Casa / Casa en condominio'},
   {codigo:'2',desc:'Departamento'},
-  {codigo:'3',desc:'Local comercial'},
-  {codigo:'4',desc:'Oficina'},
-  {codigo:'5',desc:'Bodega / nave industrial'},
-  {codigo:'6',desc:'Terreno urbano'},
-  {codigo:'7',desc:'Terreno rustico'},
-  {codigo:'8',desc:'Desarrollo habitacional'},
-  {codigo:'9',desc:'Desarrollo comercial'},
-  {codigo:'10',desc:'Otro'}
+  {codigo:'3',desc:'Edificio habitacional'},
+  {codigo:'4',desc:'Edificio comercial'},
+  {codigo:'5',desc:'Edificio oficinas'},
+  {codigo:'6',desc:'Local comercial independiente'},
+  {codigo:'7',desc:'Local en centro comercial'},
+  {codigo:'8',desc:'Oficina'},
+  {codigo:'9',desc:'Bodega comercial'},
+  {codigo:'10',desc:'Bodega industrial'},
+  {codigo:'11',desc:'Nave Industrial'},
+  {codigo:'12',desc:'Terreno urbano habitacional'},
+  {codigo:'13',desc:'Terreno no urbano habitacional'},
+  {codigo:'14',desc:'Terreno urbano comercial o industrial'},
+  {codigo:'15',desc:'Terreno no urbano comercial o industrial'},
+  {codigo:'16',desc:'Terreno ejidal'},
+  {codigo:'17',desc:'Rancho / Hacienda / Quinta'},
+  {codigo:'18',desc:'Huerta'},
+  {codigo:'99',desc:'Otro'}
 ];
 
-// Catálogo figura del cliente/SO
-var FIGURAS = [
-  {codigo:'1',desc:'Comprador / Adquirente'},
-  {codigo:'2',desc:'Vendedor / Enajenante'},
-  {codigo:'3',desc:'Arrendatario'},
-  {codigo:'4',desc:'Arrendador'},
-  {codigo:'5',desc:'Promitente comprador'},
-  {codigo:'6',desc:'Promitente vendedor'},
-  {codigo:'7',desc:'Cedente'},
-  {codigo:'8',desc:'Cesionario'},
-  {codigo:'9',desc:'Fideicomitente'},
-  {codigo:'10',desc:'Fideicomisario'}
+// Catálogo oficial UIF — figura del cliente reportado
+var FIGURA_CLIENTE = [
+  {codigo:'1',desc:'Vendedor'},
+  {codigo:'2',desc:'Comprador'}
+];
+// Catálogo oficial UIF — figura del sujeto obligado
+var FIGURA_SO = [
+  {codigo:'1',desc:'Vendedor'},
+  {codigo:'2',desc:'Comprador'},
+  {codigo:'3',desc:'Intermediario'}
 ];
 
-// Catálogo entidades federativas (para notario)
+// Catálogo oficial entidades federativas SEPOMEX (clave para notario / instrumento publico)
 var ENTIDADES_FED = [
   {codigo:'1',desc:'Aguascalientes'},{codigo:'2',desc:'Baja California'},
   {codigo:'3',desc:'Baja California Sur'},{codigo:'4',desc:'Campeche'},
-  {codigo:'5',desc:'Coahuila'},{codigo:'6',desc:'Colima'},
+  {codigo:'5',desc:'Coahuila de Zaragoza'},{codigo:'6',desc:'Colima'},
   {codigo:'7',desc:'Chiapas'},{codigo:'8',desc:'Chihuahua'},
-  {codigo:'9',desc:'Ciudad de Mexico'},{codigo:'10',desc:'Durango'},
+  {codigo:'9',desc:'Distrito Federal'},{codigo:'10',desc:'Durango'},
   {codigo:'11',desc:'Guanajuato'},{codigo:'12',desc:'Guerrero'},
   {codigo:'13',desc:'Hidalgo'},{codigo:'14',desc:'Jalisco'},
-  {codigo:'15',desc:'Estado de Mexico'},{codigo:'16',desc:'Michoacan'},
+  {codigo:'15',desc:'Mexico'},{codigo:'16',desc:'Michoacan de Ocampo'},
   {codigo:'17',desc:'Morelos'},{codigo:'18',desc:'Nayarit'},
   {codigo:'19',desc:'Nuevo Leon'},{codigo:'20',desc:'Oaxaca'},
   {codigo:'21',desc:'Puebla'},{codigo:'22',desc:'Queretaro'},
   {codigo:'23',desc:'Quintana Roo'},{codigo:'24',desc:'San Luis Potosi'},
   {codigo:'25',desc:'Sinaloa'},{codigo:'26',desc:'Sonora'},
   {codigo:'27',desc:'Tabasco'},{codigo:'28',desc:'Tamaulipas'},
-  {codigo:'29',desc:'Tlaxcala'},{codigo:'30',desc:'Veracruz'},
+  {codigo:'29',desc:'Tlaxcala'},{codigo:'30',desc:'Veracruz de Ignacio de la Llave'},
   {codigo:'31',desc:'Yucatan'},{codigo:'32',desc:'Zacatecas'}
 ];
 
-// Catálogo monedas
+// Catálogo oficial UIF de monedas o divisas (clave + abreviatura ISO)
 var MONEDAS = [
-  {codigo:'1',desc:'Peso mexicano (MXN)'},
-  {codigo:'2',desc:'Dolar americano (USD)'},
-  {codigo:'3',desc:'Euro (EUR)'},
-  {codigo:'4',desc:'Libra esterlina (GBP)'},
-  {codigo:'5',desc:'Yen japones (JPY)'},
-  {codigo:'6',desc:'Otra divisa'}
+{codigo:'1',desc:'MXN'},{codigo:'2',desc:'USD'},{codigo:'3',desc:'EUR'},{codigo:'4',desc:'AED'},{codigo:'5',desc:'AFN'},{codigo:'6',desc:'ALL'},{codigo:'7',desc:'AMD'},{codigo:'8',desc:'ANG'},{codigo:'9',desc:'AOA'},{codigo:'10',desc:'ARS'},{codigo:'11',desc:'AUD'},{codigo:'12',desc:'AWG'},{codigo:'13',desc:'AZM'},{codigo:'14',desc:'AZN'},{codigo:'15',desc:'BAM'},{codigo:'16',desc:'BBD'},{codigo:'17',desc:'BDT'},{codigo:'18',desc:'BGN'},{codigo:'19',desc:'BHD'},{codigo:'20',desc:'BIF'},{codigo:'21',desc:'BMD'},{codigo:'22',desc:'BND'},{codigo:'23',desc:'BOB'},{codigo:'24',desc:'BRL'},{codigo:'25',desc:'BSD'},{codigo:'26',desc:'BTN'},{codigo:'27',desc:'BWP'},{codigo:'28',desc:'BYR'},{codigo:'29',desc:'BZD'},{codigo:'30',desc:'CAD'},{codigo:'31',desc:'CDF'},{codigo:'32',desc:'CHF'},{codigo:'33',desc:'CLP'},{codigo:'34',desc:'CNY'},{codigo:'35',desc:'COP'},{codigo:'36',desc:'CRC'},{codigo:'37',desc:'CSD'},{codigo:'38',desc:'CUC'},{codigo:'39',desc:'CUP'},{codigo:'40',desc:'CVE'},{codigo:'41',desc:'CZK'},{codigo:'42',desc:'DJF'},{codigo:'43',desc:'DKK'},{codigo:'44',desc:'DOP'},{codigo:'45',desc:'DZD'},{codigo:'46',desc:'EGP'},{codigo:'47',desc:'ERN'},{codigo:'48',desc:'ETB'},{codigo:'49',desc:'FJD'},{codigo:'50',desc:'FKP'},{codigo:'51',desc:'GBP'},{codigo:'52',desc:'GEL'},{codigo:'53',desc:'GHS'},{codigo:'54',desc:'GIP'},{codigo:'55',desc:'GMD'},{codigo:'56',desc:'GNF'},{codigo:'57',desc:'GTQ'},{codigo:'58',desc:'GYD'},{codigo:'59',desc:'HKD'},{codigo:'60',desc:'HNL'},{codigo:'61',desc:'HRK'},{codigo:'62',desc:'HTG'},{codigo:'63',desc:'HUF'},{codigo:'64',desc:'IDR'},{codigo:'65',desc:'ILS'},{codigo:'66',desc:'INR'},{codigo:'67',desc:'IQD'},{codigo:'68',desc:'IRR'},{codigo:'69',desc:'ISK'},{codigo:'70',desc:'JMD'},{codigo:'71',desc:'JOD'},{codigo:'72',desc:'JPY'},{codigo:'73',desc:'KES'},{codigo:'74',desc:'KGS'},{codigo:'75',desc:'KHR'},{codigo:'76',desc:'KMF'},{codigo:'77',desc:'KPW'},{codigo:'78',desc:'KRW'},{codigo:'79',desc:'KWD'},{codigo:'80',desc:'KYD'},{codigo:'81',desc:'KZT'},{codigo:'82',desc:'LAK'},{codigo:'83',desc:'LBP'},{codigo:'84',desc:'LKR'},{codigo:'85',desc:'LRD'},{codigo:'86',desc:'LSL'},{codigo:'87',desc:'LTL'},{codigo:'88',desc:'LVL'},{codigo:'89',desc:'LYD'},{codigo:'90',desc:'MAD'},{codigo:'91',desc:'MDL'},{codigo:'92',desc:'MGA'},{codigo:'93',desc:'MKD'},{codigo:'94',desc:'MMK'},{codigo:'95',desc:'MNT'},{codigo:'96',desc:'MOP'},{codigo:'97',desc:'MRO'},{codigo:'98',desc:'MUR'},{codigo:'99',desc:'MVR'},{codigo:'100',desc:'MWK'},{codigo:'101',desc:'MYR'},{codigo:'102',desc:'MZN'},{codigo:'103',desc:'NAD'},{codigo:'104',desc:'NGN'},{codigo:'105',desc:'NIO'},{codigo:'106',desc:'NOK'},{codigo:'107',desc:'NPR'},{codigo:'108',desc:'NZD'},{codigo:'109',desc:'OMR'},{codigo:'110',desc:'PAB'},{codigo:'111',desc:'PEN'},{codigo:'112',desc:'PGK'},{codigo:'113',desc:'PHP'},{codigo:'114',desc:'PKR'},{codigo:'115',desc:'PLN'},{codigo:'116',desc:'PYG'},{codigo:'117',desc:'QAR'},{codigo:'118',desc:'RON'},{codigo:'119',desc:'RSD'},{codigo:'120',desc:'RUB'},{codigo:'121',desc:'RWF'},{codigo:'122',desc:'SAR'},{codigo:'123',desc:'SBD'},{codigo:'124',desc:'SCR'},{codigo:'125',desc:'SDG'},{codigo:'126',desc:'SEK'},{codigo:'127',desc:'SGD'},{codigo:'128',desc:'SHP'},{codigo:'129',desc:'SLL'},{codigo:'130',desc:'SOS'},{codigo:'131',desc:'SRD'},{codigo:'132',desc:'SSP'},{codigo:'133',desc:'STD'},{codigo:'134',desc:'SVC'},{codigo:'135',desc:'SYP'},{codigo:'136',desc:'SZL'},{codigo:'137',desc:'THB'},{codigo:'138',desc:'TJS'},{codigo:'139',desc:'TMT'},{codigo:'140',desc:'TND'},{codigo:'141',desc:'TOP'},{codigo:'142',desc:'TRY'},{codigo:'143',desc:'TTD'},{codigo:'144',desc:'TWD'},{codigo:'145',desc:'TZS'},{codigo:'146',desc:'UAH'},{codigo:'147',desc:'UGX'},{codigo:'148',desc:'UYU'},{codigo:'149',desc:'UZS'},{codigo:'150',desc:'VEF'},{codigo:'151',desc:'VND'},{codigo:'152',desc:'VUV'},{codigo:'153',desc:'WST'},{codigo:'154',desc:'YER'},{codigo:'155',desc:'ZAR'},{codigo:'156',desc:'ZMK'},{codigo:'157',desc:'ZMW'},{codigo:'158',desc:'ZWL'},{codigo:'159',desc:'MXA'},{codigo:'160',desc:'MXB'},{codigo:'161',desc:'MXC'},{codigo:'162',desc:'MXD'},{codigo:'163',desc:'MXE'},{codigo:'164',desc:'MXF'},{codigo:'165',desc:'MXG'},{codigo:'166',desc:'MXH'},{codigo:'167',desc:'MXI'},{codigo:'168',desc:'MXJ'},{codigo:'169',desc:'MXK'},{codigo:'170',desc:'MXL'},{codigo:'171',desc:'MXM'},{codigo:'172',desc:'MXN2'},{codigo:'173',desc:'MXO'},{codigo:'174',desc:'MXP'},{codigo:'175',desc:'XAG'},{codigo:'176',desc:'XAU'},{codigo:'177',desc:'XFO'},{codigo:'178',desc:'XPD'},{codigo:'179',desc:'XPT'},{codigo:'180',desc:'XAF'},{codigo:'181',desc:'XCD'},{codigo:'182',desc:'XFU'},{codigo:'183',desc:'XOF'},{codigo:'184',desc:'XPF'}
 ];
 
 // Helper: obtener clave de país (la que va al aviso) a partir del nombre
@@ -3883,7 +3908,7 @@ function crearAvisoDesdeAlerta(alertaId) {
         fraccion: fraccion,
         id_cliente_ref: cli ? cli.id : (a.id_cliente_ref||''),
         nombre_cliente: cli ? nombreCliente(cli) : (a.nombre_cliente||''),
-        tipo_alerta: '200',  // Operación inusual por umbral
+        tipo_alerta: '3114',  // El cliente insiste en liquidar en efectivo rebasando el umbral
         descripcion_alerta: a.descripcion || ('Umbral superado: $'+(a.monto_acumulado||0).toLocaleString('es-MX')),
         prioridad: '1',
         tipo_operacion: fraccion==='ARI' ? '1501' : '501',
@@ -4172,8 +4197,8 @@ function nuevaOpForm(datos, fraccion) {
         return '<option value="'+c.id+'"'+(c.id===d.id_cliente_ref?' selected':'')+'>'+nom+' ('+labelTipo(c.tipo)+')</option>';
       }).join(''))
     +'<div class="fg full"><label class="lbl">O capturar nombre manualmente</label><input class="inp" name="nombre_cliente" value="'+(d.nombre_cliente||'')+'"></div>'
-    +fg('Figura del cliente en la operacion',null,true)+'<select class="sel" name="figura_cliente">'+optsC(FIGURAS,d.figura_cliente||'')+'</select></div>'
-    +fg('Figura del sujeto obligado (SO)',null,true)+'<select class="sel" name="figura_so">'+optsC(FIGURAS,d.figura_so||'')+'</select></div>'
+    +fg('Figura del cliente en la operacion',null,true)+'<select class="sel" name="figura_cliente">'+optsC(FIGURA_CLIENTE,d.figura_cliente||'')+'</select></div>'
+    +fg('Figura del sujeto obligado (SO)',null,true)+'<select class="sel" name="figura_so">'+optsC(FIGURA_SO,d.figura_so||'')+'</select></div>'
     +'</div></div>'
 
     // Datos de la operación
@@ -4331,8 +4356,8 @@ function submitOp(idEx, estatus) {
   catOp.forEach(function(x){ if(x.codigo===d.tipo_operacion) d.tipo_operacion_desc=x.desc; });
   TIPOS_ALERTA.forEach(function(x){ if(x.codigo===d.tipo_alerta) d.tipo_alerta_desc=x.desc; });
   TIPOS_INMUEBLE.forEach(function(x){ if(x.codigo===d.tipo_inmueble) d.tipo_inmueble_desc=x.desc; });
-  FIGURAS.forEach(function(x){ if(x.codigo===d.figura_cliente) d.figura_cliente_desc=x.desc; });
-  FIGURAS.forEach(function(x){ if(x.codigo===d.figura_so) d.figura_so_desc=x.desc; });
+  FIGURA_CLIENTE.forEach(function(x){ if(x.codigo===d.figura_cliente) d.figura_cliente_desc=x.desc; });
+  FIGURA_SO.forEach(function(x){ if(x.codigo===d.figura_so) d.figura_so_desc=x.desc; });
   ENTIDADES_FED.forEach(function(x){ if(x.codigo===d.entidad_notario) d.entidad_notario_desc=x.desc; });
 
   // Si seleccionó cliente del expediente, copiar datos relevantes
@@ -4439,21 +4464,8 @@ function generarXML(opId) {
     xml += xmlPersona(cli, op);
     xml += '        </tipo_persona>\n';
 
-    // Domicilio
-    xml += '        <tipo_domicilio>\n';
-    xml += '          <nacional>\n';
-    var colonia = cli ? (cli.colonia||'') : '';
-    var calle   = cli ? (cli.calle||'') : '';
-    var numext  = cli ? (cli.num_ext||'') : '';
-    var numint  = cli ? (cli.num_int||'') : '';
-    var cp      = cli ? (cli.cp||'00000') : '00000';
-    xml += '            <colonia>'+limXML(colonia||'SIN DATO',50)+'</colonia>\n';
-    xml += '            <calle>'+limXML(calle||'SIN DATO',100)+'</calle>\n';
-    xml += '            <numero_exterior>'+limXML(numext||'S/N',56)+'</numero_exterior>\n';
-    if (numint) xml += '            <numero_interior>'+limXML(numint,40)+'</numero_interior>\n';
-    xml += '            <codigo_postal>'+(cp.length===5?cp:'00000')+'</codigo_postal>\n';
-    xml += '          </nacional>\n';
-    xml += '        </tipo_domicilio>\n';
+    // Domicilio (nacional o extranjero según el país del domicilio)
+    xml += xmlDomicilio(cli);
 
     // Teléfono
     if (cli && cli.telefono) {
@@ -4638,29 +4650,8 @@ function generarXML_ARI(op, cli, ent) {
   xml += xmlPersona(cli, op);
   xml += '        </tipo_persona>\n';
 
-  // Domicilio
-  xml += '        <tipo_domicilio>\n';
-  var esPFExt = cli && cli.tipo === 'PF_EXT';
-  if (esPFExt) {
-    xml += '          <extranjero>\n';
-    xml += '            <pais>'+(cli.pais_nac_iso||paisISO(cli.pais_nac2||'Mexico'))+'</pais>\n';
-    xml += '            <estado_provincia>'+limXML(cli.res_estado||'NA',100)+'</estado_provincia>\n';
-    xml += '            <ciudad_poblacion>'+limXML(cli.res_ciudad||cli.res_municipio||'NA',100)+'</ciudad_poblacion>\n';
-    xml += '            <colonia>'+limXML(cli.res_colonia||'NA',50)+'</colonia>\n';
-    xml += '            <calle>'+limXML(cli.res_calle||'NA',100)+'</calle>\n';
-    xml += '            <numero_exterior>'+limXML(cli.res_num_ext||'SN',56)+'</numero_exterior>\n';
-    xml += '            <codigo_postal>'+limXML(cli.res_cp||'00000',12)+'</codigo_postal>\n';
-    xml += '          </extranjero>\n';
-  } else {
-    xml += '          <nacional>\n';
-    xml += '            <colonia>'+limXML((cli&&cli.colonia)||'NA',50)+'</colonia>\n';
-    xml += '            <calle>'+limXML((cli&&cli.calle)||'NA',100)+'</calle>\n';
-    xml += '            <numero_exterior>'+limXML((cli&&cli.num_ext)||'SN',56)+'</numero_exterior>\n';
-    if (cli&&cli.num_int) xml += '            <numero_interior>'+limXML(cli.num_int,40)+'</numero_interior>\n';
-    xml += '            <codigo_postal>'+((cli&&cli.cp&&cli.cp.length===5)?cli.cp:'00000')+'</codigo_postal>\n';
-    xml += '          </nacional>\n';
-  }
-  xml += '        </tipo_domicilio>\n';
+  // Domicilio (nacional o extranjero según el país del domicilio)
+  xml += xmlDomicilio(cli);
 
   if (cli&&cli.telefono) {
     xml += '        <telefono>\n';
@@ -4773,6 +4764,56 @@ function guardarXMLEnSharePoint(xmlContent, nombreArchivo, op) {
   }).catch(function(e) {
     console.error('Error guardando XML en SharePoint:', e);
   });
+}
+
+// Helper: sanitiza texto de domicilio según charset oficial (A-Z Ñ 0-9 espacio , . : / [-])
+function limDir(str, maxLen, allowDash) {
+  if (!str) return '';
+  var s = String(str).toUpperCase()
+    .replace(/[ÁÀÂÃ]/g,'A').replace(/[ÉÈÊË]/g,'E').replace(/[ÍÌÎÏ]/g,'I')
+    .replace(/[ÓÒÔÕ]/g,'O').replace(/[ÚÙÛÜ]/g,'U');
+  s = s.replace(allowDash ? /[^A-Z0-9Ñ ,.:\/\-]/g : /[^A-Z0-9Ñ ,.:\/]/g, '');
+  return s.substring(0, maxLen || 100);
+}
+
+// Helper: bloque <tipo_domicilio> nacional o extranjero según el país del domicilio del cliente
+function xmlDomicilio(cli) {
+  var x = '        <tipo_domicilio>\n';
+  if (!cli) {
+    x += '          <nacional>\n';
+    x += '            <colonia>SIN DATO</colonia>\n';
+    x += '            <calle>SIN DATO</calle>\n';
+    x += '            <numero_exterior>S/N</numero_exterior>\n';
+    x += '            <codigo_postal>00000</codigo_postal>\n';
+    x += '          </nacional>\n        </tipo_domicilio>\n';
+    return x;
+  }
+  var esExt = normPais(cli.pais_dom || 'MEXICO') !== 'MEXICO';
+  if (esExt) {
+    var estadoExt = cli.estado_ext || (cli.estado && cli.estado !== 'Otro' ? cli.estado : '') || 'NA';
+    var cpExt = String(cli.cp || '0000').toUpperCase().replace(/[^A-Z0-9]/g,'').substring(0,12) || '0000';
+    x += '          <extranjero>\n';
+    x += '            <pais>'+paisISO(cli.pais_dom)+'</pais>\n';
+    x += '            <estado_provincia>'+limDir(estadoExt,100)+'</estado_provincia>\n';
+    x += '            <ciudad_poblacion>'+limDir(cli.ciudad||cli.municipio||'NA',100)+'</ciudad_poblacion>\n';
+    x += '            <colonia>'+limDir(cli.colonia||'NA',50,true)+'</colonia>\n';
+    x += '            <calle>'+limDir(cli.calle||'NA',100)+'</calle>\n';
+    x += '            <numero_exterior>'+limDir(cli.num_ext||'SIN NUMERO',56,true)+'</numero_exterior>\n';
+    if (cli.num_int) x += '            <numero_interior>'+limDir(cli.num_int,40,true)+'</numero_interior>\n';
+    x += '            <codigo_postal>'+cpExt+'</codigo_postal>\n';
+    x += '          </extranjero>\n';
+  } else {
+    var cp = String(cli.cp || '00000');
+    x += '          <nacional>\n';
+    x += '            <colonia>'+limDir(cli.colonia||'SIN DATO',50,true)+'</colonia>\n';
+    x += '            <calle>'+limDir(cli.calle||'SIN DATO',100)+'</calle>\n';
+    x += '            <numero_exterior>'+limDir(cli.num_ext||'S/N',56,true)+'</numero_exterior>\n';
+    if (cli.num_int) x += '            <numero_interior>'+limDir(cli.num_int,40,true)+'</numero_interior>\n';
+    x += '            <codigo_postal>'+(cp.length===5?cp:'00000')+'</codigo_postal>\n';
+    x += '          </nacional>\n';
+  }
+  x += '        </tipo_domicilio>\n';
+  return x;
 }
 
 // Helper: genera el bloque XML de persona según tipo
