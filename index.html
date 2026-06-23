@@ -1052,14 +1052,14 @@ function optsPais(sel) {
 // Helper: formatear fecha a AAAAMMDD
 function fechaXML(str) {
   if (!str) return '';
-  var clean = str.replace(/[^0-9]/g,'');
-  // Si viene en formato AAAA-MM-DD (10 chars) → AAAAMMDD
-  if (str.length === 10 && str.indexOf('-') >= 0) return clean;
-  // Si viene en formato DD-MM-AAAA
-  if (str.length === 10 && str.indexOf('-') === 2) {
-    var p = str.split('-');
-    return p[2]+p[1]+p[0];
-  }
+  var s = String(str).trim();
+  // AAAA-MM-DD o AAAA/MM/DD  → AAAAMMDD
+  var mIso = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+  if (mIso) return mIso[1]+pad(+mIso[2])+pad(+mIso[3]);
+  // DD-MM-AAAA o DD/MM/AAAA  → AAAAMMDD
+  var mDmy = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/);
+  if (mDmy) return mDmy[3]+pad(+mDmy[2])+pad(+mDmy[1]);
+  var clean = s.replace(/[^0-9]/g,'');
   return clean.substring(0,8);
 }
 
@@ -4750,7 +4750,7 @@ function generarXML(opId) {
     // Alerta
     xml += '      <alerta>\n';
     xml += '        <tipo_alerta>'+(op.tipo_alerta||'100')+'</tipo_alerta>\n';
-    if (op.descripcion_alerta) {
+    if (op.descripcion_alerta && (op.tipo_alerta||'100') !== '100') {
       xml += '        <descripcion_alerta>'+limXML(op.descripcion_alerta,3000)+'</descripcion_alerta>\n';
     }
     xml += '      </alerta>\n';
@@ -4937,7 +4937,7 @@ function generarXML_ARI(op, cli, ent) {
   xml += '      <prioridad>'+(op.prioridad||'1')+'</prioridad>\n';
   xml += '      <alerta>\n';
   xml += '        <tipo_alerta>'+(op.tipo_alerta||'100')+'</tipo_alerta>\n';
-  if (op.descripcion_alerta)
+  if (op.descripcion_alerta && (op.tipo_alerta||'100') !== '100')
     xml += '        <descripcion_alerta>'+limXML(op.descripcion_alerta,3000)+'</descripcion_alerta>\n';
   xml += '      </alerta>\n';
 
