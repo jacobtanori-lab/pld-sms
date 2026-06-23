@@ -5208,7 +5208,8 @@ function pgReportes() {
   setSB('<div class="sb-sec">Reportes</div>'
     +'<div class="sb-item on">Avisos regulatorios</div>'
     +'<div class="sb-sec">Exportar</div>'
-    +'<div class="sb-item" onclick="exportarClientesXLS()">&#x2193; Clientes (XLS)</div>');
+    +'<div class="sb-item" onclick="exportarClientesXLS()">&#x2193; Clientes (XLS)</div>'
+    +'<div class="sb-item" onclick="exportarOpsLiqXLS()">&#x2193; Operaciones de liquidacion (XLS)</div>');
   setMain('<div class="phdr"><div><div class="ptit">Reportes regulatorios</div><div class="psub">LFPIORPI - Avisos SPPLD/SAT/UIF</div></div>'
     +'<button class="btn btn-p" onclick="nuevoRepForm()">+ Generar reporte</button></div>'
     +'<div id="reps-ct"><div class="empty"><div class="spin" style="margin:0 auto"></div></div></div>');
@@ -5391,6 +5392,120 @@ function _generarXLSX() {
   spGet('PLD_Ops_Liq',     function(r){ datos.liq=r;      intentarGenerar(); });
   spGet('PLD_Alertas',     function(r){ datos.alertas=r;  intentarGenerar(); });
   spGet('PLD_Reportes',    function(r){ datos.avisos=r;   intentarGenerar(); });
+}
+
+function exportarOpsLiqXLS() {
+  toast('Cargando librería de exportación...', 'i');
+  cargarSheetJS(function() { _generarOpsLiqXLSX(); });
+}
+
+function _generarOpsLiqXLSX() {
+  toast('Generando reporte de operaciones, espera...', 'i');
+  var entId = App.entidadActual ? App.entidadActual.id : null;
+  var esConsolidada = entId === 'TODAS' || !entId;
+
+  var datos = {liq:null, clientes:null};
+  var pendientes = 2;
+
+  function fracLabel(f){ return f==='ARI' ? 'Fraccion XV - Arrendamiento' : 'Fraccion V - Compraventa'; }
+  function decod(catalogo, cod){
+    var x = (catalogo||[]).find(function(e){ return e.codigo===cod; });
+    return x ? x.desc : (cod||'');
+  }
+
+  function intentarGenerar() {
+    pendientes--;
+    if (pendientes > 0) return;
+
+    var liq = datos.liq || [];
+    // Filtrar por entidad activa / permitidas
+    if (!esConsolidada) {
+      liq = liq.filter(function(o){ return o.entidad_id===entId || !o.entidad_id; });
+    } else {
+      liq = filtrarPermitidas(liq);
+    }
+
+    // Indexar clientes por num_cliente y por id para obtener RFC/CURP/nombre
+    var cliPorNum = {}, cliPorId = {};
+    (datos.clientes||[]).forEach(function(c){
+      if (c.num_cliente) cliPorNum[c.num_cliente] = c;
+      if (c.id) cliPorId[String(c.id)] = c;
+    });
+
+    var entNombre = esConsolidada ? 'Todas las entidades' : (App.entidadActual.nombre || entId);
+    var fecha = hoy();
+
+    var cols = ['Folio interno','Num. Cliente','Nombre / Razon social','RFC','CURP','Entidad',
+      'Fraccion LFPIORPI','Fecha de pago','Forma de pago','Instrumento monetario','Moneda',
+      'Subtotal (MXN)','IVA (MXN)','Accesorios (MXN)','Total operacion (MXN)',
+      'Reportada','Ref. aviso reportado','Ref. aviso relacionado','Observaciones',
+      'Registrado por','Fecha registro'];
+
+    var filas = liq.map(function(o){
+      var c = (o.num_cliente && cliPorNum[o.num_cliente]) || (o.id_cliente_ref && cliPorId[String(o.id_cliente_ref)]) || {};
+      var sub = parseFloat(o.subtotal||o.monto||0);
+      var iva = parseFloat(o.iva||0);
+      var acc = parseFloat(o.accesorios||0);
+      var tot = parseFloat(o.total_operacion||sub);
+      return [
+        o.Title||'',
+        o.num_cliente||'',
+        o.nombre_cliente||c.Title||nombreCliente(c)||'',
+        c.rfc||'', c.curp||'',
+        o.entidad_nombre||o.entidad_id||'',
+        fracLabel(o.fraccion||'INM'),
+        String(o.fecha_pago||'').substring(0,10),
+        decod(FORMAS_PAGO, o.forma_pago),
+        decod(INSTRUMENTOS_MON, o.instrumento_monetario),
+        decod(MONEDAS, o.moneda),
+        sub, iva, acc, tot,
+        o.reportada===true ? 'Si' : 'No',
+        o.ref_aviso_reportado||'',
+        o.ref_aviso||'',
+        o.observaciones||'',
+        o.registrado_por||'',
+        String(o.fecha_registro||'').substring(0,10)
+      ];
+    });
+
+    var aoa = [cols].concat(filas);
+    var ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = cols.map(function(c, i){
+      var w = i===2 ? 40 : (i===18 ? 30 : (i===5 ? 28 : 16));
+      return {wch: w};
+    });
+
+    var range = XLSX.utils.decode_range(ws['!ref']);
+    for (var col = range.s.c; col <= range.e.c; col++) {
+      var cellAddr = XLSX.utils.encode_cell({r:0, c:col});
+      if (ws[cellAddr]) {
+        ws[cellAddr].s = {
+          font: {bold: true, color: {rgb: 'FFFFFF'}},
+          fill: {fgColor: {rgb: '1E3A5F'}},
+          alignment: {horizontal: 'center'}
+        };
+      }
+    }
+
+    var totalGeneral = filas.reduce(function(s,f){ return s + (parseFloat(f[14])||0); }, 0);
+
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Operaciones');
+    var wsInfo = XLSX.utils.aoa_to_sheet([
+      ['Entidad', entNombre],
+      ['Fecha de exportacion', fecha],
+      ['Total de operaciones', filas.length],
+      ['Suma total de operaciones (MXN)', totalGeneral]
+    ]);
+    XLSX.utils.book_append_sheet(wb, wsInfo, 'Info');
+
+    var nombre = 'Operaciones_Liq_'+(esConsolidada?'TODAS':entId)+'_'+fecha.replace(/-/g,'')+'.xlsx';
+    XLSX.writeFile(wb, nombre);
+    toast('Reporte exportado: '+filas.length+' operaciones', 's');
+  }
+
+  spGet('PLD_Ops_Liq',  function(r){ datos.liq=r;      intentarGenerar(); });
+  spGet('PLD_Clientes', function(r){ datos.clientes=r; intentarGenerar(); });
 }
 
 // ================================================================
