@@ -414,6 +414,85 @@ var PAISES_ALIAS = {
 };
 Object.keys(PAISES_ALIAS).forEach(function(k){ if(!PAISES_ISO[k]) PAISES_ISO[k]=PAISES_ALIAS[k]; });
 
+// ── Catálogo de códigos postales SEPOMEX (alojado en SharePoint) ─────
+var SP_CP_PATH = 'PLD_Catalogos/cp_sepomex.json';
+// Alias de estados SEPOMEX → opción del catálogo LISTAS.estados
+var EST_ALIAS_CP = {
+  'DISTRITO FEDERAL':'Ciudad de Mexico',
+  'MEXICO':'Estado de Mexico',
+  'COAHUILA DE ZARAGOZA':'Coahuila',
+  'MICHOACAN DE OCAMPO':'Michoacan',
+  'VERACRUZ DE IGNACIO DE LA LLAVE':'Veracruz'
+};
+
+function cargarCPData(cb) {
+  if (App._cpData) { if(cb) cb(App._cpData); return; }
+  if (App._cpLoading) { setTimeout(function(){ cargarCPData(cb); }, 400); return; }
+  App._cpLoading = true;
+  var ruta = SP_CP_PATH.split('/').map(encodeURIComponent).join('/');
+  var url = GRAPH+'/sites/'+App.siteId+'/drive/root:/'+ruta+':/content';
+  fetch(url, {headers:{'Authorization':'Bearer '+App.token}})
+    .then(function(r){ if(!r.ok) throw new Error('http '+r.status); return r.json(); })
+    .then(function(d){ App._cpData=d; App._cpLoading=false; if(cb) cb(d); })
+    .catch(function(err){ App._cpLoading=false; console.warn('[CP] no se pudo cargar catalogo:', err); if(cb) cb(null); });
+}
+
+function cpLookup(cp) {
+  if (!App._cpData || !cp) return null;
+  var rec = App._cpData.cp[cp];
+  if (!rec) return null;
+  return { estado: App._cpData.estados[rec.e]||'', municipio: rec.m||'', colonias: rec.c||[] };
+}
+
+// Mapea el estado SEPOMEX a una opción válida del select de estados
+function matchEstadoOption(sep) {
+  if (!sep) return '';
+  if (EST_ALIAS_CP[sep]) return EST_ALIAS_CP[sep];
+  var n = normPais(sep);
+  for (var i=0;i<LISTAS.estados.length;i++){ if(normPais(LISTAS.estados[i])===n) return LISTAS.estados[i]; }
+  for (var j=0;j<LISTAS.estados.length;j++){ if(n.indexOf(normPais(LISTAS.estados[j]))>=0) return LISTAS.estados[j]; }
+  return '';
+}
+
+// Autollenado CP del domicilio del expediente: estado (select) + municipio + colonias (datalist)
+function onCPDomicilio(input, pref) {
+  var cp = (input.value||'').replace(/\D/g,'').substring(0,5);
+  if (cp.length !== 5) return;
+  var paisEl = document.querySelector('[name="'+pref+'pais_dom"]');
+  if (paisEl && normPais(paisEl.value) !== 'MEXICO') return; // extranjero: no autollenar
+  cargarCPData(function(data){
+    if (!data) { toast('Catalogo de CP no disponible (subelo a SharePoint)','e'); return; }
+    var r = cpLookup(cp);
+    if (!r) { toast('CP '+cp+' no encontrado en el catalogo','w'); return; }
+    var muniEl = document.querySelector('[name="'+pref+'municipio"]');
+    if (muniEl && !muniEl.value) muniEl.value = r.municipio;
+    var estEl = document.querySelector('[name="'+pref+'estado"]');
+    if (estEl) { var opt = matchEstadoOption(r.estado); if (opt) estEl.value = opt; }
+    _llenarColoniaDatalist('dl-col-'+pref, r.colonias);
+    toast('CP '+cp+': '+r.municipio+', '+r.estado, 's');
+  });
+}
+
+// Autollenado CP del inmueble del aviso: muestra estado/municipio + colonias (datalist)
+function onCPInmueble(input) {
+  var cp = (input.value||'').replace(/\D/g,'').substring(0,5);
+  var info = document.getElementById('inm-cp-info');
+  if (cp.length !== 5) { if(info) info.textContent=''; return; }
+  cargarCPData(function(data){
+    if (!data) { if(info) info.textContent='Catalogo CP no disponible'; return; }
+    var r = cpLookup(cp);
+    if (!r) { if(info) info.textContent='CP no encontrado'; return; }
+    if (info) info.textContent = r.municipio+', '+r.estado;
+    _llenarColoniaDatalist('dl-col-inm', r.colonias);
+  });
+}
+
+function _llenarColoniaDatalist(id, colonias) {
+  var dl = document.getElementById(id);
+  if (!dl) return;
+  dl.innerHTML = (colonias||[]).map(function(c){ return '<option value="'+c+'">'; }).join('');
+}
+
 // Catálogo SCIAN - actividades económicas con código 7 dígitos
 var SCIAN = [
   {codigo:'1110010',desc:'AGRICULTURA - MAIZ'},
@@ -2699,19 +2778,24 @@ function htmlDomicilio(d, pref) {
   var mostrarExt = esExt || estadoVal === 'Otro' || !!estadoExt;
   return '<div class="fgrid">'
     +secHdr('Domicilio '+(pref?'('+pref+')':''))
+    +fg('Pais',pref+'pais_dom',true)+'<select class="sel" name="'+pref+'pais_dom" onchange="onPaisDomChange(this,\''+pref+'\')">'+optsPais(paisDom)+'</select></div>'
+    +'<div class="fg"><label class="lbl">Codigo postal</label>'
+    +'<input class="inp mono" name="'+pref+'cp" value="'+(d[pref+'cp']||'')+'" placeholder="00000" maxlength="5" '
+    +'onblur="onCPDomicilio(this,\''+pref+'\')" onkeyup="if(event.key===\'Enter\')onCPDomicilio(this,\''+pref+'\')">'
+    +'<span class="fhint">Al capturar el CP se autollenan estado, municipio y colonias</span></div>'
     +fiFull('Calle o vialidad',pref+'calle',d[pref+'calle']||'','Nombre de la calle, avenida o via',true)
     +fg('Numero exterior',pref+'num_ext',true)+fi(pref+'num_ext',d[pref+'num_ext']||'','')
     +fg('Numero interior',pref+'num_int',false)+fi(pref+'num_int',d[pref+'num_int']||'','Opcional')
-    +fg('Colonia o urbanizacion',pref+'colonia',true)+fi(pref+'colonia',d[pref+'colonia']||'','')
+    +'<div class="fg"><label class="lbl">Colonia o urbanizacion <span class="req">*</span></label>'
+    +'<input class="inp" name="'+pref+'colonia" value="'+(d[pref+'colonia']||'')+'" list="dl-col-'+pref+'" autocomplete="off">'
+    +'<datalist id="dl-col-'+pref+'"></datalist></div>'
     +fg('Demarcacion territorial o municipio',pref+'municipio',true)+fi(pref+'municipio',d[pref+'municipio']||'','')
     +fg('Ciudad o poblacion',pref+'ciudad',false)+fi(pref+'ciudad',d[pref+'ciudad']||'','')
-    +fg('Pais',pref+'pais_dom',true)+'<select class="sel" name="'+pref+'pais_dom" onchange="onPaisDomChange(this,\''+pref+'\')">'+optsPais(paisDom)+'</select></div>'
     +fg('Estado o entidad federativa',pref+'estado',true)+'<select class="sel" name="'+pref+'estado" onchange="onEstadoDomChange(this,\''+pref+'\')">'+opts(LISTAS.estados,estadoVal)+'</select></div>'
     +'<div class="fg" id="estado-ext-wrap-'+pref+'" style="display:'+(mostrarExt?'block':'none')+'">'
     +'<label class="lbl">Estado / entidad (extranjero) <span class="req">*</span></label>'
     +'<input class="inp" name="'+pref+'estado_ext" id="estado-ext-'+pref+'" value="'+estadoExt+'" maxlength="100" '
     +'placeholder="Solo A-Z 0-9 espacio , . : /" oninput="sanitizeEstadoExt(this)" style="text-transform:uppercase"></div>'
-    +fg('Codigo postal',pref+'cp',false)+fi(pref+'cp',d[pref+'cp']||'','00000','mono')
     +'</div>';
 }
 
@@ -4388,11 +4472,16 @@ function nuevaOpForm(datos, fraccion) {
     )
     +fg('Folio real o antecedentes registrales',null,true)+fi('folio_real',d.folio_real||'','')
     +secHdr('Ubicacion del inmueble')
-    +fg('Colonia',null,true)+fi('inm_colonia',d.inm_colonia||'','')
+    +'<div class="fg"><label class="lbl">Codigo postal (5 digitos) <span class="req">*</span></label>'
+    +'<input class="inp mono" name="inm_cp" value="'+(d.inm_cp||'')+'" placeholder="00000" maxlength="5" '
+    +'onblur="onCPInmueble(this)" onkeyup="if(event.key===\'Enter\')onCPInmueble(this)">'
+    +'<span class="fhint" id="inm-cp-info"></span></div>'
+    +'<div class="fg"><label class="lbl">Colonia <span class="req">*</span></label>'
+    +'<input class="inp" name="inm_colonia" value="'+(d.inm_colonia||'')+'" list="dl-col-inm" autocomplete="off">'
+    +'<datalist id="dl-col-inm"></datalist></div>'
     +fg('Calle o vialidad',null,true)+fi('inm_calle',d.inm_calle||'','')
     +fg('Numero exterior',null,true)+fi('inm_num_ext',d.inm_num_ext||'','')
     +fg('Numero interior',null,false)+fi('inm_num_int',d.inm_num_int||'','Opcional')
-    +fg('Codigo postal (5 digitos)',null,true)+fi('inm_cp',d.inm_cp||'','00000','mono')
     +'</div></div>'
 
     // Instrumento publico o contrato (solo Fr. V — INM)
