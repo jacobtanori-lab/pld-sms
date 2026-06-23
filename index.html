@@ -629,6 +629,146 @@ var ACT_PF = [
 {codigo:'1136080',desc:"ORGANISMOS INTERNACIONALES Y EXTRATERRITORIALES - EMPLEADOS DE ORGANISMOS INTERNACIONALES Y EXTRATERRITORIALES"}
 ];
 
+// Catálogo oficial de giro mercantil / actividad u objeto social de PERSONA MORAL. La clave va al aviso (<giro_mercantil>).
+var GIRO_PM = [
+{codigo:'1000000',desc:"NO APLICA"},
+{codigo:'1100001',desc:"SECTOR PRIMARIO - AGRICULTURA"},
+{codigo:'1200001',desc:"SECTOR PRIMARIO - GANADERIA"},
+{codigo:'1300001',desc:"SECTOR PRIMARIO - EXPLOTACION DE OTROS ANIMALES (AVICULTURA, APICULTURA, ETC.)"},
+{codigo:'1400002',desc:"SECTOR PRIMARIO - APROVECHAMIENTO FORESTAL"},
+{codigo:'1500001',desc:"SECTOR PRIMARIO - PESCA"},
+{codigo:'2100002',desc:"MINERIA - MINERIA DE OTROS RECURSOS"},
+{codigo:'2200002',desc:"MINERIA - ACTIVIDADES RELACIONADAS CON EL PETROLEO Y EL GAS"},
+{codigo:'2300003',desc:"MINERIA - ORO"},
+{codigo:'2400002',desc:"MINERIA - PLATA"},
+{codigo:'2500002',desc:"MINERIA - PIEDRAS PRECIOSAS"},
+{codigo:'2600003',desc:"GENERACION, TRANSMISION Y DISTRIBUCION DE ENERGIA ELECTRICA, SUMINISTRO DE AGUA Y DE GAS"},
+{codigo:'2710004',desc:"CONSTRUCCION - OTRAS ACTIVIDADES RELACIONADAS CON LA CONSTRUCCION"},
+{codigo:'2720004',desc:"CONSTRUCCION - EDIFICACION RESIDENCIAL Y NO RESIDENCIAL"},
+{codigo:'2730004',desc:"CONSTRUCCION - OBRAS DE INGENIERIA CIVIL"},
+{codigo:'2740004',desc:"CONSTRUCCION - TRABAJOS ESPECIALIZADOS PARA LA CONSTRUCCION"},
+{codigo:'2754004',desc:"CONSTRUCCION - SERVICIOS DE BLINDAJE PARCIAL O TOTAL DE INMUEBLES"},
+{codigo:'3110005',desc:"INDUSTRIA - ALIMENTARIA"},
+{codigo:'3120005',desc:"INDUSTRIA - BEBIDAS Y DEL TABACO"},
+{codigo:'3140005',desc:"INDUSTRIA - PRODUCTOS TEXTILES"},
+{codigo:'3150005',desc:"INDUSTRIA - PRENDAS DE VESTIR"},
+{codigo:'3210005',desc:"INDUSTRIA - MADERA"},
+{codigo:'3220005',desc:"INDUSTRIA - PAPEL"},
+{codigo:'3230005',desc:"INDUSTRIA - IMPRESION E INDUSTRIAS CONEXAS"},
+{codigo:'3240005',desc:"INDUSTRIA - PRODUCTOS DERIVADOS DEL PETROLEO Y DEL CARBON"},
+{codigo:'3250005',desc:"INDUSTRIA - QUIMICA"},
+{codigo:'3260005',desc:"INDUSTRIA - PLASTICO Y DEL HULE"},
+{codigo:'3270005',desc:"INDUSTRIA - PRODUCTOS A BASE DE MINERALES NO METALICOS (ALFARERIA, PORCELANA, LOZA, VIDRIO, CEMENTO)"},
+{codigo:'3310005',desc:"INDUSTRIA - METALICAS BASICAS"},
+{codigo:'3320005',desc:"INDUSTRIA - PRODUCTOS METALICOS (HERRAMIENTAS, UTENSILIOS, ESTRUCTURAS, PIEZAS)"},
+{codigo:'3330005',desc:"INDUSTRIA - MAQUINARIA Y EQUIPO"},
+{codigo:'3340005',desc:"INDUSTRIA - EQUIPO DE COMPUTACION, COMUNICACION, MEDICION Y DE OTROS EQUIPOS, COMPONENTES Y ACCESORIOS ELECTRONICOS"},
+{codigo:'3350005',desc:"INDUSTRIA - ACCESORIOS, APARATOS ELECTRICOS Y EQUIPO DE GENERACION DE ENERGIA ELECTRICA"},
+{codigo:'3360005',desc:"INDUSTRIA - EQUIPO DE TRANSPORTE SIN MOTOR"},
+{codigo:'3370005',desc:"INDUSTRIA - AUTOMOTRIZ"},
+{codigo:'3380005',desc:"INDUSTRIA - VEHICULOS BLINDADOS Y EQUIPO PARA EL BLINDAJE DE VEHICULOS"},
+{codigo:'3410005',desc:"INDUSTRIA - MUEBLES, COLCHONES Y PERSIANAS"},
+{codigo:'3420005',desc:"INDUSTRIA - OTRAS INDUSTRIAS MANUFACTURERAS"},
+{codigo:'3430005',desc:"INDUSTRIA - ORFEBRERIA Y JOYERIA DE METALES Y PIEDRAS PRECIOSOS"},
+{codigo:'3440005',desc:"INDUSTRIA - JOYERIA DE METALES Y PIEDRAS NO PRECIOSOS Y DE OTROS MATERIALES"},
+{codigo:'4310006',desc:"COMERCIO - ABARROTES, ALIMENTOS, BEBIDAS, HIELO Y TABACO"},
+{codigo:'4320006',desc:"COMERCIO - PRODUCTOS FARMACEUTICOS, DE PERFUMERIA, ARTICULOS PARA EL ESPARCIMIENTO, ELECTRODOMESTICOS Y APARATOS DE LINEA BLANCA"},
+{codigo:'4330006',desc:"COMERCIO - MATERIAS PRIMAS AGROPECUARIAS Y FORESTALES, PARA LA INDUSTRIA, Y MATERIALES DE DESECHO"},
+{codigo:'4340006',desc:"COMERCIO - MAQUINARIA, EQUIPO DE COMPUTO Y MOBILIARIO DE USO GENERAL"},
+{codigo:'4620006',desc:"COMERCIO - TIENDAS DE AUTOSERVICIO Y DEPARTAMENTALES"},
+{codigo:'4630006',desc:"COMERCIO - PRODUCTOS TEXTILES, BISUTERIA, ACCESORIOS DE VESTIR Y CALZADO"},
+{codigo:'4650006',desc:"COMERCIO - ARTICULOS DE PAPELERIA"},
+{codigo:'4660026',desc:"COMERCIO - ARTICULOS DE JOYERIA Y RELOJES"},
+{codigo:'4670006',desc:"COMERCIO - ARTICULOS PARA LA DECORACION DE INTERIORES"},
+{codigo:'4680006',desc:"COMERCIO - ANTIGÜEDADES Y OBRAS DE ARTE"},
+{codigo:'4710006',desc:"COMERCIO - ARTICULOS DE FERRETERIA, TLAPALERIA Y VIDRIOS"},
+{codigo:'4720006',desc:"COMERCIO - VEHICULOS NUEVOS"},
+{codigo:'4730006',desc:"COMERCIO - VEHICULOS USADOS"},
+{codigo:'4740006',desc:"COMERCIO - PARTES Y REFACCIONES PARA VEHICULOS"},
+{codigo:'4750006',desc:"COMERCIO - COMBUSTIBLES Y LUBRICANTES"},
+{codigo:'4760006',desc:"COMERCIO - A TRAVES DE INTERNET, Y CATALOGOS IMPRESOS, TELEVISION Y SIMILARES"},
+{codigo:'4810007',desc:"TRANSPORTE - AEREO"},
+{codigo:'4820007',desc:"TRANSPORTE - FERROVIARIO"},
+{codigo:'4830007',desc:"TRANSPORTE - MARITIMO Y FLUVIAL"},
+{codigo:'4850007',desc:"TRANSPORTE - TERRESTRE"},
+{codigo:'4860007',desc:"TRANSPORTE - TRANSPORTACION Y DISTRIBUCION POR DUCTOS"},
+{codigo:'4880007',desc:"TRANSPORTE - SERVICIOS RELACIONADOS CON EL TRANSPORTE"},
+{codigo:'4890007',desc:"TRANSPORTE - SERVICIOS DE AGENCIAS ADUANALES"},
+{codigo:'4840007',desc:"TRANSPORTE - SERVICIOS DE TRANSPORTE Y/O CUSTODIA DE VALORES"},
+{codigo:'4910008',desc:"SERVICIOS POSTALES"},
+{codigo:'4920009',desc:"SERVICIOS DE MENSAJERIA Y PAQUETERIA"},
+{codigo:'4930010',desc:"SERVICIOS DE ALMACENAMIENTO"},
+{codigo:'5100011',desc:"INFORMACION EN MEDIOS MASIVOS"},
+{codigo:'5180012',desc:"PROCESAMIENTO ELECTRONICO DE INFORMACION Y OTROS SERVICIOS WEB"},
+{codigo:'5210013',desc:"SERVICIOS FINANCIEROS - BANCA CENTRAL"},
+{codigo:'5220013',desc:"SERVICIOS FINANCIEROS - BANCA MULTIPLE"},
+{codigo:'5230013',desc:"SERVICIOS FINANCIEROS - BANCA DE DESARROLLO"},
+{codigo:'5240013',desc:"SERVICIOS FINANCIEROS - FONDOS Y FIDEICOMISOS FINANCIEROS"},
+{codigo:'5250013',desc:"SERVICIOS FINANCIEROS - UNIONES DE CREDITO"},
+{codigo:'5260013',desc:"SREVICIOS FINANCIEROS - CAJAS DE AHORRO POPULAR"},
+{codigo:'5270013',desc:"SERVICIOS FINANCIEROS - OTRAS INSTITUCIONES DE INTERMEDIACION CREDITICIA Y FINANCIERA NO BURSATIL"},
+{codigo:'5280013',desc:"SERVICIOS FINANCIEROS - OTRAS INSTITUCIONES DE AHORRO Y PRESTAMO"},
+{codigo:'5290013',desc:"SERVICIOS FINANCIEROS - COMPAÑIAS DE AUTOFINANCIAMIENTO"},
+{codigo:'5310013',desc:"SERVICIOS FINANCIEROS - MONTEPIOS"},
+{codigo:'5320013',desc:"SERVICIOS FINANCIEROS - CASAS DE EMPEÑO"},
+{codigo:'5330013',desc:"SERVICIOS FINANCIEROS - SOCIEDADES FINANCIERAS DE OBJETO MULTIPLE"},
+{codigo:'5350013',desc:"SERVICIOS FINANCIEROS - CASAS DE BOLSA"},
+{codigo:'5360013',desc:"SERVICIOS FINANCIEROS - CASAS DE CAMBIO Y CENTROS CAMBIARIOS"},
+{codigo:'5370013',desc:"SERVICIOS FINANCIEROS - TRANSMISORES DE DINERO"},
+{codigo:'5390013',desc:"SERVICIOS FINANCIEROS - OTROS SERVICIOS RELACIONADOS CON LA INTERMEDIACION BURSATIL"},
+{codigo:'5410013',desc:"SERVICIOS FINANCIEROS - COMPAÑIAS DE SEGUROS"},
+{codigo:'5420013',desc:"SERVICIOS FINANCIEROS - COMPAÑIAS AFIANZADORAS"},
+{codigo:'5430013',desc:"SERVICIOS FINANCIEROS - AGENTES, AJUSTADORES Y GESTORES DE SEGUROS Y FIANZAS"},
+{codigo:'5440013',desc:"SERVICIOS FINANCIEROS - ADMINISTRACION DE FONDOS PARA EL RETIRO"},
+{codigo:'5450013',desc:"SERVICIOS FINANCIEROS - EMISORA Y/O COMERCIALIZACION DE CHEQUES DE VIAJERO"},
+{codigo:'5340013',desc:"OTRAS EMPRESAS DE INTERMEDIACION CREDITICIA NO FINANCIERAS"},
+{codigo:'5510014',desc:"SERVICIOS INMOBILIARIOS Y DE ALQUILER - ALQUILER SIN INTERMEDIACION DE BIENES RAICES"},
+{codigo:'5520014',desc:"SERVICIOS INMOBILIARIOS Y DE ALQUILER - INMOBILIARIAS Y CORREDORES DE BIENES RAICES"},
+{codigo:'5530014',desc:"SERVICIOS INMOBILIARIOS Y DE ALQUILER - SERVICIOS DE ALQUILER DE BIENES MUEBLES EXCEPTO VEHICULOS"},
+{codigo:'5540014',desc:"SERVICIOS INMOBILIARIOS Y DE ALQUILER - ALQUILER DE VEHICULOS"},
+{codigo:'5550014',desc:"SERVICIOS INMOBILIARIOS Y DE ALQUILER - SERVICIOS DE ALQUILER DE MARCAS REGISTRADAS, PATENTES Y FRANQUICIAS"},
+{codigo:'5610015',desc:"SERVICIOS PROFESIONALES Y TECNICOS - SERVICIOS JURIDICOS"},
+{codigo:'5620015',desc:"SERVICIOS PROFESIONALES Y TECNICOS - NOTARIA Y CORREDURIA PUBLICA"},
+{codigo:'5690015',desc:"SERVICIOS PROFESIONALES Y TECNICOS - CONTABILIDAD Y AUDITORIA"},
+{codigo:'5630015',desc:"SERVICIOS PROFESIONALES Y TECNICOS - ARQUITECTURA, INGENIERIA Y ACTIVIDADES RELACIONADAS"},
+{codigo:'5640015',desc:"SERVICIOS PROFESIONALES Y TECNICOS - DISEÑO DE SISTEMAS DE COMPUTO Y SERVICIOS RELACIONADOS"},
+{codigo:'5650015',desc:"SERVICIOS PROFESIONALES Y TECNICOS - CONSULTORIA ADMINISTRATIVA, CIENTIFICA Y TECNICA"},
+{codigo:'5660015',desc:"SERVICIOS PROFESIONALES Y TECNICOS - INVESTIGACION CIENTIFICA Y DESARROLLO"},
+{codigo:'5670015',desc:"SERVICIOS PROFESIONALES Y TECNICOS - PUBLICIDAD Y ACTIVIDADES RELACIONADAS"},
+{codigo:'5680015',desc:"SERVICIOS PROFESIONALES Y TECNICOS - OTROS SERVICIOS DE OUTSOURCING"},
+{codigo:'5710016',desc:"SERVICIOS DE APOYO A LOS NEGOCIOS - SERVICIOS DE ADMINISTRACION DE NEGOCIOS"},
+{codigo:'5720016',desc:"SERVICIOS DE APOYO A LOS NEGOCIOS - AGENCIAS DE COBRANZA, DESPACHOS DE INVESTIGACION"},
+{codigo:'5730016',desc:"SERVICIOS DE APOYO A LOS NEGOCIOS - SERVICIOS DE PROTECCION Y SEGURIDAD"},
+{codigo:'5740016',desc:"SERVICIOS DE APOYO A LOS NEGOCIOS - SERVICIOS DE LIMPIEZA Y MANTENIMIENTO"},
+{codigo:'5750016',desc:"SERVICIOS DE APOYO A LOS NEGOCIOS - OTROS SERVICIOS"},
+{codigo:'6100017',desc:"SERVICIOS EDUCATIVOS"},
+{codigo:'6200018',desc:"SERVICIOS DE SALUD Y DE ASISTENCIA SOCIAL"},
+{codigo:'7110019',desc:"SERVICIOS DE ESPARCIMIENTO CULTURALES Y DEPORTIVOS, Y OTROS SERVICIOS RECREATIVOS"},
+{codigo:'7120019',desc:"SERVICIOS DE ESPARCIMIENTO - MUSEOS, SITIOS HISTORICOS, ZOOLOGICOS Y SIMILARES"},
+{codigo:'7130019',desc:"SERVICIOS DE ESPARCIMIENTO - CASAS DE JUEGOS ELECTRONICOS"},
+{codigo:'7140019',desc:"SERVICIOS DE ESPARCIMIENTO - CASINOS O CENTROS DE APUESTA"},
+{codigo:'7150019',desc:"SERVICIOS DE ESPARCIMIENTO - VENTA DE BILLETES DE LOTERIA, PRONOSTICOS DEPORTIVOS U OTROS SORTEOS"},
+{codigo:'7200020',desc:"SERVICIOS DE ALOJAMIENTO TEMPORAL Y DE PREPARACION DE ALIMENTOS Y BEBIDAS"},
+{codigo:'8100021',desc:"SERVICIOS DE REPARACION Y MANTENIMIENTO - EQUIPO INDUSTRIAL, COMERCIAL, SERVICIOS Y AUTOMOTRIZ"},
+{codigo:'8200022',desc:"SERVICIOS PERSONALES - LAVANDERIAS, SERVICIOS FUNERARIOS, BAÑOS PUBLICOS, ESTACIONAMIENTO, FOTOGRAFIA"},
+{codigo:'8310023',desc:"ASOCIACIONES - ORGANIZACIONES Y CAMARAS DE PRODUCTORES, COMERCIANTES Y PRESTADORES DE SERVICIOS"},
+{codigo:'8320023',desc:"ASOCIACIONES - ORGANIZACIONES LABORALES Y SINDICALES"},
+{codigo:'8330023',desc:"ASOCIACIONES - ORGANIZACIONES DE PROFESIONISTAS"},
+{codigo:'8340023',desc:"ASOCIACIONES - ORGANIZACIONES DE ACTIVIDADES RECREATIVAS"},
+{codigo:'8350023',desc:"ASOCIACIONES - ORGANIZACIONES RELIGIOSAS"},
+{codigo:'8360023',desc:"ASOCIACIONES - ORGANIZACIONES POLITICAS"},
+{codigo:'8370023',desc:"ASOCIACIONES - ORGANIZACIONES CIVILES"},
+{codigo:'9100025',desc:"ORGANISMOS INTERNACIONALES Y EXTRATERRITORIALES"},
+{codigo:'9810024',desc:"SECTOR PUBLICO - PODER EJECUTIVO FEDERAL"},
+{codigo:'9820024',desc:"SECTOR PUBLICO - PODER EJECUTIVO ESTATAL Y DEL DISTRITO FEDERAL"},
+{codigo:'9830024',desc:"SECTOR PUBLICO - PODER EJECUTIVO MUNICIPAL Y DELEGACIONAL"},
+{codigo:'9840024',desc:"SECTOR PUBLICO - PODER JUDICIAL FEDERAL"},
+{codigo:'9850024',desc:"SECTOR PUBLICO - PODER JUDICIAL ESTATAL Y DEL DISTRITO FEDERAL"},
+{codigo:'9860024',desc:"SECTOR PUBLICO - PODER LEGISLATIVO FEDERAL"},
+{codigo:'9870024',desc:"SECTOR PUBLICO - PODER LEGISLATIVO ESTATAL Y DEL DISTRITO FEDERAL"},
+{codigo:'9880024',desc:"SECTOR PUBLICO - ORGANOS AUTONOMOS Y ENTIDADES PARAESTATALES"}
+];
+
 // Catálogo tipos de operación FRACCIÓN V (INM)
 var TIPOS_OPERACION_INM = [
   {codigo:'501',desc:'Compraventa de inmuebles'},
@@ -1406,6 +1546,20 @@ function optsActPF(sel) {
 function actPFLabel(cod) {
   if (!cod) return '';
   for (var i=0;i<ACT_PF.length;i++) { if (ACT_PF[i].codigo===cod) return ACT_PF[i].codigo+' - '+ACT_PF[i].desc; }
+  return cod;
+}
+// Opciones de giro mercantil de persona moral (catálogo oficial). Default: 1000000 NO APLICA
+function optsGiroPM(sel) {
+  var s = sel || '1000000';
+  var h = '';
+  for (var i=0;i<GIRO_PM.length;i++) {
+    h += '<option value="'+GIRO_PM[i].codigo+'"'+(GIRO_PM[i].codigo===s?' selected':'')+'>'+GIRO_PM[i].codigo+' - '+GIRO_PM[i].desc+'</option>';
+  }
+  return h;
+}
+function giroPMLabel(cod) {
+  if (!cod) return '';
+  for (var i=0;i<GIRO_PM.length;i++) { if (GIRO_PM[i].codigo===cod) return GIRO_PM[i].codigo+' - '+GIRO_PM[i].desc; }
   return cod;
 }
 function fg(lbl,name,req){return '<div class="fg'+(req?' req-field':'')+'"><label class="lbl">'+lbl+(req?'<span class="req">*</span>':'')+' <span style="font-size:10px;font-weight:400;color:var(--tx3);text-transform:none"></span></label>';}
@@ -2794,10 +2948,8 @@ function htmlFormPM_MEX(d) {
     .replace('name="null"','name="razon_social"').replace('value="null"','value="'+(d.razon_social||'')+'">').replace('placeholder="null"','placeholder="Nombre completo de la sociedad"')
     +fg('RFC',null,false)+fi('rfc',d.rfc||'','XXX000000XX0','mono')
     +fg('Fecha de constitucion',null,true)+fi('fecha_const',d.fecha_const||'','DD-MM-AAAA')
-    +fg('Pais de nacionalidad',null,true)+fs('pais_nac',optsPais(d.pais_nac||'Mexico'))
-    +fg('Actividad / giro mercantil (texto)',null,true)+fs('actividad',opts(LISTAS.actividades,d.actividad||''))
-    +fg('Codigo SCIAN giro mercantil (7 dig - requerido para aviso XML)',null,true)+'<select class="sel" name="actividad_scian">'+optsScian(d.actividad_scian||'')+'</select></div>'
-    +fg('Codigo ISO pais de nacionalidad (2 letras)',null,false)+fi('pais_nac_iso',d.pais_nac_iso||paisISO(d.pais_nac||'Mexico'),'Ej: MX')
+    +fg('Pais de nacionalidad',null,true)+fs('pais_nac',optsPais(d.pais_nac||'MEXICO'))
+    +fg('Giro mercantil / actividad u objeto social (catalogo SAT)',null,true)+'<select class="sel" name="actividad_scian">'+optsGiroPM(d.actividad_scian||'1000000')+'</select></div>'
     +fg('Numero(s) de telefono',null,true)+fi('telefono',d.telefono||'','10 digitos')
     +fg('Clave pais telefono (ISO)',null,false)+fi('tel_clave_pais',d.tel_clave_pais||'MX','Ej: MX')
     +fg('Correo electronico',null,false)+fi('email',d.email||'','correo@dominio.com')
@@ -2858,7 +3010,7 @@ function htmlFormPM_SIMP(d) {
     +fiFull('Denominacion o razon social','razon_social',d.razon_social||'','Nombre completo de la entidad',true)
     +fg('Tipo de entidad (Anexo 7-A)',null,true)+fs('tipo_entidad',opts(LISTAS.tiposEntidadSimp,d.tipo_entidad||''))
     +fg('RFC o fecha de constitucion',null,false)+fi('rfc',d.rfc||'','RFC o fecha de creacion')
-    +fg('Actividad u objeto social',null,true)+fs('actividad',opts(LISTAS.actividades,d.actividad||''))
+    +fg('Giro mercantil / actividad u objeto social (catalogo SAT)',null,true)+'<select class="sel" name="actividad_scian">'+optsGiroPM(d.actividad_scian||'1000000')+'</select></div>'
     +fg('Numero(s) de telefono',null,true)+fi('telefono',d.telefono||'','10 digitos')
     +fg('Correo electronico',null,false)+fi('email',d.email||'','correo@dominio.com')
     +secHdr('Representante o funcionario que realiza el acto')
@@ -3242,14 +3394,14 @@ function renderDatosGenerales(c) {
     campos = fgHtml(
       fcHtml('Razon social',c.razon_social)+fcHtml('RFC',c.rfc)
       +fcHtml('Fecha de constitucion',c.fecha_const)+fcHtml('Pais de nacionalidad',c.pais_nac)
-      +fcHtml('Actividad / giro',c.actividad)+fcHtml('Telefono',c.telefono)
+      +fcHtml('Giro mercantil',giroPMLabel(c.actividad_scian)||c.actividad)+fcHtml('Telefono',c.telefono)
       +fcHtml('Correo electronico',c.email)+fcHtml('Tipo de identificacion',c.tipo_id)
       +fcHtml('No. identificacion',c.num_id)+fcHtml('Autoridad',c.autoridad_id)
       +fcHtml('Estatus PEP',c.estatus_pep));
   } else if (c.tipo==='PM_SIMP') {
     campos = fgHtml(
       fcHtml('Razon social / denominacion',c.razon_social)+fcHtml('Tipo de entidad',c.tipo_entidad)
-      +fcHtml('RFC / Fecha de creacion',c.rfc)+fcHtml('Actividad u objeto social',c.actividad)
+      +fcHtml('RFC / Fecha de creacion',c.rfc)+fcHtml('Giro mercantil',giroPMLabel(c.actividad_scian)||c.actividad)
       +fcHtml('Telefono',c.telefono)+fcHtml('Correo electronico',c.email)
       +fcHtml('Justificacion regimen simplificado',c.justificacion_simp));
   } else if (c.tipo==='FIDEICOMISO') {
@@ -5693,7 +5845,7 @@ function _generarXLSX() {
         c.rfc||'', c.curp||'',
         c.fecha_nac||c.fecha_const||'',
         c.pais_nac||'', c.pais_nac2||c.pais_nac||'',
-        actPFLabel(c.actividad_pf)||c.actividad||c.giro||'', c.fraccion||'',
+        actPFLabel(c.actividad_pf)||giroPMLabel(c.actividad_scian)||c.actividad||c.giro||'', c.fraccion||'',
         c.riesgo||'', parseFloat(c.puntaje_ebr)||0,
         domicilio, c.colonia||'', c.municipio||'',
         (c.estado==='Otro'&&c.estado_ext?c.estado_ext:c.estado)||'', c.cp||'', c.pais_dom||c.pais||'',
