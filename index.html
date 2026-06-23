@@ -493,6 +493,51 @@ function _llenarColoniaDatalist(id, colonias) {
   dl.innerHTML = (colonias||[]).map(function(c){ return '<option value="'+c+'">'; }).join('');
 }
 
+// Sube/actualiza el catálogo de CP a SharePoint (solo admin)
+function subirCatalogoCP(input) {
+  var file = input.files[0]; input.value=''; if(!file) return;
+  var st = document.getElementById('cp-status');
+  if (st) st.textContent = 'Validando archivo...';
+  var reader = new FileReader();
+  reader.onload = function(e){
+    // Validar que sea el JSON esperado antes de subir
+    try {
+      var data = JSON.parse(e.target.result);
+      if (!data.cp || !data.estados) throw new Error('estructura invalida');
+    } catch(err) {
+      if (st) st.textContent = 'Archivo invalido: '+(err.message||err);
+      toast('El archivo no tiene el formato esperado','e'); return;
+    }
+    if (st) st.textContent = 'Subiendo a SharePoint...';
+    var ruta = SP_CP_PATH.split('/').map(encodeURIComponent).join('/');
+    var url = GRAPH+'/sites/'+App.siteId+'/drive/root:/'+ruta+':/content';
+    fetch(url, {method:'PUT', headers:{'Authorization':'Bearer '+App.token,'Content-Type':'application/json'}, body:e.target.result})
+      .then(function(r){ return r.json(); })
+      .then(function(res){
+        if (res && res.id) {
+          App._cpData = null; // forzar recarga
+          if (st) st.textContent = 'Catálogo subido correctamente ('+new Date().toLocaleString('es-MX')+')';
+          toast('Catálogo de CP actualizado en SharePoint','s');
+        } else {
+          if (st) st.textContent = 'Error al subir';
+          toast('No se pudo subir el catálogo','e');
+        }
+      }).catch(function(err){ if(st) st.textContent='Error: '+(err.message||err); toast('Error al subir el catálogo','e'); });
+  };
+  reader.readAsText(file);
+}
+
+function verificarCatalogoCP() {
+  var st = document.getElementById('cp-status');
+  if (st) st.textContent = 'Consultando SharePoint...';
+  App._cpData = null;
+  cargarCPData(function(data){
+    if (!data) { if(st) st.textContent = 'No encontrado en SharePoint (falta subirlo)'; return; }
+    var n = data.cp ? Object.keys(data.cp).length : 0;
+    if (st) st.textContent = 'Catálogo disponible: '+n.toLocaleString('es-MX')+' códigos postales';
+  });
+}
+
 // Catálogo SCIAN - actividades económicas con código 7 dígitos
 var SCIAN = [
   {codigo:'1110010',desc:'AGRICULTURA - MAIZ'},
@@ -2290,7 +2335,17 @@ function pgConfig() {
         +'<button class="btn btn-p" onclick="guardarRolUsuario(document.getElementById(\'new-rol-correo\').value,document.getElementById(\'new-rol-rol\').value,null)">+ Asignar</button>'
         +'</div></div>'
         +'<p style="font-size:11px;color:var(--tx3);margin-top:8px">Los administradores están definidos en el código y no aparecen aquí. El rol por defecto de cualquier usuario no listado es "usuario".</p>'
-        +'</div></div>';
+        +'</div></div>'
+
+        +'<div class="card"><div class="card-h"><span class="card-t">Catálogo de códigos postales (SEPOMEX)</span></div>'
+        +'<div class="card-b">'
+        +'<p style="font-size:13px;color:var(--tx2);margin-bottom:10px">Archivo usado para autollenar estado, municipio y colonias a partir del código postal en los domicilios. Se aloja en SharePoint: <code>PLD_Catalogos/cp_sepomex.json</code></p>'
+        +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+        +'<label class="btn btn-p" style="cursor:pointer">Subir / actualizar cp_sepomex.json'
+        +'<input type="file" accept="application/json,.json" style="display:none" onchange="subirCatalogoCP(this)"></label>'
+        +'<button class="btn" onclick="verificarCatalogoCP()">Verificar catálogo</button>'
+        +'<span id="cp-status" style="font-size:12px;color:var(--tx3)"></span>'
+        +'</div></div></div>';
     })() : ''));
 
   // Cargar lista de roles si es admin
