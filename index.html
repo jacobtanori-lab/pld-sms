@@ -329,23 +329,90 @@ var DOMINIOS_RESTRINGIDOS = {
 };
 
 // Catálogo de países ISO 3166-1 alpha-2 para el XML del aviso
-var PAISES_ISO = {
-  'Mexico':'MX','Estados Unidos':'US','Canada':'CA','España':'ES','Colombia':'CO',
-  'Argentina':'AR','Venezuela':'VE','Brasil':'BR','Chile':'CL','Peru':'PE',
-  'Uruguay':'UY','Paraguay':'PY','Bolivia':'BO','Ecuador':'EC','Panama':'PA',
-  'Costa Rica':'CR','Guatemala':'GT','Honduras':'HN','El Salvador':'SV',
-  'Nicaragua':'NI','Cuba':'CU','Haiti':'HT','Republica Dominicana':'DO',
-  'Puerto Rico':'PR','Jamaica':'JM','Trinidad y Tobago':'TT',
-  'Alemania':'DE','Francia':'FR','Italia':'IT','Portugal':'PT',
-  'Reino Unido':'GB','Paises Bajos':'NL','Belgica':'BE','Suiza':'CH',
-  'Austria':'AT','Polonia':'PL','Rusia':'RU','Ucrania':'UA','Suecia':'SE',
-  'Noruega':'NO','Dinamarca':'DK','Finlandia':'FI','Irlanda':'IE',
-  'China':'CN','Japon':'JP','India':'IN','Corea del Sur':'KR',
-  'Australia':'AU','Nueva Zelanda':'NZ','Israel':'IL','Turquia':'TR',
-  'Iran':'IR','Irak':'IQ','Arabia Saudita':'SA','Emiratos Arabes Unidos':'AE',
-  'Sudafrica':'ZA','Nigeria':'NG','Egipto':'EG','Marruecos':'MA',
-  'Otro':'XX'
+// Catálogo oficial de países (clave SAT/SPPLD + descripción). La clave va al aviso.
+var PAISES_CAT = [
+{c:'AF',n:"AFGANISTAN"},{c:'AL',n:"ALBANIA"},{c:'DE',n:"ALEMANIA"},{c:'AD',n:"ANDORRA"},
+{c:'AO',n:"ANGOLA"},{c:'AI',n:"ANGUILA"},{c:'AQ',n:"ANTARTIDA"},{c:'AG',n:"ANTIGUA Y BARBUDA"},
+{c:'AN',n:"ANTILLAS NEERLANDESAS"},{c:'SA',n:"ARABIA SAUDI"},{c:'DZ',n:"ARGELIA"},{c:'AR',n:"ARGENTINA"},
+{c:'AM',n:"ARMENIA"},{c:'AW',n:"ARUBA"},{c:'AU',n:"AUSTRALIA"},{c:'AT',n:"AUSTRIA"},
+{c:'AZ',n:"AZERBAIYAN"},{c:'BS',n:"BAHAMAS"},{c:'BH',n:"BAHREIN"},{c:'BD',n:"BANGLADESH"},
+{c:'BB',n:"BARBADOS"},{c:'BY',n:"BELARUS"},{c:'BE',n:"BELGICA"},{c:'BZ',n:"BELICE"},
+{c:'BJ',n:"BENIN"},{c:'BM',n:"BERMUDAS"},{c:'BT',n:"BHUTAN"},{c:'BO',n:"BOLIVIA"},
+{c:'BA',n:"BOSNIA Y HERZEGOVINA"},{c:'BW',n:"BOTSUANA"},{c:'BR',n:"BRASIL"},{c:'BN',n:"BRUNEI"},
+{c:'BG',n:"BULGARIA"},{c:'BF',n:"BURKINA FASO"},{c:'BI',n:"BURUNDI"},{c:'CV',n:"CABO VERDE"},
+{c:'KH',n:"CAMBOYA"},{c:'CM',n:"CAMERUN"},{c:'CA',n:"CANADA"},{c:'TD',n:"CHAD"},
+{c:'CZ',n:"CHEQUIA"},{c:'CL',n:"CHILE"},{c:'CN',n:"CHINA"},{c:'CY',n:"CHIPRE"},
+{c:'CP',n:"CLIPPERTON"},{c:'CO',n:"COLOMBIA"},{c:'KM',n:"COMORAS"},{c:'CG',n:"CONGO"},
+{c:'KP',n:"COREA DEL NORTE"},{c:'KR',n:"COREA DEL SUR"},{c:'CI',n:"COSTA DE MARFIL"},{c:'CR',n:"COSTA RICA"},
+{c:'HR',n:"CROACIA"},{c:'CU',n:"CUBA"},{c:'CW',n:"CURAZAO"},{c:'DK',n:"DINAMARCA"},
+{c:'DM',n:"DOMINICA"},{c:'EC',n:"ECUADOR"},{c:'EG',n:"EGIPTO"},{c:'SV',n:"EL SALVADOR"},
+{c:'AE',n:"EMIRATOS ARABES UNIDOS"},{c:'ER',n:"ERITREA"},{c:'SK',n:"ESLOVAQUIA"},{c:'SI',n:"ESLOVENIA"},
+{c:'ES',n:"ESPAÑA"},{c:'US',n:"ESTADOS UNIDOS"},{c:'EE',n:"ESTONIA"},{c:'ET',n:"ETIOPIA"},
+{c:'PH',n:"FILIPINAS"},{c:'FI',n:"FINLANDIA"},{c:'FJ',n:"FIYI"},{c:'FR',n:"FRANCIA"},
+{c:'GA',n:"GABON"},{c:'GM',n:"GAMBIA"},{c:'GE',n:"GEORGIA"},{c:'GS',n:"GEORGIA DEL SUR E ISLAS SANDWICH DEL SUR"},
+{c:'GH',n:"GHANA"},{c:'GI',n:"GIBRALTAR"},{c:'GD',n:"GRANADA"},{c:'EL',n:"GRECIA"},
+{c:'GL',n:"GROENLANDIA"},{c:'GP',n:"GUADALUPE"},{c:'GU',n:"GUAM"},{c:'GT',n:"GUATEMALA"},
+{c:'GF',n:"GUAYANA FRANCESA"},{c:'GG',n:"GUERNESEY"},{c:'GN',n:"GUINEA"},{c:'GQ',n:"GUINEA ECUATORIAL"},
+{c:'GW',n:"GUINEA-BISSAU"},{c:'GY',n:"GUYANA"},{c:'HT',n:"HAITI"},{c:'HN',n:"HONDURAS"},
+{c:'HK',n:"HONG KONG"},{c:'HU',n:"HUNGRIA"},{c:'IN',n:"INDIA"},{c:'ID',n:"INDONESIA"},
+{c:'IR',n:"IRAN"},{c:'IQ',n:"IRAQ"},{c:'IE',n:"IRLANDA"},{c:'BV',n:"ISLA BOUVET"},
+{c:'CX',n:"ISLA CHRISTMAS"},{c:'IM',n:"ISLA DE MAN"},{c:'NF',n:"ISLA NORFOLK"},{c:'IS',n:"ISLANDIA"},
+{c:'AX',n:"ISLAS ÅLAND"},{c:'KY',n:"ISLAS CAIMAN"},{c:'CC',n:"ISLAS COCOS"},{c:'CK',n:"ISLAS COOK"},
+{c:'FO',n:"ISLAS FEROE"},{c:'HM',n:"ISLAS HEARD Y MCDONALD"},{c:'FK',n:"ISLAS MALVINAS"},{c:'MP',n:"ISLAS MARIANAS DEL NORTE"},
+{c:'MH',n:"ISLAS MARSHALL"},{c:'UM',n:"ISLAS MENORES ALEJADAS DE LOS ESTADOS UNIDOS"},{c:'PN',n:"ISLAS PITCAIRN"},{c:'SB',n:"ISLAS SALOMON"},
+{c:'TC',n:"ISLAS TURCAS Y CAICOS"},{c:'VG',n:"ISLAS VIRGENES BRITANICAS"},{c:'VI',n:"ISLAS VIRGENES DE LOS ESTADOS UNIDOS"},{c:'IL',n:"ISRAEL"},
+{c:'IT',n:"ITALIA"},{c:'JM',n:"JAMAICA"},{c:'JP',n:"JAPON"},{c:'JE',n:"JERSEY"},
+{c:'JO',n:"JORDANIA"},{c:'KZ',n:"KAZAJSTAN"},{c:'KE',n:"KENIA"},{c:'KG',n:"KIRGUISTAN"},
+{c:'KI',n:"KIRIBATI"},{c:'XK',n:"KOSOVO"},{c:'KW',n:"KUWAIT"},{c:'LA',n:"LAOS"},
+{c:'LS',n:"LESOTHO"},{c:'LV',n:"LETONIA"},{c:'LB',n:"LIBANO"},{c:'LR',n:"LIBERIA"},
+{c:'LY',n:"LIBIA"},{c:'LI',n:"LIECHTENSTEIN"},{c:'LT',n:"LITUANIA"},{c:'LU',n:"LUXEMBURGO"},
+{c:'MO',n:"MACAO"},{c:'MK',n:"MACEDONIA"},{c:'MG',n:"MADAGASCAR"},{c:'MY',n:"MALASIA"},
+{c:'MW',n:"MALAWI"},{c:'MV',n:"MALDIVAS"},{c:'ML',n:"MALI"},{c:'MT',n:"MALTA"},
+{c:'MA',n:"MARRUECOS"},{c:'MQ',n:"MARTINICA"},{c:'MU',n:"MAURICIO"},{c:'MR',n:"MAURITANIA"},
+{c:'YT',n:"MAYOTTE"},{c:'MX',n:"MEXICO"},{c:'FM',n:"MICRONESIA"},{c:'MD',n:"MOLDOVA"},
+{c:'MC',n:"MONACO"},{c:'MN',n:"MONGOLIA"},{c:'ME',n:"MONTENEGRO"},{c:'MS',n:"MONTSERRAT"},
+{c:'MZ',n:"MOZAMBIQUE"},{c:'MM',n:"MYANMAR"},{c:'NA',n:"NAMIBIA"},{c:'NR',n:"NAURU"},
+{c:'NP',n:"NEPAL"},{c:'NI',n:"NICARAGUA"},{c:'NE',n:"NIGER"},{c:'NG',n:"NIGERIA"},
+{c:'NU',n:"NIUE"},{c:'NO',n:"NORUEGA"},{c:'NC',n:"NUEVA CALEDONIA"},{c:'NZ',n:"NUEVA ZELANDA"},
+{c:'OM',n:"OMAN"},{c:'NL',n:"PAISES BAJOS"},{c:'PK',n:"PAKISTAN"},{c:'PW',n:"PALAOS"},
+{c:'PA',n:"PANAMA"},{c:'PG',n:"PAPUA NUEVA GUINEA"},{c:'PY',n:"PARAGUAY"},{c:'PE',n:"PERU"},
+{c:'PF',n:"POLINESIA FRANCESA"},{c:'PL',n:"POLONIA"},{c:'PT',n:"PORTUGAL"},{c:'PR',n:"PUERTO RICO"},
+{c:'QA',n:"QATAR"},{c:'UK',n:"REINO UNIDO"},{c:'CF',n:"REPUBLICA CENTROAFRICANA"},{c:'CD',n:"REPUBLICA DEMOCRATICA DEL CONGO"},
+{c:'DO',n:"REPUBLICA DOMINICANA"},{c:'RE',n:"REUNION"},{c:'RW',n:"RUANDA"},{c:'RO',n:"RUMANIA"},
+{c:'RU',n:"RUSIA"},{c:'EH',n:"SAHARA OCCIDENTAL"},{c:'WS',n:"SAMOA"},{c:'AS',n:"SAMOA AMERICANA"},
+{c:'BL',n:"SAN BARTOLOME"},{c:'KN',n:"SAN CRISTOBAL Y NIEVES"},{c:'SM',n:"SAN MARINO"},{c:'MF',n:"SAN MARTIN"},
+{c:'PM',n:"SAN PEDRO Y MIQUELON"},{c:'VC',n:"SAN VICENTE Y LAS GRANADINAS"},{c:'SH',n:"SANTA ELENA"},{c:'LC',n:"SANTA LUCIA"},
+{c:'VA',n:"SANTA SEDE / ESTADO DE LA CIUDAD DEL VATICANO"},{c:'ST',n:"SANTO TOME Y PRINCIPE"},{c:'SN',n:"SENEGAL"},{c:'RS',n:"SERBIA"},
+{c:'SC',n:"SEYCHELLES"},{c:'SL',n:"SIERRA LEONA"},{c:'SG',n:"SINGAPUR"},{c:'SY',n:"SIRIA"},
+{c:'SO',n:"SOMALIA"},{c:'LK',n:"SRI LANKA"},{c:'SZ',n:"SUAZILANDIA"},{c:'ZA',n:"SUDAFRICA"},
+{c:'SD',n:"SUDAN"},{c:'SE',n:"SUECIA"},{c:'CH',n:"SUIZA"},{c:'SR',n:"SURINAM"},
+{c:'SJ',n:"SVALBARD Y JAN MAYEN"},{c:'TH',n:"TAILANDIA"},{c:'TW',n:"TAIWAN"},{c:'TZ',n:"TANZANIA"},
+{c:'TJ',n:"TAYIKISTAN"},{c:'IO',n:"TERRITORIO BRITANICO DEL OCEANO INDICO"},{c:'TF',n:"TERRITORIOS AUSTRALES FRANCESES"},{c:'PS',n:"TERRITORIOS PALESTINOS"},
+{c:'TL',n:"TIMOR ORIENTAL"},{c:'TG',n:"TOGO"},{c:'TK',n:"TOKELAU"},{c:'TO',n:"TONGA"},
+{c:'TT',n:"TRINIDAD Y TOBAGO"},{c:'TN',n:"TUNEZ"},{c:'TM',n:"TURKMENISTAN"},{c:'TR',n:"TURQUIA"},
+{c:'TV',n:"TUVALU"},{c:'UA',n:"UCRANIA"},{c:'UG',n:"UGANDA"},{c:'UY',n:"URUGUAY"},
+{c:'UZ',n:"UZBEKISTAN"},{c:'VU',n:"VANUATU"},{c:'VE',n:"VENEZUELA"},{c:'VN',n:"VIETNAM"},
+{c:'WF',n:"WALLIS Y FUTUNA"},{c:'YE',n:"YEMEN"},{c:'DJ',n:"YIBUTI"},{c:'ZM',n:"ZAMBIA"},
+{c:'ZW',n:"ZIMBABUE"}
+];
+
+// Normaliza un nombre de país para comparación tolerante (mayúsculas, sin acentos)
+function normPais(s){
+  return String(s||'').toUpperCase().trim()
+    .replace(/Á/g,'A').replace(/É/g,'E').replace(/Í/g,'I').replace(/Ó/g,'O').replace(/Ú/g,'U')
+    .replace(/Å/g,'A').replace(/Ü/g,'U').replace(/Ñ/g,'Ñ');
+}
+
+// Mapa nombre-normalizado → clave, derivado del catálogo oficial
+var PAISES_ISO = {};
+PAISES_CAT.forEach(function(p){ PAISES_ISO[normPais(p.n)] = p.c; });
+// Alias para nombres historicos guardados en formato Title Case / variantes
+var PAISES_ALIAS = {
+  'ESTADOS UNIDOS DE AMERICA':'US','EUA':'US','USA':'US','REINO UNIDO DE GRAN BRETAÑA':'UK',
+  'INGLATERRA':'UK','GRAN BRETAÑA':'UK','ARABIA SAUDITA':'SA','IRAK':'IQ','COREA DEL SUR':'KR',
+  'PAISES BAJOS (HOLANDA)':'NL','HOLANDA':'NL','OTRO':'XX'
 };
+Object.keys(PAISES_ALIAS).forEach(function(k){ if(!PAISES_ISO[k]) PAISES_ISO[k]=PAISES_ALIAS[k]; });
 
 // Catálogo SCIAN - actividades económicas con código 7 dígitos
 var SCIAN = [
@@ -503,9 +570,23 @@ var MONEDAS = [
   {codigo:'6',desc:'Otra divisa'}
 ];
 
-// Helper: obtener código ISO del país
+// Helper: obtener clave de país (la que va al aviso) a partir del nombre
 function paisISO(nombre) {
-  return PAISES_ISO[nombre] || 'MX';
+  return PAISES_ISO[normPais(nombre)] || 'MX';
+}
+
+// Opciones de <select> de países: MEXICO primero, resto alfabético.
+// Preselecciona de forma tolerante (normalizada) para registros históricos.
+function optsPais(sel) {
+  var selN = normPais(sel || 'MEXICO');
+  var mex = PAISES_CAT.filter(function(p){ return p.c==='MX'; });
+  var resto = PAISES_CAT.filter(function(p){ return p.c!=='MX'; });
+  var orden = mex.concat(resto);
+  var h = '';
+  orden.forEach(function(p){
+    h += '<option value="'+p.n+'"'+(normPais(p.n)===selN?' selected':'')+'>'+p.n+'</option>';
+  });
+  return h;
 }
 
 // Helper: formatear fecha a AAAAMMDD
@@ -545,14 +626,8 @@ var LISTAS = {
   actividades: ['Asalariado / Empleado','Profesionista independiente','Comercio al por menor','Comercio al por mayor',
     'Construccion e inmuebles','Servicios financieros','Joyeria y metales preciosos','Arte y antiguedades',
     'Cambio de divisas','Industria manufacturera','Servicios profesionales','Gobierno / Sector publico','Otro'],
-  paises: ['Mexico','Afganistan','Albania','Alemania','Andorra','Angola','Antigua y Barbuda','Arabia Saudita',
-    'Argelia','Argentina','Armenia','Australia','Austria','Azerbaiyan','Bahamas','Bahrein','Bangladesh',
-    'Barbados','Belgica','Belice','Bolivia','Brasil','Canada','Chile','China','Colombia','Costa Rica','Cuba',
-    'Dinamarca','Ecuador','Egipto','El Salvador','Emiratos Arabes Unidos','España','Estados Unidos','Francia',
-    'Guatemala','Honduras','India','Iran','Iraq','Israel','Italia','Jamaica','Japon','Jordania','Libano',
-    'Libia','Luxemburgo','Marruecos','Nicaragua','Nigeria','Noruega','Nueva Zelanda','Pakistan','Panama',
-    'Paraguay','Peru','Polonia','Portugal','Reino Unido','Republica Dominicana','Rusia','Siria','Suecia',
-    'Suiza','Tailandia','Turquia','Ucrania','Uruguay','Venezuela','Vietnam','Otro'],
+  // Derivado del catálogo oficial PAISES_CAT (MEXICO primero). Para selects usar optsPais().
+  paises: ['MEXICO'].concat(PAISES_CAT.filter(function(p){return p.c!=='MX';}).map(function(p){return p.n;})),
   estados: ['Aguascalientes','Baja California','Baja California Sur','Campeche','Chiapas','Chihuahua',
     'Ciudad de Mexico','Coahuila','Colima','Durango','Estado de Mexico','Guanajuato','Guerrero','Hidalgo',
     'Jalisco','Michoacan','Morelos','Nayarit','Nuevo Leon','Oaxaca','Puebla','Queretaro','Quintana Roo',
@@ -1569,8 +1644,8 @@ function _preRellenarDesdeCURP(datos, pref, soloVacios) {
     var parsed = parseCURP(datos.curp);
     if (parsed) {
       setV(pref+'fecha_nac', parsed.fecha_nac);
-      setV(pref+'pais_nac',  'Mexico');
-      setV(pref+'pais_nac2', 'Mexico');
+      setV(pref+'pais_nac',  'MEXICO');
+      setV(pref+'pais_nac2', 'MEXICO');
     }
   }
   setV(pref+'ap_pat',   datos.ap_pat);
@@ -1659,8 +1734,8 @@ function autoCompletarCURP(input) {
   if (datos.extranjero) {
     // Dejar que el usuario elija el país
   } else {
-    setVal(pref+'pais_nac',  'Mexico');
-    setVal(pref+'pais_nac2', 'Mexico');
+    setVal(pref+'pais_nac',  'MEXICO');
+    setVal(pref+'pais_nac2', 'MEXICO');
   }
 
   // Mostrar resumen como toast informativo
@@ -2262,7 +2337,7 @@ function htmlDomicilio(d, pref) {
     +fg('Ciudad o poblacion',pref+'ciudad',false)+fi(pref+'ciudad',d[pref+'ciudad']||'','')
     +fg('Estado o entidad federativa',pref+'estado',true)+fs(pref+'estado',opts(LISTAS.estados,d[pref+'estado']||''))
     +fg('Codigo postal',pref+'cp',false)+fi(pref+'cp',d[pref+'cp']||'','00000','mono')
-    +fg('Pais',pref+'pais_dom',true)+fs(pref+'pais_dom',opts(LISTAS.paises,d[pref+'pais_dom']||'Mexico'))
+    +fg('Pais',pref+'pais_dom',true)+fs(pref+'pais_dom',optsPais(d[pref+'pais_dom']||'Mexico'))
     +'</div>';
 }
 
@@ -2293,8 +2368,8 @@ function htmlIdPF(d, pref, esMexicana) {
     +fg('Apellido materno',pref+'ap_mat',false)+fi(pref+'ap_mat',d[pref+'ap_mat']||'','')
     +fiFull('Nombre(s)',pref+'nombre',d[pref+'nombre']||'','Sin abreviaturas',true)
     +fg('Fecha de nacimiento',pref+'fecha_nac',true)+fi(pref+'fecha_nac',d[pref+'fecha_nac']||'','DD-MM-AAAA')
-    +fg('Pais de nacimiento',pref+'pais_nac',true)+fs(pref+'pais_nac',opts(LISTAS.paises,d[pref+'pais_nac']||'Mexico'))
-    +fg('Pais de nacionalidad',pref+'pais_nac2',true)+fs(pref+'pais_nac2',opts(LISTAS.paises,d[pref+'pais_nac2']||'Mexico'))
+    +fg('Pais de nacimiento',pref+'pais_nac',true)+fs(pref+'pais_nac',optsPais(d[pref+'pais_nac']||'Mexico'))
+    +fg('Pais de nacionalidad',pref+'pais_nac2',true)+fs(pref+'pais_nac2',optsPais(d[pref+'pais_nac2']||'Mexico'))
     +(esMexicana?fg('RFC',pref+'rfc',false)+fi(pref+'rfc',d[pref+'rfc']||'','XXXX000000XX0','mono'):'')
     +(esMexicana?fg('CURP',pref+'curp',false)+fi(pref+'curp',d[pref+'curp']||'','18 caracteres','mono'):'')
     +fg(tipoIdLabel,pref+'tipo_id',true)+fs(pref+'tipo_id',opts(LISTAS.tiposId,d[pref+'tipo_id']||''))
@@ -2330,8 +2405,8 @@ function htmlDuenoBen(d) {
     +fg('Apellido materno',null,false)+fi('db_ap_mat',d.db_ap_mat||'','')
     +fiFull('Nombre(s)','db_nombre',d.db_nombre||'','Sin abreviaturas',true)
     +fg('Fecha de nacimiento',null,true)+fi('db_fecha_nac',d.db_fecha_nac||'','DD-MM-AAAA')
-    +fg('Pais de nacimiento',null,true)+'<select class="sel" name="db_pais_nac">'+opts(LISTAS.paises,d.db_pais_nac||'Mexico')+'</select></div>'
-    +fg('Pais de nacionalidad',null,true)+'<select class="sel" name="db_pais_nac2">'+opts(LISTAS.paises,d.db_pais_nac2||'Mexico')+'</select></div>'
+    +fg('Pais de nacimiento',null,true)+'<select class="sel" name="db_pais_nac">'+optsPais(d.db_pais_nac||'Mexico')+'</select></div>'
+    +fg('Pais de nacionalidad',null,true)+'<select class="sel" name="db_pais_nac2">'+optsPais(d.db_pais_nac2||'Mexico')+'</select></div>'
     +fg('RFC',null,false)+fi('db_rfc',d.db_rfc||'','XXXX000000XX0','mono')
     +fg('CURP',null,false)+fi('db_curp',d.db_curp||'','18 caracteres','mono')
     +fg('Tipo de identificacion',null,true)+'<select class="sel" name="db_tipo_id">'+opts(LISTAS.tiposId,d.db_tipo_id||'')+'</select></div>'
@@ -2458,7 +2533,7 @@ function htmlFormPM_MEX(d) {
     .replace('name="null"','name="razon_social"').replace('value="null"','value="'+(d.razon_social||'')+'">').replace('placeholder="null"','placeholder="Nombre completo de la sociedad"')
     +fg('RFC',null,false)+fi('rfc',d.rfc||'','XXX000000XX0','mono')
     +fg('Fecha de constitucion',null,true)+fi('fecha_const',d.fecha_const||'','DD-MM-AAAA')
-    +fg('Pais de nacionalidad',null,true)+fs('pais_nac',opts(LISTAS.paises,d.pais_nac||'Mexico'))
+    +fg('Pais de nacionalidad',null,true)+fs('pais_nac',optsPais(d.pais_nac||'Mexico'))
     +fg('Actividad / giro mercantil (texto)',null,true)+fs('actividad',opts(LISTAS.actividades,d.actividad||''))
     +fg('Codigo SCIAN giro mercantil (7 dig - requerido para aviso XML)',null,true)+'<select class="sel" name="actividad_scian">'+optsScian(d.actividad_scian||'')+'</select></div>'
     +fg('Codigo ISO pais de nacionalidad (2 letras)',null,false)+fi('pais_nac_iso',d.pais_nac_iso||paisISO(d.pais_nac||'Mexico'),'Ej: MX')
@@ -2478,8 +2553,8 @@ function htmlFormPM_MEX(d) {
     +fg('Fecha de nacimiento',null,true)+fi('rl_fecha_nac',d.rl_fecha_nac||'','DD-MM-AAAA')
     +fg('RFC del representante',null,false)+fi('rl_rfc',d.rl_rfc||'','XXXX000000XX0','mono')
     +fg('CURP del representante',null,false)+fi('rl_curp',d.rl_curp||'','18 caracteres','mono')
-    +fg('Pais de nacimiento',null,true)+fs('rl_pais_nac',opts(LISTAS.paises,d.rl_pais_nac||'Mexico'))
-    +fg('Pais de nacionalidad',null,true)+fs('rl_pais_nac2',opts(LISTAS.paises,d.rl_pais_nac2||'Mexico'))
+    +fg('Pais de nacimiento',null,true)+fs('rl_pais_nac',optsPais(d.rl_pais_nac||'Mexico'))
+    +fg('Pais de nacionalidad',null,true)+fs('rl_pais_nac2',optsPais(d.rl_pais_nac2||'Mexico'))
     +fg('Tipo de identificacion',null,true)+fs('rl_tipo_id',opts(LISTAS.tiposId,d.rl_tipo_id||''))
     +fg('Numero de identificacion',null,true)+fi('rl_num_id',d.rl_num_id||'','')
     +fg('Nombre de la identificacion',null,false)+fi('rl_nombre_id',d.rl_nombre_id||'','Ej: Credencial INE')
@@ -2588,8 +2663,8 @@ function htmlFormFIDEICOMISO(d) {
     +fg('Apellido materno',null,false)+fi('df_ap_mat',d.df_ap_mat||'','')
     +fiFull('Nombre(s)','df_nombre',d.df_nombre||'','Sin abreviaturas',true)
     +fg('Fecha de nacimiento',null,true)+fi('df_fecha_nac',d.df_fecha_nac||'','DD-MM-AAAA')
-    +fg('Pais de nacimiento',null,true)+fs('df_pais_nac',opts(LISTAS.paises,d.df_pais_nac||'Mexico'))
-    +fg('Pais de nacionalidad',null,true)+fs('df_pais_nac2',opts(LISTAS.paises,d.df_pais_nac2||'Mexico'))
+    +fg('Pais de nacimiento',null,true)+fs('df_pais_nac',optsPais(d.df_pais_nac||'Mexico'))
+    +fg('Pais de nacionalidad',null,true)+fs('df_pais_nac2',optsPais(d.df_pais_nac2||'Mexico'))
     +fg('RFC del delegado',null,false)+fi('df_rfc',d.df_rfc||'','','mono')
     +fg('CURP del delegado',null,false)+fi('df_curp',d.df_curp||'','','mono')
     +fg('Tipo de identificacion',null,true)+fs('df_tipo_id',opts(LISTAS.tiposId,d.df_tipo_id||''))
@@ -2629,7 +2704,7 @@ function btnGuardar(idEx, tipo) {
 //  BENEFICIARIOS CONTROLADORES
 // ================================================================
 function htmlBC(bc, idx) {
-  var oPaises = opts(LISTAS.paises,bc.pais_nac||'Mexico');
+  var oPaises = optsPais(bc.pais_nac||'Mexico');
   var oTiposId = opts(LISTAS.tiposId,bc.tipo_id||'');
   return '<div class="bc-blk" id="bc-'+idx+'">'
     +'<div class="bc-hdr">Beneficiario controlador #'+(idx+1)
@@ -2639,8 +2714,8 @@ function htmlBC(bc, idx) {
     +fg('Apellido materno',null,false)+fi('bc_'+idx+'_ap_mat',bc.ap_mat||'','')
     +fiFull('Nombre(s)','bc_'+idx+'_nombre',bc.nombre||'','Sin abreviaturas',true)
     +fg('Fecha de nacimiento',null,true)+fi('bc_'+idx+'_fecha_nac',bc.fecha_nac||'','DD-MM-AAAA')
-    +fg('Pais de nacimiento',null,true)+'<select class="sel" name="bc_'+idx+'_pais_nac">'+opts(LISTAS.paises,bc.pais_nac||'Mexico')+'</select></div>'
-    +fg('Pais de nacionalidad',null,true)+'<select class="sel" name="bc_'+idx+'_pais_nac2">'+opts(LISTAS.paises,bc.pais_nac2||'Mexico')+'</select></div>'
+    +fg('Pais de nacimiento',null,true)+'<select class="sel" name="bc_'+idx+'_pais_nac">'+optsPais(bc.pais_nac||'Mexico')+'</select></div>'
+    +fg('Pais de nacionalidad',null,true)+'<select class="sel" name="bc_'+idx+'_pais_nac2">'+optsPais(bc.pais_nac2||'Mexico')+'</select></div>'
     +fg('RFC',null,false)+fi('bc_'+idx+'_rfc',bc.rfc||'','','mono')
     +fg('CURP',null,false)+fi('bc_'+idx+'_curp',bc.curp||'','','mono')
     +fg('Tipo de identificacion',null,true)+'<select class="sel" name="bc_'+idx+'_tipo_id">'+oTiposId+'</select></div>'
