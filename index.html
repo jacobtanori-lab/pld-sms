@@ -4767,8 +4767,8 @@ function renderFichaOp(op) {
     +fcHtml('Tipo de alerta',op.tipo_alerta+' - '+(op.tipo_alerta_desc||''))
     +fcHtml('Fecha de operacion',op.fecha_operacion)
     +fcHtml('Tipo de operacion',op.tipo_operacion+' - '+(op.tipo_operacion_desc||''))
-    +fcHtml('Figura del cliente',op.figura_cliente_desc||op.figura_cliente)
-    +fcHtml('Figura del SO',op.figura_so_desc||op.figura_so)
+    +(op.fraccion==='ARI'?'':fcHtml('Figura del cliente',op.figura_cliente_desc||op.figura_cliente))
+    +(op.fraccion==='ARI'?'':fcHtml('Figura del SO',op.figura_so_desc||op.figura_so))
     +'</div></div></div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Caracteristicas del inmueble</span></div><div class="card-b">'
     +'<div class="fg2">'
@@ -4856,8 +4856,8 @@ function nuevaOpForm(datos, fraccion) {
         return '<option value="'+c.id+'"'+(c.id===d.id_cliente_ref?' selected':'')+'>'+nom+' ('+labelTipo(c.tipo)+')</option>';
       }).join(''))
     +'<div class="fg full"><label class="lbl">O capturar nombre manualmente</label><input class="inp" name="nombre_cliente" value="'+(d.nombre_cliente||'')+'"></div>'
-    +fg('Figura del cliente en la operacion',null,true)+'<select class="sel" name="figura_cliente">'+optsC(FIGURA_CLIENTE,d.figura_cliente||'')+'</select></div>'
-    +fg('Figura del sujeto obligado (SO)',null,true)+'<select class="sel" name="figura_so">'+optsC(FIGURA_SO,d.figura_so||'')+'</select></div>'
+    +(esARI ? '' : fg('Figura del cliente en la operacion',null,true)+'<select class="sel" name="figura_cliente">'+optsC(FIGURA_CLIENTE,d.figura_cliente||'')+'</select></div>')
+    +(esARI ? '' : fg('Figura del sujeto obligado (SO)',null,true)+'<select class="sel" name="figura_so">'+optsC(FIGURA_SO,d.figura_so||'')+'</select></div>')
     +'</div></div>'
 
     // Datos de la operación
