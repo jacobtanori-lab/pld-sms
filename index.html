@@ -2382,7 +2382,7 @@ function ebrActCat() {
   if (_EBR_ACT_CAT) return _EBR_ACT_CAT;
   var vistos = {};
   var lista = [];
-  SCIAN.forEach(function(s) {
+  GIRO_PM.forEach(function(s) {
     if (!vistos[s.codigo]) { vistos[s.codigo] = true; lista.push({codigo: s.codigo, desc: s.desc, tipo: 'PM'}); }
   });
   ACT_PF.forEach(function(a) {
