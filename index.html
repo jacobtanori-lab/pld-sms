@@ -4477,7 +4477,13 @@ function nuevaOpForm(datos, fraccion) {
     +'<div class="fg full"><label class="lbl">Descripcion de la alerta (si aplica)</label><input class="inp" name="descripcion_alerta" value="'+(d.descripcion_alerta||'COMPRAVENTA DE INMUEBLE')+'"></div>'
     +fg('Es aviso modificatorio?',null,false)+'<select class="sel" name="es_modificatorio"><option value="NO"'+(d.es_modificatorio!=='SI'?' selected':'')+'>NO</option><option value="SI"'+(d.es_modificatorio==='SI'?' selected':'')+'>SI</option></select></div>'
     +fg('Folio del aviso previo (si es modificatorio)',null,false)+fi('folio_modificacion',d.folio_modificacion||'','AAAA-NNNNNNNNN')
+    +'<div class="fg full" id="sec-desc-modif" style="display:'+(d.es_modificatorio==='SI'?'block':'none')+'">'
+    +'<label class="lbl">Descripcion de la modificacion <span class="req">*</span></label>'
+    +'<input class="inp" name="descripcion_modificacion" maxlength="3000" placeholder="Describe que se corrige o actualiza respecto al aviso previo" value="'+(d.descripcion_modificacion||'')+'" oninput="this.value=this.value.toUpperCase()">'
+    +'<div class="fhint">Obligatorio cuando el aviso es modificatorio. Solo mayusculas, numeros y: , . : / - \'</div>'
+    +'</div>'
     +'</div></div>'
+    +'<script>document.querySelector("[name=es_modificatorio]").addEventListener("change",function(){document.getElementById("sec-desc-modif").style.display=this.value==="SI"?"block":"none";});<\/script>'
 
     // Cliente (persona objeto del aviso)
     +'<div class="card"><div class="card-h"><span class="card-t">2. Persona objeto del aviso (cliente)</span></div><div class="fgrid">'
@@ -4735,7 +4741,7 @@ function generarXML(opId) {
 
     // Aviso
     xml += '    <aviso>\n';
-    xml += '      <referencia_aviso>'+limXML(op.referencia_aviso||'REF001',14)+'</referencia_aviso>\n';
+    xml += '      <referencia_aviso>'+(op.referencia_aviso||'REF001').toUpperCase().replace(/[^A-ZÁÉÍÓÚÑ0-9]/g,'').substring(0,14)+'</referencia_aviso>\n';
 
     // Modificatorio
     if (op.es_modificatorio==='SI' && op.folio_modificacion) {
@@ -4871,8 +4877,7 @@ function generarXML(opId) {
       xml += '          <datos_liquidacion>\n';
       xml += '            <fecha_pago>'+fechaXML(l.fecha_pago||l.fecha||hoy())+'</fecha_pago>\n';
       xml += '            <forma_pago>'+(l.forma_pago||l.forma||'3')+'</forma_pago>\n';
-      if (l.instrumento||l.instrumento_monetario)
-        xml += '            <instrumento_monetario>'+(l.instrumento||l.instrumento_monetario)+'</instrumento_monetario>\n';
+      xml += '            <instrumento_monetario>'+(l.instrumento||l.instrumento_monetario||'3')+'</instrumento_monetario>\n';
       xml += '            <moneda>'+(l.moneda||'1')+'</moneda>\n';
       xml += '            <monto_operacion>'+montoXML(l.monto||0)+'</monto_operacion>\n';
       xml += '          </datos_liquidacion>\n';
@@ -4925,7 +4930,7 @@ function generarXML_ARI(op, cli, ent) {
   xml += '      <clave_actividad>ARI</clave_actividad>\n';
   xml += '    </sujeto_obligado>\n';
   xml += '    <aviso>\n';
-  xml += '      <referencia_aviso>'+limXML(op.referencia_aviso||'REF001',14)+'</referencia_aviso>\n';
+  xml += '      <referencia_aviso>'+(op.referencia_aviso||'REF001').toUpperCase().replace(/[^A-ZÁÉÍÓÚÑ0-9]/g,'').substring(0,14)+'</referencia_aviso>\n';
 
   if (op.es_modificatorio==='SI' && op.folio_modificacion) {
     xml += '      <modificatorio>\n';
@@ -4947,34 +4952,57 @@ function generarXML_ARI(op, cli, ent) {
   xml += xmlPersona(cli, op);
   xml += '        </tipo_persona>\n';
 
-  // Domicilio (nacional o extranjero según el país del domicilio)
-  xml += xmlDomicilio(cli);
-
-  if (cli&&cli.telefono) {
+  // Domicilio — requerido para PF y PM, omitir para FIDEICOMISO (VC352R1)
+  var tipoCliente = (cli && cli.tipo) || 'PF_MEX';
+  if (tipoCliente !== 'FIDEICOMISO') {
+    xml += xmlDomicilio(cli);
+    // Telefono — obligatorio para PF y PM (VC353R1)
     xml += '        <telefono>\n';
-    xml += '          <clave_pais>'+(cli.tel_clave_pais||'MX')+'</clave_pais>\n';
-    xml += '          <numero_telefono>'+String(cli.telefono).replace(/[^0-9]/g,'').substring(0,12)+'</numero_telefono>\n';
-    if (cli.email) xml += '          <correo_electronico>'+String(cli.email).toUpperCase()+'</correo_electronico>\n';
+    xml += '          <clave_pais>'+(cli&&cli.tel_clave_pais||'MX')+'</clave_pais>\n';
+    xml += '          <numero_telefono>'+(cli&&cli.telefono?String(cli.telefono).replace(/[^0-9]/g,'').substring(0,12)||'0000000000':'0000000000')+'</numero_telefono>\n';
+    if (cli&&cli.email) xml += '          <correo_electronico>'+String(cli.email).toUpperCase()+'</correo_electronico>\n';
     xml += '        </telefono>\n';
   }
   xml += '      </persona_aviso>\n';
 
-  // Dueño beneficiario
-  if (cli&&cli.tiene_dueno_ben==='SI'&&cli.db_nombre) {
-    xml += '      <dueno_beneficiario>\n';
-    xml += '        <tipo_persona>\n';
-    xml += '          <persona_fisica>\n';
-    xml += '            <nombre>'+limXML(cli.db_nombre,200)+'</nombre>\n';
-    xml += '            <apellido_paterno>'+limXML(cli.db_ap_pat||'X',200)+'</apellido_paterno>\n';
-    xml += '            <apellido_materno>'+limXML(cli.db_ap_mat||'X',200)+'</apellido_materno>\n';
-    if (cli.db_fecha_nac) xml += '            <fecha_nacimiento>'+fechaXML(cli.db_fecha_nac)+'</fecha_nacimiento>\n';
-    if (cli.db_rfc) xml += '            <rfc>'+limXML(cli.db_rfc,13)+'</rfc>\n';
-    if (cli.db_curp) xml += '            <curp>'+limXML(cli.db_curp,18)+'</curp>\n';
-    if (cli.db_pais_nac2||cli.db_pais_nac)
+  // Dueño beneficiario — puede ser PF, PM o fideicomiso
+  if (cli&&cli.tiene_dueno_ben==='SI') {
+    var dbTipo = cli.db_tipo || 'PF';
+    if (dbTipo==='PM'&&cli.db_razon_social) {
+      xml += '      <dueno_beneficiario>\n';
+      xml += '        <tipo_persona>\n';
+      xml += '          <persona_moral>\n';
+      xml += '            <denominacion_razon>'+limXML(cli.db_razon_social,254)+'</denominacion_razon>\n';
+      if (cli.db_rfc) xml += '            <rfc>'+limXML(cli.db_rfc,12)+'</rfc>\n';
       xml += '            <pais_nacionalidad>'+(cli.db_pais_nac_iso||paisISO(cli.db_pais_nac2||'Mexico'))+'</pais_nacionalidad>\n';
-    xml += '          </persona_fisica>\n';
-    xml += '        </tipo_persona>\n';
-    xml += '      </dueno_beneficiario>\n';
+      xml += '          </persona_moral>\n';
+      xml += '        </tipo_persona>\n';
+      xml += '      </dueno_beneficiario>\n';
+    } else if (dbTipo==='FIDEICOMISO'&&cli.db_razon_social) {
+      xml += '      <dueno_beneficiario>\n';
+      xml += '        <tipo_persona>\n';
+      xml += '          <fideicomiso>\n';
+      xml += '            <denominacion_razon>'+limXML(cli.db_razon_social,254)+'</denominacion_razon>\n';
+      if (cli.db_rfc) xml += '            <rfc>'+limXML(cli.db_rfc,12)+'</rfc>\n';
+      xml += '          </fideicomiso>\n';
+      xml += '        </tipo_persona>\n';
+      xml += '      </dueno_beneficiario>\n';
+    } else if (cli.db_nombre) {
+      xml += '      <dueno_beneficiario>\n';
+      xml += '        <tipo_persona>\n';
+      xml += '          <persona_fisica>\n';
+      xml += '            <nombre>'+limXML(cli.db_nombre,200)+'</nombre>\n';
+      xml += '            <apellido_paterno>'+limXML(cli.db_ap_pat||'X',200)+'</apellido_paterno>\n';
+      xml += '            <apellido_materno>'+limXML(cli.db_ap_mat||'X',200)+'</apellido_materno>\n';
+      if (cli.db_fecha_nac) xml += '            <fecha_nacimiento>'+fechaXML(cli.db_fecha_nac)+'</fecha_nacimiento>\n';
+      if (cli.db_rfc) xml += '            <rfc>'+limXML(cli.db_rfc,13)+'</rfc>\n';
+      if (cli.db_curp) xml += '            <curp>'+limXML(cli.db_curp,18)+'</curp>\n';
+      if (cli.db_pais_nac2||cli.db_pais_nac)
+        xml += '            <pais_nacionalidad>'+(cli.db_pais_nac_iso||paisISO(cli.db_pais_nac2||'Mexico'))+'</pais_nacionalidad>\n';
+      xml += '          </persona_fisica>\n';
+      xml += '        </tipo_persona>\n';
+      xml += '      </dueno_beneficiario>\n';
+    }
   }
 
   // Detalle operaciones ARI
@@ -4997,15 +5025,14 @@ function generarXML_ARI(op, cli, ent) {
   xml += '            <folio_real>'+limXML(op.folio_real||'SINFOLIO',200)+'</folio_real>\n';
   xml += '          </caracteristicas>\n';
 
-  // Liquidaciones (igual que INM)
+  // Liquidaciones ARI
   var liqs = op.liquidaciones || [];
   liqs.forEach(function(l) {
     if (!l.fecha_pago&&!l.fecha) return;
     xml += '          <datos_liquidacion>\n';
     xml += '            <fecha_pago>'+fechaXML(l.fecha_pago||l.fecha||hoy())+'</fecha_pago>\n';
     xml += '            <forma_pago>'+(l.forma_pago||l.forma||'3')+'</forma_pago>\n';
-    if (l.instrumento||l.instrumento_monetario)
-      xml += '            <instrumento_monetario>'+(l.instrumento||l.instrumento_monetario)+'</instrumento_monetario>\n';
+    xml += '            <instrumento_monetario>'+(l.instrumento||l.instrumento_monetario||'3')+'</instrumento_monetario>\n';
     xml += '            <moneda>'+(l.moneda||'1')+'</moneda>\n';
     xml += '            <monto_operacion>'+montoXML(l.monto||0)+'</monto_operacion>\n';
     xml += '          </datos_liquidacion>\n';
