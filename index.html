@@ -2394,7 +2394,7 @@ function ebrActCat() {
       if (ex) ex.tipo = 'PF+PM';
     }
   });
-  lista.sort(function(a, b) { return a.codigo < b.codigo ? -1 : 1; });
+  // Sin sort — se preserva el orden original de cada catálogo (igual que el formulario de clientes)
   _EBR_ACT_CAT = lista;
   return lista;
 }
