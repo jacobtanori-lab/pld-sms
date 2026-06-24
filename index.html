@@ -3037,8 +3037,10 @@ function pgClientes() {
   spGet('PLD_Clientes', function(lista){
     // Filtrar por entidad activa (excepto vista consolidada)
     if (App.entidadActual && App.entidadActual.id !== 'TODAS') {
+      var entId = App.entidadActual.id;
       lista = (lista||[]).filter(function(c){
-        return c.entidad_id === App.entidadActual.id;
+        // Incluir si coincide con la entidad, o si no tiene entidad asignada (huerfano)
+        return c.entidad_id === entId || !c.entidad_id || c.entidad_id === 'TODAS';
       });
     } else {
       lista = filtrarPermitidas(lista||[]);
@@ -3673,9 +3675,14 @@ function submitCliente(tipo, idEx) {
   datos.riesgo = riesgo.nivel;
   datos.puntaje_ebr = riesgo.puntaje;
 
-  // Siempre guardar la entidad activa
-  datos.entidad_id   = App.entidadActual ? App.entidadActual.id : '';
-  datos.entidad_nombre = App.entidadActual ? App.entidadActual.nombre : '';
+  // Si es edición y estamos en vista consolidada, conservar entidad_id original
+  if (idEx && App.entidadActual && App.entidadActual.id === 'TODAS' && App.clienteActual) {
+    datos.entidad_id   = App.clienteActual.entidad_id   || '';
+    datos.entidad_nombre = App.clienteActual.entidad_nombre || '';
+  } else {
+    datos.entidad_id   = App.entidadActual ? App.entidadActual.id : '';
+    datos.entidad_nombre = App.entidadActual ? App.entidadActual.nombre : '';
+  }
 
   // Obtener siguiente numero de cliente por entidad
   spGet('PLD_Clientes', function(lista) {
