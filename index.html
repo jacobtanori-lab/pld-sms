@@ -2376,13 +2376,36 @@ function pgConfig(sec) {
 }
 
 // ── Pantalla de configuración EBR ─────────────────────────────
+// Catálogo combinado PF + PM para el selector de actividades EBR
+var _EBR_ACT_CAT = null;
+function ebrActCat() {
+  if (_EBR_ACT_CAT) return _EBR_ACT_CAT;
+  var vistos = {};
+  var lista = [];
+  SCIAN.forEach(function(s) {
+    if (!vistos[s.codigo]) { vistos[s.codigo] = true; lista.push({codigo: s.codigo, desc: s.desc, tipo: 'PM'}); }
+  });
+  ACT_PF.forEach(function(a) {
+    if (a.codigo === '1000000') return;
+    if (!vistos[a.codigo]) { vistos[a.codigo] = true; lista.push({codigo: a.codigo, desc: a.desc, tipo: 'PF'}); }
+    else {
+      // si ya existe en SCIAN, marcar como PF+PM
+      var ex = lista.filter(function(x){ return x.codigo === a.codigo; })[0];
+      if (ex) ex.tipo = 'PF+PM';
+    }
+  });
+  lista.sort(function(a, b) { return a.codigo < b.codigo ? -1 : 1; });
+  _EBR_ACT_CAT = lista;
+  return lista;
+}
+
 function pgConfigEBR() {
   var e = CFG_EBR;
   var tipoLabels = { 'PF_MEX':'Persona Física Nacional','PF_EXT':'Persona Física Extranjera','PM_MEX':'Persona Moral Nacional','PM_SIMP':'Persona Moral Simplificada','FIDEICOMISO':'Fideicomiso' };
   var pepLabels  = ['NO APLICA','Inactivo','Vencido','Activo','Familiar','Relacionado a PEP'];
 
   function fldNum(id, val, min, max) {
-    return '<input class="inp mono" id="ebr-'+id+'" type="number" min="'+(min||0)+'" max="'+(max||100)+'" step="1" value="'+val+'" style="width:70px;text-align:center">';
+    return '<input class="inp mono" id="ebr-'+id+'" type="number" min="'+(min||0)+'" max="'+(max||500)+'" step="1" value="'+val+'" style="width:70px;text-align:center">';
   }
   function rowIndicador(label, id, val) {
     return '<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--brd)">'
@@ -2391,37 +2414,37 @@ function pgConfigEBR() {
       +'<span style="font-size:12px;color:var(--tx3)">puntos</span></div>';
   }
 
-  // Construir chips seleccionables de SCIAN
-  function scianChips() {
+  // Tags de actividades ya seleccionadas
+  function actTagsHtml() {
     var sel = e.actividades_alto_riesgo || [];
-    return SCIAN.map(function(s) {
-      var on = sel.indexOf(s.codigo) >= 0;
-      return '<span class="ebr-chip'+(on?' on':'')+'" data-cod="'+s.codigo+'" onclick="ebrToggleChip(this,\'act\')" '
-        +'title="'+s.codigo+' — '+s.desc+'" style="cursor:pointer;display:inline-block;padding:2px 7px;margin:2px;border-radius:10px;font-size:11px;border:1px solid '+(on?'var(--az)':'var(--brd)')+';background:'+(on?'var(--az3)':'transparent')+';color:'+(on?'var(--az)':'var(--tx3)')+'">'
-        +s.codigo+'</span>';
+    var cat = ebrActCat();
+    if (!sel.length) return '<span style="font-size:12px;color:var(--tx3);font-style:italic">Sin actividades agregadas</span>';
+    return sel.map(function(cod) {
+      var entry = cat.filter(function(x){ return x.codigo === cod; })[0];
+      var label = entry ? cod+' — '+entry.desc+' ('+entry.tipo+')' : cod;
+      return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;margin:2px;border-radius:10px;font-size:11px;background:var(--az3);color:var(--az);border:1px solid var(--az)">'
+        +label
+        +'<button onclick="ebrQuitarActividad(\''+cod+'\')" style="background:none;border:none;cursor:pointer;color:var(--az);font-size:13px;line-height:1;padding:0 0 0 2px" title="Quitar">×</button>'
+        +'</span>';
     }).join('');
   }
 
-  // Construir chips de estados
+  // Opciones del dropdown de actividades (con optgroup PF / PM)
+  var cat = ebrActCat();
+  var sel = e.actividades_alto_riesgo || [];
+  var optsPF = cat.filter(function(x){ return x.tipo==='PF'||x.tipo==='PF+PM'; })
+    .map(function(x){ return '<option value="'+x.codigo+'"'+(sel.indexOf(x.codigo)>=0?' disabled':'')+'>'+x.codigo+' — '+x.desc+'</option>'; }).join('');
+  var optsPM = cat.filter(function(x){ return x.tipo==='PM'||x.tipo==='PF+PM'; })
+    .map(function(x){ return '<option value="'+x.codigo+'"'+(sel.indexOf(x.codigo)>=0?' disabled':'')+'>'+x.codigo+' — '+x.desc+'</option>'; }).join('');
+
+  // Chips de estados
   function estadosChips() {
-    var sel = e.estados_alto_riesgo || [];
+    var selE = e.estados_alto_riesgo || [];
     return ENTIDADES_FED.map(function(s) {
-      var on = sel.indexOf(s.desc) >= 0;
-      return '<span class="ebr-chip'+(on?' on':'')+'" data-cod="'+s.desc+'" onclick="ebrToggleChip(this,\'est\')" '
-        +'style="cursor:pointer;display:inline-block;padding:2px 8px;margin:2px;border-radius:10px;font-size:12px;border:1px solid '+(on?'var(--az)':'var(--brd)')+';background:'+(on?'var(--az3)':'transparent')+';color:'+(on?'var(--az)':'var(--tx3)')+'">'
+      var on = selE.indexOf(s.desc) >= 0;
+      return '<span class="ebr-chip'+(on?' on':'')+'" data-cod="'+s.desc+'" onclick="ebrToggleChip(this)" '
+        +'style="cursor:pointer;display:inline-block;padding:3px 10px;margin:2px;border-radius:10px;font-size:12px;border:1px solid '+(on?'var(--az)':'var(--brd)')+';background:'+(on?'var(--az3)':'transparent')+';color:'+(on?'var(--az)':'var(--tx3)')+'">'
         +s.desc+'</span>';
-    }).join('');
-  }
-
-  // Construir chips de países del domicilio (excluyendo México)
-  function paisesChips() {
-    var sel = e.paises_dom_alto_riesgo || [];
-    var lista = PAISES_CAT.filter(function(p){ return p.c !== 'MX'; });
-    return lista.map(function(p) {
-      var on = sel.indexOf(p.c) >= 0;
-      return '<span class="ebr-chip'+(on?' on':'')+'" data-cod="'+p.c+'" onclick="ebrToggleChip(this,\'pais\')" '
-        +'title="'+p.n+'" style="cursor:pointer;display:inline-block;padding:2px 7px;margin:2px;border-radius:10px;font-size:11px;border:1px solid '+(on?'var(--rj)':'var(--brd)')+';background:'+(on?'var(--rj3,#fee2e2)':'transparent')+';color:'+(on?'var(--rj)':'var(--tx3)')+'">'
-        +p.c+'</span>';
     }).join('');
   }
 
@@ -2429,102 +2452,67 @@ function pgConfigEBR() {
     +'<div class="psub">Parametros del modelo EBR — Enfoque Basado en Riesgo</div></div>'
     +'<button class="btn btn-p" onclick="guardarEBR()">Guardar cambios</button></div>'
 
-    // — Umbrales de clasificación —
-    +'<div class="card"><div class="card-h"><span class="card-t">Umbrales de clasificacion</span>'
-    +'<span style="font-size:12px;color:var(--tx3)">Los puntajes totales se comparan contra estos limites</span></div>'
-    +'<div class="card-b">'
-    +'<div style="display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap">'
-    +'<div style="text-align:center">'
-    +'<div style="font-size:11px;color:var(--tx3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Riesgo ALTO</div>'
-    +'<div style="display:flex;align-items:center;gap:6px">'
-    +'<span style="font-size:13px;color:var(--tx2)">Puntaje ≥</span>'
-    +fldNum('umbral_alto', e.umbral_alto, 1, 500)
-    +'</div>'
-    +'<div style="margin-top:6px"><span class="pill p-rj">Alto</span></div>'
-    +'</div>'
-    +'<div style="text-align:center">'
-    +'<div style="font-size:11px;color:var(--tx3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Riesgo MEDIO</div>'
-    +'<div style="display:flex;align-items:center;gap:6px">'
-    +'<span style="font-size:13px;color:var(--tx2)">Puntaje ≥</span>'
-    +fldNum('umbral_medio', e.umbral_medio, 1, 500)
-    +'</div>'
-    +'<div style="margin-top:6px"><span class="pill p-am">Medio</span></div>'
-    +'</div>'
-    +'<div style="text-align:center">'
-    +'<div style="font-size:11px;color:var(--tx3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Riesgo BAJO</div>'
-    +'<div style="font-size:13px;color:var(--tx2);padding:8px 0">Puntaje &lt; umbral Medio</div>'
-    +'<div style="margin-top:6px"><span class="pill p-vd">Bajo</span></div>'
-    +'</div>'
+    // — Umbrales —
+    +'<div class="card"><div class="card-h"><span class="card-t">Umbrales de clasificacion</span></div>'
+    +'<div class="card-b"><div style="display:flex;gap:32px;align-items:flex-start;flex-wrap:wrap">'
+    +'<div style="text-align:center"><div style="font-size:11px;color:var(--tx3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Riesgo ALTO</div>'
+    +'<div style="display:flex;align-items:center;gap:6px"><span style="font-size:13px;color:var(--tx2)">Puntaje ≥</span>'+fldNum('umbral_alto',e.umbral_alto,1,500)+'</div>'
+    +'<div style="margin-top:8px"><span class="pill p-rj">Alto</span></div></div>'
+    +'<div style="text-align:center"><div style="font-size:11px;color:var(--tx3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Riesgo MEDIO</div>'
+    +'<div style="display:flex;align-items:center;gap:6px"><span style="font-size:13px;color:var(--tx2)">Puntaje ≥</span>'+fldNum('umbral_medio',e.umbral_medio,1,500)+'</div>'
+    +'<div style="margin-top:8px"><span class="pill p-am">Medio</span></div></div>'
+    +'<div style="text-align:center"><div style="font-size:11px;color:var(--tx3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Riesgo BAJO</div>'
+    +'<div style="font-size:13px;color:var(--tx2);padding:6px 0">Puntaje &lt; umbral Medio</div>'
+    +'<div style="margin-top:8px"><span class="pill p-vd">Bajo</span></div></div>'
     +'</div></div></div>'
 
     // — Puntajes por indicador —
     +'<div class="card"><div class="card-h"><span class="card-t">Puntajes por indicador</span>'
-    +'<span style="font-size:12px;color:var(--tx3)">Los puntajes se suman para obtener el nivel de riesgo del cliente</span></div>'
+    +'<span style="font-size:12px;color:var(--tx3)">Cada factor suma puntos al perfil del cliente</span></div>'
     +'<div class="card-b">'
-
-    // Tipo de cliente
     +'<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Tipo de cliente</div>'
-    +Object.keys(tipoLabels).map(function(k){ return rowIndicador(tipoLabels[k],'tipo_'+k, e.tipo_cliente[k]||0); }).join('')
-    +'</div>'
-
-    // PEP
+    +Object.keys(tipoLabels).map(function(k){ return rowIndicador(tipoLabels[k],'tipo_'+k,e.tipo_cliente[k]||0); }).join('')+'</div>'
     +'<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Estatus PEP</div>'
-    +pepLabels.map(function(k){ return rowIndicador(k,'pep_'+k.replace(/ /g,'_'), e.pep[k]||0); }).join('')
-    +'</div>'
-
-    // Nacionalidad / Domicilio
-    +'<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Origen / Domicilio</div>'
-    +rowIndicador('Nacionalidad extranjera (país de nacimiento)', 'nacionalidad_ext', e.nacionalidad_ext||0)
-    +'</div>'
-
-    // Dueño Beneficiario
+    +pepLabels.map(function(k){ return rowIndicador(k,'pep_'+k.replace(/ /g,'_'),e.pep[k]||0); }).join('')+'</div>'
+    +'<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Nacionalidad</div>'
+    +rowIndicador('Nacionalidad extranjera (pais de nacimiento)','nacionalidad_ext',e.nacionalidad_ext||0)+'</div>'
+    +'<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Pais del domicilio</div>'
+    +rowIndicador('Mexico','puntaje_pais_dom_mx',e.puntaje_pais_dom_mx||0)
+    +rowIndicador('Estados Unidos','puntaje_pais_dom_us',e.puntaje_pais_dom_us||0)
+    +rowIndicador('Resto del mundo (cualquier otro pais)','puntaje_pais_dom_ext',e.puntaje_pais_dom_ext||0)+'</div>'
     +'<div style="margin-bottom:4px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Declaracion de Dueño Beneficiario</div>'
-    +rowIndicador('Declara dueño beneficiario (SI)', 'db_SI', e.dueno_beneficiario['SI']||0)
-    +rowIndicador('No declara dueño beneficiario (NO)', 'db_NO', e.dueno_beneficiario['NO']||0)
-    +'</div>'
+    +rowIndicador('Declara dueño beneficiario (SI)','db_SI',e.dueno_beneficiario['SI']||0)
+    +rowIndicador('No declara dueño beneficiario (NO)','db_NO',e.dueno_beneficiario['NO']||0)+'</div>'
     +'</div></div>'
 
     // — Actividades económicas de alto riesgo —
     +'<div class="card"><div class="card-h"><span class="card-t">Actividades economicas de alto riesgo</span>'
-    +'<span style="font-size:12px;color:var(--tx3)">Codigos SCIAN que suman puntaje adicional</span></div>'
+    +'<span style="font-size:12px;color:var(--tx3)">Incluye catalogo de Persona Fisica (SAT) y Persona Moral (SCIAN)</span></div>'
     +'<div class="card-b">'
-    +'<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">'
+    +'<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap">'
     +'<span style="font-size:13px;color:var(--tx2)">Puntaje por actividad de alto riesgo:</span>'
-    +fldNum('puntaje_actividad', e.puntaje_actividad||0, 0, 200)
-    +'<span style="font-size:12px;color:var(--tx3)">puntos</span>'
-    +'<input class="inp" id="ebr-scian-search" placeholder="Filtrar SCIAN..." style="width:200px;font-size:12px" oninput="ebrFiltrarChips(\'scian-chips\',this.value)">'
-    +'<button class="btn btn-sm" onclick="ebrLimpiarSel(\'act\')">Limpiar seleccion</button>'
+    +fldNum('puntaje_actividad',e.puntaje_actividad||0,0,200)
+    +'<span style="font-size:12px;color:var(--tx3)">puntos</span></div>'
+    +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">'
+    +'<select class="sel" id="ebr-act-sel" style="flex:1;min-width:300px;font-size:12px">'
+    +'<optgroup label="Persona Física (SAT)">'+optsPF+'</optgroup>'
+    +'<optgroup label="Persona Moral (SCIAN)">'+optsPM+'</optgroup>'
+    +'</select>'
+    +'<button class="btn btn-p btn-sm" onclick="ebrAgregarActividad()">+ Agregar</button>'
     +'</div>'
-    +'<div id="scian-chips" style="max-height:260px;overflow-y:auto;border:1px solid var(--brd);border-radius:var(--r);padding:8px">'+scianChips()+'</div>'
-    +'<div style="font-size:11px;color:var(--tx3);margin-top:6px">Selecciona los codigos SCIAN que en tu criterio representan actividades de alto riesgo PLD</div>'
+    +'<div id="ebr-act-tags" style="min-height:36px;padding:4px 0">'+actTagsHtml()+'</div>'
     +'</div></div>'
 
     // — Estados del domicilio de alto riesgo —
     +'<div class="card"><div class="card-h"><span class="card-t">Estados del domicilio de alto riesgo</span>'
-    +'<span style="font-size:12px;color:var(--tx3)">Entidades federativas con mayor exposicion al riesgo</span></div>'
+    +'<span style="font-size:12px;color:var(--tx3)">Entidades federativas con mayor exposicion</span></div>'
     +'<div class="card-b">'
     +'<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">'
     +'<span style="font-size:13px;color:var(--tx2)">Puntaje por estado de alto riesgo:</span>'
-    +fldNum('puntaje_estado', e.puntaje_estado||0, 0, 200)
+    +fldNum('puntaje_estado',e.puntaje_estado||0,0,200)
     +'<span style="font-size:12px;color:var(--tx3)">puntos</span>'
-    +'<button class="btn btn-sm" onclick="ebrLimpiarSel(\'est\')">Limpiar seleccion</button>'
-    +'</div>'
+    +'<button class="btn btn-sm" onclick="ebrLimpiarEstados()">Limpiar seleccion</button></div>'
     +'<div id="est-chips" style="padding:8px;border:1px solid var(--brd);border-radius:var(--r)">'+estadosChips()+'</div>'
-    +'</div></div>'
-
-    // — Países del domicilio de alto riesgo —
-    +'<div class="card"><div class="card-h"><span class="card-t">Paises del domicilio de alto riesgo</span>'
-    +'<span style="font-size:12px;color:var(--tx3)">Paises de residencia del cliente con mayor exposicion</span></div>'
-    +'<div class="card-b">'
-    +'<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">'
-    +'<span style="font-size:13px;color:var(--tx2)">Puntaje por pais de domicilio de alto riesgo:</span>'
-    +fldNum('puntaje_pais_dom', e.puntaje_pais_dom||0, 0, 200)
-    +'<span style="font-size:12px;color:var(--tx3)">puntos</span>'
-    +'<input class="inp" id="ebr-pais-search" placeholder="Filtrar pais (codigo ISO)..." style="width:220px;font-size:12px" oninput="ebrFiltrarChips(\'pais-chips\',this.value)">'
-    +'<button class="btn btn-sm" onclick="ebrLimpiarSel(\'pais\')">Limpiar seleccion</button>'
-    +'</div>'
-    +'<div id="pais-chips" style="max-height:260px;overflow-y:auto;border:1px solid var(--brd);border-radius:var(--r);padding:8px">'+paisesChips()+'</div>'
-    +'<div style="font-size:11px;color:var(--tx3);margin-top:6px">Aplica solo para clientes con domicilio en el extranjero. Selecciona por codigo ISO.</div>'
     +'</div></div>'
 
     // — Simulador —
@@ -2532,16 +2520,23 @@ function pgConfigEBR() {
     +'<span style="font-size:12px;color:var(--tx3)">Prueba el calculo con un perfil hipotetico</span></div>'
     +'<div class="card-b"><div class="fgrid">'
     +'<div class="fg"><label class="lbl">Tipo de cliente</label><select class="sel" id="sim-tipo">'
-    +Object.keys(tipoLabels).map(function(k){return '<option value="'+k+'">'+tipoLabels[k]+'</option>';}).join('')
-    +'</select></div>'
+    +Object.keys(tipoLabels).map(function(k){return '<option value="'+k+'">'+tipoLabels[k]+'</option>';}).join('')+'</select></div>'
     +'<div class="fg"><label class="lbl">Estatus PEP</label><select class="sel" id="sim-pep">'
-    +pepLabels.map(function(k){return '<option value="'+k+'">'+k+'</option>';}).join('')
-    +'</select></div>'
-    +'<div class="fg"><label class="lbl">Nacionalidad</label><select class="sel" id="sim-nac"><option value="MEXICO">Mexico (nacional)</option><option value="EXTRANJERO">Extranjero</option></select></div>'
-    +'<div class="fg"><label class="lbl">Actividad</label><select class="sel" id="sim-act"><option value="">Normal (sin riesgo)</option><option value="__alto__">En lista de alto riesgo</option></select></div>'
-    +'<div class="fg"><label class="lbl">Estado del domicilio</label><select class="sel" id="sim-est"><option value="">Normal (sin riesgo)</option><option value="__alto__">En lista de alto riesgo</option></select></div>'
-    +'<div class="fg"><label class="lbl">Pais del domicilio</label><select class="sel" id="sim-pdom"><option value="MEXICO">Mexico</option><option value="__alto__">Extranjero de alto riesgo</option><option value="__ext__">Extranjero no listado</option></select></div>'
-    +'<div class="fg"><label class="lbl">Dueño Beneficiario</label><select class="sel" id="sim-db"><option value="NO">No declarado (NO)</option><option value="SI">Declarado (SI)</option></select></div>'
+    +pepLabels.map(function(k){return '<option value="'+k+'">'+k+'</option>';}).join('')+'</select></div>'
+    +'<div class="fg"><label class="lbl">Nacionalidad</label><select class="sel" id="sim-nac">'
+    +'<option value="MEXICO">Mexico (nacional)</option><option value="EXTRANJERO">Extranjero</option></select></div>'
+    +'<div class="fg"><label class="lbl">Actividad economica</label><select class="sel" id="sim-act">'
+    +'<option value="">Normal (no listada como alto riesgo)</option>'
+    +'<option value="__alto__">En lista de alto riesgo</option></select></div>'
+    +'<div class="fg"><label class="lbl">Estado del domicilio</label><select class="sel" id="sim-est">'
+    +'<option value="">Normal (no listado como alto riesgo)</option>'
+    +'<option value="__alto__">En lista de alto riesgo</option></select></div>'
+    +'<div class="fg"><label class="lbl">Pais del domicilio</label><select class="sel" id="sim-pdom">'
+    +'<option value="MEXICO">Mexico</option>'
+    +'<option value="US">Estados Unidos</option>'
+    +'<option value="OTRO">Otro pais (resto del mundo)</option></select></div>'
+    +'<div class="fg"><label class="lbl">Dueño Beneficiario</label><select class="sel" id="sim-db">'
+    +'<option value="NO">No declarado (NO)</option><option value="SI">Declarado (SI)</option></select></div>'
     +'</div>'
     +'<div style="margin-top:16px;text-align:center">'
     +'<button class="btn btn-p" onclick="ebrSimular()">Calcular nivel de riesgo</button>'
@@ -2549,67 +2544,71 @@ function pgConfigEBR() {
     +'</div></div></div>');
 }
 
-function ebrToggleChip(el, grupo) {
-  var on = el.classList.contains('on');
-  el.classList.toggle('on');
-  if (grupo === 'act') {
-    el.style.borderColor = on ? 'var(--brd)' : 'var(--az)';
-    el.style.background  = on ? 'transparent' : 'var(--az3)';
-    el.style.color       = on ? 'var(--tx3)' : 'var(--az)';
-  } else if (grupo === 'est') {
-    el.style.borderColor = on ? 'var(--brd)' : 'var(--az)';
-    el.style.background  = on ? 'transparent' : 'var(--az3)';
-    el.style.color       = on ? 'var(--tx3)' : 'var(--az)';
-  } else {
-    el.style.borderColor = on ? 'var(--brd)' : 'var(--rj)';
-    el.style.background  = on ? 'transparent' : 'var(--rj3,#fee2e2)';
-    el.style.color       = on ? 'var(--tx3)' : 'var(--rj)';
+function ebrAgregarActividad() {
+  var sel = document.getElementById('ebr-act-sel');
+  if (!sel || !sel.value) return;
+  var cod = sel.value;
+  if (CFG_EBR.actividades_alto_riesgo.indexOf(cod) >= 0) { toast('Esa actividad ya esta en la lista','w'); return; }
+  CFG_EBR.actividades_alto_riesgo.push(cod);
+  // Deshabilitar la opción en el select
+  var opt = sel.querySelector('option[value="'+cod+'"]');
+  if (opt) opt.disabled = true;
+  sel.value = '';
+  // Re-render tags
+  var ct = document.getElementById('ebr-act-tags');
+  if (ct) {
+    var cat = ebrActCat();
+    ct.innerHTML = CFG_EBR.actividades_alto_riesgo.map(function(c) {
+      var entry = cat.filter(function(x){ return x.codigo === c; })[0];
+      var label = entry ? c+' — '+entry.desc+' ('+entry.tipo+')' : c;
+      return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;margin:2px;border-radius:10px;font-size:11px;background:var(--az3);color:var(--az);border:1px solid var(--az)">'
+        +label+'<button onclick="ebrQuitarActividad(\''+c+'\')" style="background:none;border:none;cursor:pointer;color:var(--az);font-size:13px;line-height:1;padding:0 0 0 2px" title="Quitar">×</button></span>';
+    }).join('') || '<span style="font-size:12px;color:var(--tx3);font-style:italic">Sin actividades agregadas</span>';
   }
 }
 
-function ebrLimpiarSel(grupo) {
-  var contenedor = document.getElementById(grupo === 'act' ? 'scian-chips' : grupo === 'est' ? 'est-chips' : 'pais-chips');
-  if (!contenedor) return;
-  contenedor.querySelectorAll('.ebr-chip.on').forEach(function(el) { ebrToggleChip(el, grupo); });
+function ebrQuitarActividad(cod) {
+  CFG_EBR.actividades_alto_riesgo = CFG_EBR.actividades_alto_riesgo.filter(function(c){ return c !== cod; });
+  // Re-habilitar la opción en el select
+  var sel = document.getElementById('ebr-act-sel');
+  if (sel) { var opt = sel.querySelector('option[value="'+cod+'"]'); if (opt) opt.disabled = false; }
+  // Re-render tags
+  var ct = document.getElementById('ebr-act-tags');
+  if (ct) {
+    var cat = ebrActCat();
+    ct.innerHTML = CFG_EBR.actividades_alto_riesgo.map(function(c) {
+      var entry = cat.filter(function(x){ return x.codigo === c; })[0];
+      var label = entry ? c+' — '+entry.desc+' ('+entry.tipo+')' : c;
+      return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;margin:2px;border-radius:10px;font-size:11px;background:var(--az3);color:var(--az);border:1px solid var(--az)">'
+        +label+'<button onclick="ebrQuitarActividad(\''+c+'\')" style="background:none;border:none;cursor:pointer;color:var(--az);font-size:13px;line-height:1;padding:0 0 0 2px" title="Quitar">×</button></span>';
+    }).join('') || '<span style="font-size:12px;color:var(--tx3);font-style:italic">Sin actividades agregadas</span>';
+  }
 }
 
-function ebrFiltrarChips(contenedorId, texto) {
-  var ct = document.getElementById(contenedorId);
+function ebrToggleChip(el) {
+  var on = el.classList.contains('on');
+  el.classList.toggle('on');
+  el.style.borderColor = on ? 'var(--brd)' : 'var(--az)';
+  el.style.background  = on ? 'transparent' : 'var(--az3)';
+  el.style.color       = on ? 'var(--tx3)' : 'var(--az)';
+}
+
+function ebrLimpiarEstados() {
+  var ct = document.getElementById('est-chips');
   if (!ct) return;
-  var q = texto.toLowerCase();
-  ct.querySelectorAll('.ebr-chip').forEach(function(el) {
-    el.style.display = (!q || el.title.toLowerCase().indexOf(q) >= 0 || el.dataset.cod.toLowerCase().indexOf(q) >= 0) ? '' : 'none';
-  });
+  ct.querySelectorAll('.ebr-chip.on').forEach(function(el) { ebrToggleChip(el); });
 }
 
 function ebrSimular() {
   var v = function(id){ return (document.getElementById(id)||{}).value || ''; };
-  var tipo  = v('sim-tipo');
-  var pep   = v('sim-pep');
-  var nac   = v('sim-nac');
-  var act   = v('sim-act');
-  var est   = v('sim-est');
-  var pdom  = v('sim-pdom');
-  var db    = v('sim-db');
-  // Construir mock client object
+  var tipo = v('sim-tipo'), pep = v('sim-pep'), nac = v('sim-nac');
+  var act  = v('sim-act'), est = v('sim-est'), pdom = v('sim-pdom'), db = v('sim-db');
   var actCod = (act === '__alto__' && CFG_EBR.actividades_alto_riesgo.length) ? CFG_EBR.actividades_alto_riesgo[0] : '';
-  var estVal = (est === '__alto__' && CFG_EBR.estados_alto_riesgo.length) ? CFG_EBR.estados_alto_riesgo[0] : '';
-  var paisDom = pdom === 'MEXICO' ? 'MEXICO' : pdom === '__alto__' ? (CFG_EBR.paises_dom_alto_riesgo.length ? 'EXTRANJERO_ALTO' : 'MEXICO') : 'CANADA';
-  var mock = {
-    tipo: tipo,
-    estatus_pep: pep,
-    pais_nac: nac === 'MEXICO' ? 'MEXICO' : 'EXTRANJERO',
-    actividad_scian: actCod,
-    tiene_dueno_ben: db,
-    estado: estVal,
-    pais_dom: pdom === 'MEXICO' ? 'MEXICO' : pdom === '__alto__' ? Object.keys(PAISES_ISO||{})[10]||'US' : 'CANADA'
-  };
-  // Para país domicilio de alto riesgo: forzar el primer ISO en la lista
-  if (pdom === '__alto__' && CFG_EBR.paises_dom_alto_riesgo.length) {
-    var isoAlto = CFG_EBR.paises_dom_alto_riesgo[0];
-    var entrada = (PAISES_CAT||[]).find ? PAISES_CAT.filter(function(p){ return p.c===isoAlto; })[0] : null;
-    if (entrada) mock.pais_dom = entrada.n;
-  }
+  var estVal = (est === '__alto__' && CFG_EBR.estados_alto_riesgo.length)      ? CFG_EBR.estados_alto_riesgo[0]      : '';
+  // Mapear selección de país a nombre de país que paisISO() reconoce
+  var paisDomNombre = pdom === 'MEXICO' ? 'MEXICO' : pdom === 'US' ? 'ESTADOS UNIDOS' : 'CANADA';
+  var mock = { tipo: tipo, estatus_pep: pep, pais_nac: nac === 'MEXICO' ? 'MEXICO' : 'EXTRANJERO',
+    actividad_scian: actCod, actividad_pf: actCod, tiene_dueno_ben: db, estado: estVal, pais_dom: paisDomNombre };
   var res = calcEBR(mock);
   var color = res.nivel === 'Alto' ? 'var(--rj)' : res.nivel === 'Medio' ? 'var(--am)' : 'var(--vd,#16a34a)';
   var ct = document.getElementById('ebr-sim-result');
@@ -2618,7 +2617,6 @@ function ebrSimular() {
 }
 
 function guardarEBR() {
-  // Leer umbrales
   var g = function(id, fallback) {
     var el = document.getElementById('ebr-'+id);
     var v = el ? parseFloat(el.value) : NaN;
@@ -2626,49 +2624,36 @@ function guardarEBR() {
   };
   CFG_EBR.umbral_alto  = g('umbral_alto',  70);
   CFG_EBR.umbral_medio = g('umbral_medio', 40);
-  // Leer puntajes por tipo de cliente
   var tipoKeys = ['PF_MEX','PF_EXT','PM_MEX','PM_SIMP','FIDEICOMISO'];
   tipoKeys.forEach(function(k){ CFG_EBR.tipo_cliente[k] = g('tipo_'+k, CFG_EBR.tipo_cliente[k]||0); });
-  // Leer puntajes PEP
   var pepKeys = ['NO APLICA','Inactivo','Vencido','Activo','Familiar','Relacionado a PEP'];
   pepKeys.forEach(function(k){ CFG_EBR.pep[k] = g('pep_'+k.replace(/ /g,'_'), CFG_EBR.pep[k]||0); });
-  // Resto de indicadores
-  CFG_EBR.nacionalidad_ext = g('nacionalidad_ext', 15);
+  CFG_EBR.nacionalidad_ext         = g('nacionalidad_ext', 15);
+  CFG_EBR.puntaje_pais_dom_mx      = g('puntaje_pais_dom_mx', 0);
+  CFG_EBR.puntaje_pais_dom_us      = g('puntaje_pais_dom_us', 0);
+  CFG_EBR.puntaje_pais_dom_ext     = g('puntaje_pais_dom_ext', 10);
   CFG_EBR.dueno_beneficiario['SI'] = g('db_SI', 0);
   CFG_EBR.dueno_beneficiario['NO'] = g('db_NO', 10);
-  CFG_EBR.puntaje_actividad = g('puntaje_actividad', 25);
-  CFG_EBR.puntaje_estado    = g('puntaje_estado', 10);
-  CFG_EBR.puntaje_pais_dom  = g('puntaje_pais_dom', 10);
-  // Leer chips seleccionados
-  function selChips(contenedorId) {
-    var ct = document.getElementById(contenedorId);
-    if (!ct) return [];
+  CFG_EBR.puntaje_actividad        = g('puntaje_actividad', 25);
+  CFG_EBR.puntaje_estado           = g('puntaje_estado', 10);
+  // actividades_alto_riesgo ya se mantiene actualizado en memoria por ebrAgregarActividad/ebrQuitarActividad
+  // estados: leer chips
+  var ct = document.getElementById('est-chips');
+  if (ct) {
     var arr = [];
     ct.querySelectorAll('.ebr-chip.on').forEach(function(el){ arr.push(el.dataset.cod); });
-    return arr;
+    CFG_EBR.estados_alto_riesgo = arr;
   }
-  CFG_EBR.actividades_alto_riesgo  = selChips('scian-chips');
-  CFG_EBR.estados_alto_riesgo      = selChips('est-chips');
-  CFG_EBR.paises_dom_alto_riesgo   = selChips('pais-chips');
-
   var json = JSON.stringify(CFG_EBR);
   localStorage.setItem('ebr_config', json);
-
   spGet('PLD_Config', function(lista) {
-    // Buscar el item CONFIG_SISTEMA (mismo que usa la UMA)
     var item = null;
     (lista||[]).forEach(function(c){ if(c.Title==='CONFIG_SISTEMA'||c.uma_diaria) item=c; });
     var datos = { Title: 'CONFIG_SISTEMA', ebr_config: json, actualizado_por: App.cuenta.username };
     if (item && item.id) {
-      spUpdate('PLD_Config', item.id, datos, function() {
-        toast('Configuracion EBR guardada en SharePoint', 's');
-        pgConfig('ebr');
-      });
+      spUpdate('PLD_Config', item.id, datos, function() { toast('Configuracion EBR guardada','s'); pgConfig('ebr'); });
     } else {
-      spCreate('PLD_Config', datos, function() {
-        toast('Configuracion EBR guardada en SharePoint', 's');
-        pgConfig('ebr');
-      });
+      spCreate('PLD_Config', datos, function() { toast('Configuracion EBR guardada','s'); pgConfig('ebr'); });
     }
   });
 }
@@ -3130,12 +3115,14 @@ function calcEBR(d) {
   var estDom = d.estado || '';
   if (estDom && CFG_EBR.estados_alto_riesgo.length && CFG_EBR.estados_alto_riesgo.indexOf(estDom) >= 0)
     p += CFG_EBR.puntaje_estado || 0;
-  // País del domicilio de alto riesgo (ISO)
+  // País del domicilio — 3 tramos: México / EE.UU. / Resto del mundo
   var paisDom = d.pais_dom || 'MEXICO';
-  if (normPais(paisDom) !== 'MEXICO') {
-    var paisDomISO = paisISO(paisDom);
-    if (CFG_EBR.paises_dom_alto_riesgo.length && CFG_EBR.paises_dom_alto_riesgo.indexOf(paisDomISO) >= 0)
-      p += CFG_EBR.puntaje_pais_dom || 0;
+  if (normPais(paisDom) === 'MEXICO') {
+    p += CFG_EBR.puntaje_pais_dom_mx || 0;
+  } else if (paisISO(paisDom) === 'US') {
+    p += CFG_EBR.puntaje_pais_dom_us || 0;
+  } else {
+    p += CFG_EBR.puntaje_pais_dom_ext || 0;
   }
   var uA = CFG_EBR.umbral_alto  || 70;
   var uM = CFG_EBR.umbral_medio || 40;
@@ -4599,8 +4586,9 @@ var CFG_EBR = {
   puntaje_actividad: 25,
   estados_alto_riesgo: [],
   puntaje_estado: 10,
-  paises_dom_alto_riesgo: [],
-  puntaje_pais_dom: 10,
+  puntaje_pais_dom_mx: 0,
+  puntaje_pais_dom_us: 0,
+  puntaje_pais_dom_ext: 10,
   umbral_alto: 70,
   umbral_medio: 40
 };
