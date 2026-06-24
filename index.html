@@ -1081,7 +1081,7 @@ function limXML(str, maxLen) {
 var LISTAS = {
   estatusC:    ['Activo','Inactivo','Prospecto','Baja','Bloqueado'],
   estatusPEP:  ['NO APLICA','Inactivo','Activo','Vencido','Familiar','Relacionado a PEP'],
-  tiposId:     ['INE / IFE','Pasaporte','Cedula profesional','FM2 / FM3','Acta de nacimiento','Forma Migratoria','Otro'],
+  tiposId:     ['Credencial para votar','Pasaporte','Cedula profesional','FM2 / FM3','Licencia de conducir','Forma Migratoria','Otro'],
   autoridades: ['INE','SRE','SEP','Instituto Nacional de Migracion','Secretaria de Gobernacion','Autoridad extranjera','Otro'],
   actividades: ['Asalariado / Empleado','Profesionista independiente','Comercio al por menor','Comercio al por mayor',
     'Construccion e inmuebles','Servicios financieros','Joyeria y metales preciosos','Arte y antiguedades',
@@ -3231,7 +3231,7 @@ function sanitizeEstadoExt(input) {
 // --- CAMPOS IDENTIFICACION PERSONA FISICA ---
 function htmlIdPF(d, pref, esMexicana) {
   pref = pref||'';
-  var tipoIdLabel = esMexicana?'Tipo de identificacion':'Documento de identificacion / pasaporte';
+  var tipoIdLabel = esMexicana?'Nombre de la identificacion':'Documento de identificacion / pasaporte';
   var btnOCR = esMexicana
     ? '<div style="grid-column:1/-1;margin-bottom:4px;display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg2);border:1px dashed var(--brd);border-radius:8px;flex-wrap:wrap">'
       +'<span style="font-size:20px">📄</span>'
@@ -3240,7 +3240,7 @@ function htmlIdPF(d, pref, esMexicana) {
       +'<label class="btn btn-p" style="cursor:pointer;font-size:12px;white-space:nowrap">📋 Constancia CURP'
       +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
       +'onchange="iniciarLecturaCURP(this,\''+pref+'\',false)"></label>'
-      +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap">🪪 INE / IFE'
+      +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap">🪪 Credencial para votar'
       +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
       +'onchange="iniciarLecturaCURP(this,\''+pref+'\',true)"></label>'
       +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap">🧾 Const. SAT'
@@ -3261,7 +3261,6 @@ function htmlIdPF(d, pref, esMexicana) {
     +(esMexicana?fg('CURP',pref+'curp',false)+fi(pref+'curp',d[pref+'curp']||'','18 caracteres','mono'):'')
     +fg(tipoIdLabel,pref+'tipo_id',true)+fs(pref+'tipo_id',opts(LISTAS.tiposId,d[pref+'tipo_id']||''))
     +fg('Numero de identificacion',pref+'num_id',true)+fi(pref+'num_id',d[pref+'num_id']||'','')
-    +fg('Nombre de la identificacion',pref+'nombre_id',false)+fi(pref+'nombre_id',d[pref+'nombre_id']||'','Ej: Credencial INE')
     +fg('Autoridad que la emite',pref+'autoridad_id',true)+fs(pref+'autoridad_id',opts(LISTAS.autoridades,d[pref+'autoridad_id']||''))
     +fg('Numero(s) de telefono',pref+'telefono',true)+fi(pref+'telefono',d[pref+'telefono']||'','10 digitos')
     +fg('Correo electronico',pref+'email',false)+fi(pref+'email',d[pref+'email']||'','correo@dominio.com')
@@ -3296,9 +3295,8 @@ function htmlDuenoBen(d) {
     +fg('Pais de nacionalidad',null,true)+'<select class="sel" name="db_pais_nac2">'+optsPais(d.db_pais_nac2||'Mexico')+'</select></div>'
     +fg('RFC',null,false)+fi('db_rfc',d.db_rfc||'','XXXX000000XX0','mono')
     +fg('CURP',null,false)+fi('db_curp',d.db_curp||'','18 caracteres','mono')
-    +fg('Tipo de identificacion',null,true)+'<select class="sel" name="db_tipo_id">'+opts(LISTAS.tiposId,d.db_tipo_id||'')+'</select></div>'
+    +fg('Nombre de la identificacion',null,true)+'<select class="sel" name="db_tipo_id">'+opts(LISTAS.tiposId,d.db_tipo_id||'')+'</select></div>'
     +fg('Numero de identificacion',null,true)+fi('db_num_id',d.db_num_id||'','')
-    +fg('Nombre de la identificacion',null,false)+fi('db_nombre_id',d.db_nombre_id||'','Ej: Credencial INE')
     +fg('Autoridad que la emite',null,true)+'<select class="sel" name="db_autoridad_id">'+opts(LISTAS.autoridades,d.db_autoridad_id||'')+'</select></div>'
     +fg('Telefono',null,false)+fi('db_telefono',d.db_telefono||'','10 digitos')
     +fg('Correo electronico',null,false)+fi('db_email',d.db_email||'','correo@dominio.com')
@@ -3440,9 +3438,8 @@ function htmlFormPM_MEX(d) {
     +fg('CURP del representante',null,false)+fi('rl_curp',d.rl_curp||'','18 caracteres','mono')
     +fg('Pais de nacimiento',null,true)+fs('rl_pais_nac',optsPais(d.rl_pais_nac||'Mexico'))
     +fg('Pais de nacionalidad',null,true)+fs('rl_pais_nac2',optsPais(d.rl_pais_nac2||'Mexico'))
-    +fg('Tipo de identificacion',null,true)+fs('rl_tipo_id',opts(LISTAS.tiposId,d.rl_tipo_id||''))
+    +fg('Nombre de la identificacion',null,true)+fs('rl_tipo_id',opts(LISTAS.tiposId,d.rl_tipo_id||''))
     +fg('Numero de identificacion',null,true)+fi('rl_num_id',d.rl_num_id||'','')
-    +fg('Nombre de la identificacion',null,false)+fi('rl_nombre_id',d.rl_nombre_id||'','Ej: Credencial INE')
     +fg('Autoridad que la emite',null,true)+fs('rl_autoridad_id',opts(LISTAS.autoridades,d.rl_autoridad_id||''))
     +fg('Telefono del representante',null,false)+fi('rl_telefono',d.rl_telefono||'','10 digitos')
     +'</div></div>'
@@ -3492,9 +3489,8 @@ function htmlFormPM_SIMP(d) {
     +fg('Fecha de nacimiento',null,true)+fi('rl_fecha_nac',d.rl_fecha_nac||'','DD-MM-AAAA')
     +fg('RFC',null,false)+fi('rl_rfc',d.rl_rfc||'','','mono')
     +fg('CURP',null,false)+fi('rl_curp',d.rl_curp||'','','mono')
-    +fg('Tipo de identificacion',null,true)+fs('rl_tipo_id',opts(LISTAS.tiposId,d.rl_tipo_id||''))
+    +fg('Nombre de la identificacion',null,true)+fs('rl_tipo_id',opts(LISTAS.tiposId,d.rl_tipo_id||''))
     +fg('Numero de identificacion',null,true)+fi('rl_num_id',d.rl_num_id||'','')
-    +fg('Nombre de la identificacion',null,false)+fi('rl_nombre_id',d.rl_nombre_id||'','')
     +fg('Autoridad que la emite',null,true)+fs('rl_autoridad_id',opts(LISTAS.autoridades,d.rl_autoridad_id||''))
     +'</div></div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Domicilio</span></div>'
@@ -3552,9 +3548,8 @@ function htmlFormFIDEICOMISO(d) {
     +fg('Pais de nacionalidad',null,true)+fs('df_pais_nac2',optsPais(d.df_pais_nac2||'Mexico'))
     +fg('RFC del delegado',null,false)+fi('df_rfc',d.df_rfc||'','','mono')
     +fg('CURP del delegado',null,false)+fi('df_curp',d.df_curp||'','','mono')
-    +fg('Tipo de identificacion',null,true)+fs('df_tipo_id',opts(LISTAS.tiposId,d.df_tipo_id||''))
+    +fg('Nombre de la identificacion',null,true)+fs('df_tipo_id',opts(LISTAS.tiposId,d.df_tipo_id||''))
     +fg('Numero de identificacion',null,true)+fi('df_num_id',d.df_num_id||'','')
-    +fg('Nombre de la identificacion',null,false)+fi('df_nombre_id',d.df_nombre_id||'','Ej: Credencial INE')
     +fg('Autoridad que la emite',null,true)+fs('df_autoridad_id',opts(LISTAS.autoridades,d.df_autoridad_id||''))
     +fg('Telefono del delegado',null,false)+fi('df_telefono',d.df_telefono||'','10 digitos')
     +'</div></div>'
@@ -3603,9 +3598,8 @@ function htmlBC(bc, idx) {
     +fg('Pais de nacionalidad',null,true)+'<select class="sel" name="bc_'+idx+'_pais_nac2">'+optsPais(bc.pais_nac2||'Mexico')+'</select></div>'
     +fg('RFC',null,false)+fi('bc_'+idx+'_rfc',bc.rfc||'','','mono')
     +fg('CURP',null,false)+fi('bc_'+idx+'_curp',bc.curp||'','','mono')
-    +fg('Tipo de identificacion',null,true)+'<select class="sel" name="bc_'+idx+'_tipo_id">'+oTiposId+'</select></div>'
+    +fg('Nombre de la identificacion',null,true)+'<select class="sel" name="bc_'+idx+'_tipo_id">'+oTiposId+'</select></div>'
     +fg('Numero de identificacion',null,true)+fi('bc_'+idx+'_num_id',bc.num_id||'','')
-    +fg('Nombre de la identificacion',null,false)+fi('bc_'+idx+'_nombre_id',bc.nombre_id||'','')
     +fg('Autoridad que la emite',null,true)+'<select class="sel" name="bc_'+idx+'_autoridad_id">'+opts(LISTAS.autoridades,bc.autoridad_id||'')+'</select></div>'
     +fg('Porcentaje de participacion (%)',null,false)+fi('bc_'+idx+'_pct',bc.pct||'','0-100')
     +ftxt('Como ejerce el control (descripcion)','bc_'+idx+'_control',bc.control||'')
@@ -3847,8 +3841,8 @@ function renderDatosGenerales(c) {
       fcHtml('Nombre completo',[c.nombre,c.ap_pat,c.ap_mat].filter(Boolean).join(' '))
       +fcHtml('RFC',c.rfc)+fcHtml('CURP',c.curp)+fcHtml('Fecha de nacimiento',c.fecha_nac)
       +fcHtml('Pais de nacimiento',c.pais_nac)+fcHtml('Pais de nacionalidad',c.pais_nac2)
-      +fcHtml('Tipo de identificacion',c.tipo_id)+fcHtml('No. identificacion',c.num_id)
-      +fcHtml('Nombre de la identificacion',c.nombre_id)+fcHtml('Autoridad que la emite',c.autoridad_id)
+      +fcHtml('Nombre de la identificacion',c.tipo_id)+fcHtml('No. identificacion',c.num_id)
+      +fcHtml('Autoridad que la emite',c.autoridad_id)
       +fcHtml('Telefono',c.telefono)+fcHtml('Correo electronico',c.email)
       +fcHtml('Actividad economica',actPFLabel(c.actividad_pf)||c.actividad)+fcHtml('Estatus PEP',c.estatus_pep)
       +fcHtml('Es apoderado',c.es_apoderado));
@@ -3856,8 +3850,8 @@ function renderDatosGenerales(c) {
     campos = fgHtml(
       fcHtml('Nombre completo',[c.nombre,c.ap_pat,c.ap_mat].filter(Boolean).join(' '))
       +fcHtml('Fecha de nacimiento',c.fecha_nac)+fcHtml('Pais de nacimiento',c.pais_nac)
-      +fcHtml('Pais de nacionalidad',c.pais_nac2)+fcHtml('Tipo de identificacion',c.tipo_id)
-      +fcHtml('No. identificacion',c.num_id)+fcHtml('Nombre de la identificacion',c.nombre_id)
+      +fcHtml('Pais de nacionalidad',c.pais_nac2)+fcHtml('Nombre de la identificacion',c.tipo_id)
+      +fcHtml('No. identificacion',c.num_id)
       +fcHtml('Autoridad que la emite',c.autoridad_id)+fcHtml('Condicion migratoria',c.condicion_migratoria)
       +fcHtml('No. forma migratoria',c.num_forma_migratoria)+fcHtml('Telefono',c.telefono)
       +fcHtml('Correo electronico',c.email)+fcHtml('Actividad economica',actPFLabel(c.actividad_pf)||c.actividad)
@@ -3867,7 +3861,7 @@ function renderDatosGenerales(c) {
       fcHtml('Razon social',c.razon_social)+fcHtml('RFC',c.rfc)
       +fcHtml('Fecha de constitucion',c.fecha_const)+fcHtml('Pais de nacionalidad',c.pais_nac)
       +fcHtml('Giro mercantil',giroPMLabel(c.actividad_scian)||c.actividad)+fcHtml('Telefono',c.telefono)
-      +fcHtml('Correo electronico',c.email)+fcHtml('Tipo de identificacion',c.tipo_id)
+      +fcHtml('Correo electronico',c.email)+fcHtml('Nombre de la identificacion',c.tipo_id)
       +fcHtml('No. identificacion',c.num_id)+fcHtml('Autoridad',c.autoridad_id)
       +fcHtml('Estatus PEP',c.estatus_pep));
   } else if (c.tipo==='PM_SIMP') {
@@ -3904,8 +3898,8 @@ function renderRL(c) {
     fcHtml('Nombre completo',[c.rl_nombre,c.rl_ap_pat,c.rl_ap_mat].filter(Boolean).join(' '))
     +fcHtml('Fecha de nacimiento',c.rl_fecha_nac)+fcHtml('Pais de nacimiento',c.rl_pais_nac)
     +fcHtml('Pais de nacionalidad',c.rl_pais_nac2)+fcHtml('RFC',c.rl_rfc)+fcHtml('CURP',c.rl_curp)
-    +fcHtml('Tipo de identificacion',c.rl_tipo_id)+fcHtml('No. identificacion',c.rl_num_id)
-    +fcHtml('Nombre de la identificacion',c.rl_nombre_id)+fcHtml('Autoridad que la emite',c.rl_autoridad_id)
+    +fcHtml('Nombre de la identificacion',c.rl_tipo_id)+fcHtml('No. identificacion',c.rl_num_id)
+    +fcHtml('Autoridad que la emite',c.rl_autoridad_id)
     +fcHtml('Telefono',c.rl_telefono));
 }
 
@@ -3918,8 +3912,8 @@ function renderBCS(bcs) {
         fcHtml('Nombre completo',[bc.nombre,bc.ap_pat,bc.ap_mat].filter(Boolean).join(' '))
         +fcHtml('Fecha de nacimiento',bc.fecha_nac)+fcHtml('Pais de nacimiento',bc.pais_nac)
         +fcHtml('Pais de nacionalidad',bc.pais_nac2)+fcHtml('RFC',bc.rfc)+fcHtml('CURP',bc.curp)
-        +fcHtml('Tipo de identificacion',bc.tipo_id)+fcHtml('No. identificacion',bc.num_id)
-        +fcHtml('Nombre de la identificacion',bc.nombre_id)+fcHtml('Autoridad',bc.autoridad_id)
+        +fcHtml('Nombre de la identificacion',bc.tipo_id)+fcHtml('No. identificacion',bc.num_id)
+        +fcHtml('Autoridad',bc.autoridad_id)
         +fcHtml('% participacion',bc.pct?bc.pct+'%':'')
         +fcHtml('Como ejerce el control',bc.control))
       +'</div></div>';
@@ -3942,8 +3936,8 @@ function renderDF(c) {
     fcHtml('Nombre completo',[c.df_nombre,c.df_ap_pat,c.df_ap_mat].filter(Boolean).join(' '))
     +fcHtml('Fecha de nacimiento',c.df_fecha_nac)+fcHtml('Pais de nacimiento',c.df_pais_nac)
     +fcHtml('Pais de nacionalidad',c.df_pais_nac2)+fcHtml('RFC',c.df_rfc)+fcHtml('CURP',c.df_curp)
-    +fcHtml('Tipo de identificacion',c.df_tipo_id)+fcHtml('No. identificacion',c.df_num_id)
-    +fcHtml('Nombre de la identificacion',c.df_nombre_id)+fcHtml('Autoridad que la emite',c.df_autoridad_id)
+    +fcHtml('Nombre de la identificacion',c.df_tipo_id)+fcHtml('No. identificacion',c.df_num_id)
+    +fcHtml('Autoridad que la emite',c.df_autoridad_id)
     +fcHtml('Telefono',c.df_telefono));
 }
 
@@ -4051,8 +4045,8 @@ function renderDuenBen(c) {
         fcHtml('Nombre completo',[c.db_nombre,c.db_ap_pat,c.db_ap_mat].filter(Boolean).join(' '))
         +fcHtml('Fecha de nacimiento',c.db_fecha_nac)+fcHtml('Pais de nacimiento',c.db_pais_nac)
         +fcHtml('Pais de nacionalidad',c.db_pais_nac2)+fcHtml('RFC',c.db_rfc)+fcHtml('CURP',c.db_curp)
-        +fcHtml('Tipo de identificacion',c.db_tipo_id)+fcHtml('No. identificacion',c.db_num_id)
-        +fcHtml('Nombre de la identificacion',c.db_nombre_id)+fcHtml('Autoridad',c.db_autoridad_id)
+        +fcHtml('Nombre de la identificacion',c.db_tipo_id)+fcHtml('No. identificacion',c.db_num_id)
+        +fcHtml('Autoridad',c.db_autoridad_id)
         +fcHtml('Telefono',c.db_telefono)+fcHtml('Correo',c.db_email)
         +fcHtml('Actividad',c.db_actividad)+fcHtml('Como ejerce el control/beneficio',c.db_como_controla))
       +'</div></div>';
