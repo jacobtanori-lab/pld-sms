@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PLD Corporativo SMS</title>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Nunito:wght@400;500;600;700&family=Inter:wght@400;500;600&family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
 <!-- MSAL incrustado directamente (sin dependencia de CDN) -->
 <script>
 /*! @azure/msal-browser v2.38.3 2023-10-27 */
@@ -306,9 +306,12 @@ var LOGOS_ENTIDADES = {
 };
 
 var ENTIDADES = [
-  {id:'CIN', nombre:'Corporativo Industrial Nexxus, SA de CV',  rfc:'', actividad_vulnerable:''},
-  {id:'VAI', nombre:'Vali Asesores Inmobiliarios SA de CV',              rfc:'', actividad_vulnerable:''},
-  {id:'ITM', nombre:'Inmobiliaria Torre M, SA de CV',          rfc:'', actividad_vulnerable:''}
+  {id:'CIN', nombre:'Corporativo Industrial Nexxus, SA de CV',  rfc:'', actividad_vulnerable:'',
+   tema:{az:'#1a4080',az2:'#1e56b0',az3:'#dce8f8',font:"'DM Sans',sans-serif"}},
+  {id:'VAI', nombre:'Vali Asesores Inmobiliarios SA de CV',     rfc:'', actividad_vulnerable:'',
+   tema:{az:'#1a4080',az2:'#1e56b0',az3:'#dce8f8',font:"'DM Sans',sans-serif"}},
+  {id:'ITM', nombre:'Inmobiliaria Torre M, SA de CV',           rfc:'', actividad_vulnerable:'',
+   tema:{az:'#1B4E8F',az2:'#2563ae',az3:'#ddeaf8',font:"'Nunito',sans-serif"}}
 ];
 
 // Usuarios globales (Oficial de Cumplimiento) — ven todas las entidades
@@ -1434,6 +1437,7 @@ function seleccionarEntidad(id) {
   document.getElementById('layout').style.display = 'flex';
   var be = document.getElementById('brand-entidad');
   if (be) be.textContent = App.entidadActual.nombre;
+  aplicarTema(App.entidadActual);
   actualizarBrandLogo(App.entidadActual.id);
   renderNav();
   cargarConfigUMA();
@@ -1447,10 +1451,21 @@ function verTodasEntidades() {
   document.getElementById('layout').style.display = 'flex';
   var be = document.getElementById('brand-entidad');
   if (be) be.textContent = 'Vista consolidada';
+  aplicarTema(null);
   actualizarBrandLogo(null);
   renderNav();
   cargarConfigUMA();
   irA('dashboard');
+}
+
+var TEMA_DEFAULT = {az:'#1a4080',az2:'#1e56b0',az3:'#dce8f8',font:"'DM Sans',sans-serif"};
+function aplicarTema(ent) {
+  var t = (ent && ent.tema) ? ent.tema : TEMA_DEFAULT;
+  var r = document.documentElement.style;
+  r.setProperty('--az',  t.az);
+  r.setProperty('--az2', t.az2);
+  r.setProperty('--az3', t.az3);
+  r.setProperty('--f',   t.font);
 }
 
 function actualizarBrandLogo(entidadId) {
@@ -1513,6 +1528,7 @@ function iniciarApp() {
           App.entidadActual = ENTIDADES[0];
           var be2 = document.getElementById('brand-entidad');
           if (be2) be2.textContent = App.entidadActual.nombre;
+          aplicarTema(App.entidadActual);
           actualizarBrandLogo(App.entidadActual.id);
           renderNav();
           cargarConfigUMA();
