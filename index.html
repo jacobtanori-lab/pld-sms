@@ -276,7 +276,10 @@ var MSAL_CONFIG = {
 var SP_SITE = 'nexxusonline.sharepoint.com';
 var SP_PATH = '/sites/PLDCorporativoSMS';
 var GRAPH   = 'https://graph.microsoft.com/v1.0';
-var SCOPES  = ['User.Read','Mail.Send','Sites.ReadWrite.All','Files.ReadWrite.All'];
+var SCOPES  = ['User.Read','Sites.ReadWrite.All','Files.ReadWrite.All'];
+// Mail.Send se solicita por separado (consentimiento incremental) solo al enviar correo,
+// para no bloquear el login mientras un admin de Entra otorga el consentimiento.
+var SCOPES_MAIL = ['Mail.Send'];
 
 var msalApp = null;
 function initMsal() {
@@ -6215,20 +6218,35 @@ function scrAlertarCliente(nombreCliente, idCli, numCli) {
 // ================================================================
 
 // Envía un correo vía Microsoft Graph (sendMail) desde el buzón del usuario conectado.
+// Obtiene un token con permiso Mail.Send de forma silenciosa (consentimiento incremental).
+// Si aún no hay consentimiento del admin de Entra, falla silenciosamente y el correo se omite.
+function _tokenMail(cb) {
+  if (!msalApp || !App.cuenta) { cb(null); return; }
+  msalApp.acquireTokenSilent({ scopes: SCOPES_MAIL, account: App.cuenta })
+    .then(function(r){ cb(r.accessToken); })
+    .catch(function(){ cb(null); });
+}
+
 function enviarCorreo(destinatarios, asunto, cuerpoHtml, cb) {
   var tos = (destinatarios || []).filter(Boolean).map(function(e){ return {emailAddress:{address:e}}; });
   if (!tos.length) { if(cb) cb(false); return; }
   var payload = { message: { subject: asunto,
     body: { contentType: 'HTML', content: cuerpoHtml },
     toRecipients: tos }, saveToSentItems: true };
-  fetch(GRAPH+'/me/sendMail', {
-    method:'POST',
-    headers:{'Authorization':'Bearer '+App.token,'Content-Type':'application/json'},
-    body: JSON.stringify(payload)
-  }).then(function(r){
-    if (r.status === 202 || r.ok) { if(cb) cb(true); }
-    else { r.json().then(function(d){ console.warn('[MAIL] error', d); }).catch(function(){}); if(cb) cb(false); }
-  }).catch(function(e){ console.warn('[MAIL] fallo', e); if(cb) cb(false); });
+  _tokenMail(function(tokenMail){
+    if (!tokenMail) {
+      console.warn('[MAIL] sin permiso Mail.Send (falta consentimiento del admin de Entra); correo omitido');
+      if (cb) cb(false); return;
+    }
+    fetch(GRAPH+'/me/sendMail', {
+      method:'POST',
+      headers:{'Authorization':'Bearer '+tokenMail,'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    }).then(function(r){
+      if (r.status === 202 || r.ok) { if(cb) cb(true); }
+      else { r.json().then(function(d){ console.warn('[MAIL] error', d); }).catch(function(){}); if(cb) cb(false); }
+    }).catch(function(e){ console.warn('[MAIL] fallo', e); if(cb) cb(false); });
+  });
 }
 
 // Destinatarios de los correos de aprobación: asesor del cliente + administradores
