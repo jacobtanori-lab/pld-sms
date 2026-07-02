@@ -1218,6 +1218,23 @@ function mostrarSelectorEntidad() {
     +'</div></div>';
 }
 
+// Autoconversión a MAYÚSCULAS al teclear datos del cliente (excepto correo electrónico)
+document.addEventListener('input', function(ev) {
+  var el = ev.target;
+  if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) return;
+  if (el.type && ['date','file','number','email','checkbox','radio'].indexOf(el.type) >= 0) return;
+  // Solo dentro del formulario de expediente de cliente
+  var frm = el.closest ? el.closest('#frm') : null;
+  if (!frm) return;
+  var n = (el.name || '').toLowerCase();
+  if (n.indexOf('email') >= 0 || n.indexOf('correo') >= 0) return; // respetar correos
+  var up = el.value.toUpperCase();
+  if (up === el.value) return;
+  var s = el.selectionStart, e = el.selectionEnd;
+  el.value = up;
+  try { el.setSelectionRange(s, e); } catch(err) {}
+}, true);
+
 // Event delegation para cards de entidad (evita comillas anidadas)
 // Listener para cambios en inputs de archivo (acuse SAT)
 document.addEventListener('change', function(ev) {
@@ -3362,7 +3379,7 @@ function htmlDuenoBen(d) {
     +fg('Autoridad que la emite',null,true)+'<select class="sel" name="db_autoridad_id">'+opts(LISTAS.autoridades,d.db_autoridad_id||'')+'</select></div>'
     +fg('Telefono',null,false)+fi('db_telefono',d.db_telefono||'','10 digitos')
     +fg('Correo electronico',null,false)+fi('db_email',d.db_email||'','correo@dominio.com')
-    +fg('Actividad / ocupacion',null,false)+'<select class="sel" name="db_actividad">'+opts(LISTAS.actividades,d.db_actividad||'')+'</select></div>'
+    +fg('Actividad economica (catalogo SAT)',null,false)+'<select class="sel" name="db_actividad">'+optsActPF(d.db_actividad||'1000000')+'</select></div>'
     +secHdr('Como ejerce el control o beneficio')
     +ftxt('Descripcion de como obtiene el beneficio o ejerce el control (Art. 3 Fr. IV RCG)','db_como_controla',d.db_como_controla||'')
     +'</div></div>'
@@ -3779,6 +3796,24 @@ function submitCliente(tipo, idEx) {
 
   if (tipo === 'PM_MEX') datos.beneficiarios = recogerBCs();
 
+  // ── Normalizar a MAYÚSCULAS los campos de texto (no selects, no correos) ──
+  function esCorreo(k){ k=(k||'').toLowerCase(); return k.indexOf('email')>=0 || k.indexOf('correo')>=0; }
+  frm.querySelectorAll('input.inp, textarea.txa').forEach(function(el){
+    if (!el.name || el.name.indexOf('bc_')===0) return;
+    if (el.type && ['date','file','number','email'].indexOf(el.type)>=0) return;
+    if (esCorreo(el.name)) return;
+    if (typeof datos[el.name] === 'string') datos[el.name] = datos[el.name].toUpperCase();
+  });
+  // Beneficiarios controladores (mismos criterios; sus selects no se tocan)
+  if (datos.beneficiarios && datos.beneficiarios.length) {
+    var camposBCNoUpper = {tipo_id:1, autoridad_id:1, pais_nac:1, pais_nac2:1};
+    datos.beneficiarios.forEach(function(bc){
+      Object.keys(bc).forEach(function(k){
+        if (typeof bc[k]==='string' && !esCorreo(k) && !camposBCNoUpper[k]) bc[k] = bc[k].toUpperCase();
+      });
+    });
+  }
+
   // ── Validaciones ───────────────────────────────────────────
   var val = validarCliente(frm, datos, tipo);
   if (val.bloqueantes.length) {
@@ -4184,7 +4219,7 @@ function renderDuenBen(c) {
         +fcHtml('Nombre de la identificacion',c.db_tipo_id)+fcHtml('No. identificacion',c.db_num_id)
         +fcHtml('Autoridad',c.db_autoridad_id)
         +fcHtml('Telefono',c.db_telefono)+fcHtml('Correo',c.db_email)
-        +fcHtml('Actividad',c.db_actividad)+fcHtml('Como ejerce el control/beneficio',c.db_como_controla))
+        +fcHtml('Actividad economica',actPFLabel(c.db_actividad)||c.db_actividad)+fcHtml('Como ejerce el control/beneficio',c.db_como_controla))
       +'</div></div>';
   }
   return base;
