@@ -4545,10 +4545,6 @@ function renderFichaAlerta(a) {
     +'</div>'
     +'<div style="display:flex;gap:8px">'
     +(esUmbral?'<button class="btn btn-p crear-aviso-btn" data-altid="'+a.id+'">Crear aviso</button>':'')
-    +((a.requiere_aprobacion && App.rol==='admin' && (a.aprobacion_estado||'Pendiente')==='Pendiente')
-       ? '<button class="btn btn-p" style="background:var(--vd);border-color:var(--vd)" onclick="aprobarCliente(\''+a.id+'\')">✓ Aprobar cliente</button>'
-         +'<button class="btn" style="color:var(--rj);border-color:var(--rj)" onclick="rechazarClienteModificar(\''+a.id+'\')">Rechazar para modificar</button>'
-       : '')
     +'<button class="btn" onclick="pgAlertas()">Volver</button>'
     +'</div></div>'
 
@@ -4565,8 +4561,45 @@ function renderFichaAlerta(a) {
     +fcHtml('Fecha registro',String(a.fecha_registro||'-').substring(0,10))
     +'</div></div></div>'
 
-    // Sección de atención
-    +'<div class="card"><div class="card-h"><span class="card-t">Atencion y seguimiento</span></div>'
+    // Sección de atención — distinta para alertas de aprobación vs umbral/otras
+    + (a.requiere_aprobacion ? seccionAprobacionAlerta(a) : seccionAtencionAlerta(a));
+
+  setMain(html);
+}
+
+// Sección para alertas de APROBACIÓN de cliente (riesgo alto / screening)
+function seccionAprobacionAlerta(a) {
+  var est = a.aprobacion_estado || 'Pendiente';
+  var pill = est==='Aprobado'?'p-vd':est==='Rechazado'?'p-rj':'p-am';
+  var puedeAprobar = App.rol==='admin' && est==='Pendiente';
+  var h = '<div class="card"><div class="card-h"><span class="card-t">Aprobación del cliente</span>'
+    +'<span class="pill '+pill+'" style="margin-left:8px">'+est+'</span></div>'
+    +'<div class="card-b"><div class="fg2">'
+    +fcHtml('Motivo de validación', a.descripcion)
+    +fcHtml('Asesor comercial', a.asesor_nombre||'')
+    +(a.comentario_aprobacion?fcHtml('Comentario de resolución', a.comentario_aprobacion):'')
+    +(a.resuelto_por?fcHtml('Resuelto por', a.resuelto_por):'')
+    +'</div>';
+  if (puedeAprobar) {
+    h += '<div class="fgrid" style="margin-top:10px">'
+      +'<div class="fg full"><label class="lbl">Comentario de aprobación / resolución <span class="req">*</span></label>'
+      +'<textarea class="txa" id="apr-comentario" rows="3" placeholder="Fundamento de la decisión (obligatorio)"></textarea></div>'
+      +'<div class="fg full" style="display:flex;justify-content:flex-end;gap:8px">'
+      +'<button class="btn" style="color:var(--rj);border-color:var(--rj)" onclick="rechazarClienteModificar(\''+a.id+'\')">Rechazar para modificar</button>'
+      +'<button class="btn btn-p" style="background:var(--vd);border-color:var(--vd)" onclick="aprobarCliente(\''+a.id+'\')">✓ Aprobar y activar cliente</button>'
+      +'</div>'
+      +'<p style="font-size:11px;color:var(--tx3)">Al aprobar se solicitará autenticar nuevamente tu identidad. La alerta quedará CERRADA.</p>'
+      +'</div>';
+  } else if (App.rol!=='admin' && est==='Pendiente') {
+    h += '<p style="font-size:12px;color:var(--tx3);margin-top:8px">Solo un administrador puede aprobar o rechazar este expediente.</p>';
+  }
+  h += '</div></div>';
+  return h;
+}
+
+// Sección de atención estándar (umbral / otras): folio y acuse SAT
+function seccionAtencionAlerta(a) {
+  return '<div class="card"><div class="card-h"><span class="card-t">Atencion y seguimiento</span></div>'
     +'<div class="fgrid">'
     +fg('Estatus de atencion',null,true)
     +'<select class="sel" name="alt-estatus-at" class="alt-status-sel" data-altid="'+a.id+'">'
@@ -4586,8 +4619,6 @@ function renderFichaAlerta(a) {
     +'<button class="btn btn-p" class="grd-atencion-btn" data-altid="'+ a.id +'">Guardar cambios</button>'
     +'</div>'
     +'</div></div>';
-
-  setMain(html);
 }
 
 function cambiarEstatusAlerta(id, estatus) {
@@ -6354,24 +6385,43 @@ function crearAlertaAprobacion(datos, evalRes) {
   spCreate('PLD_Alertas', alerta, null);
 }
 
+// Solicita re-autenticación (paso de verificación) antes de una acción sensible.
+function reautenticar(cb) {
+  if (!msalApp || !App.cuenta) { cb(false); return; }
+  toast('Confirma tu identidad para continuar...','i');
+  msalApp.acquireTokenPopup({ scopes: SCOPES, account: App.cuenta, prompt: 'login' })
+    .then(function(r){ if (r && r.accessToken) { App.token = r.accessToken; cb(true); } else cb(false); })
+    .catch(function(err){ console.warn('[REAUTH] cancelado/fallo', err); cb(false); });
+}
+
 // El administrador aprueba el cliente ligado a una alerta de aprobación.
 function aprobarCliente(alertaId) {
   if (App.rol !== 'admin') { toast('Solo un administrador puede aprobar','e'); return; }
+  var comEl = document.getElementById('apr-comentario');
+  var comentario = comEl ? comEl.value.trim() : '';
+  if (!comentario) { toast('Escribe un comentario de aprobación (obligatorio)','e'); if(comEl) comEl.focus(); return; }
   spGet('PLD_Alertas', function(listaAlt) {
     var a = null; listaAlt.forEach(function(x){ if(String(x.id)===String(alertaId)) a=x; });
     if (!a) { toast('Alerta no encontrada','e'); return; }
-    var idCli = a.id_cliente_ref;
     spGet('PLD_Clientes', function(listaCli) {
       var cli = null;
-      listaCli.forEach(function(c){ if(String(c.id)===String(idCli) || (a.num_cliente && String(c.num_cliente)===String(a.num_cliente))) cli=c; });
+      listaCli.forEach(function(c){ if(String(c.id)===String(a.id_cliente_ref) || (a.num_cliente && String(c.num_cliente)===String(a.num_cliente))) cli=c; });
       if (!cli) { toast('Cliente no encontrado','e'); return; }
       if (!confirm('¿Aprobar y ACTIVAR al cliente "' + nombreClienteDatos(cli) + '"?')) return;
-      spPatch('PLD_Clientes', cli.id, { aprobacion:'Aprobado', estatus:'Activo' }, function(){
-        spPatch('PLD_Alertas', a.id, { aprobacion_estado:'Aprobado', estatus_atencion:'Aprobada', estatus:'Cerrada' }, function(){
-          cli.aprobacion='Aprobado'; cli.estatus='Activo';
-          correoAprobado(cli);
-          toast('Cliente aprobado y activado. Se notificó por correo.','s');
-          pgAlertas();
+      // Paso de verificación: re-autenticar antes de aprobar
+      reautenticar(function(ok){
+        if (!ok) { toast('Aprobación cancelada: no se verificó la identidad','e'); return; }
+        var quien = App.cuenta ? (App.cuenta.name || App.cuenta.username) : '';
+        spPatch('PLD_Clientes', cli.id, { aprobacion:'Aprobado', estatus:'Activo' }, function(){
+          spPatch('PLD_Alertas', a.id, {
+            aprobacion_estado:'Aprobado', estatus_atencion:'Cerrada', estatus:'Cerrada',
+            comentario_aprobacion: comentario, resuelto_por: quien, fecha_resolucion: hoy()
+          }, function(){
+            cli.aprobacion='Aprobado'; cli.estatus='Activo';
+            correoAprobado(cli);
+            toast('Cliente aprobado y activado. Alerta CERRADA. Se notificó por correo.','s');
+            pgAlertas();
+          });
         });
       });
     });
@@ -6389,8 +6439,14 @@ function rechazarClienteModificar(alertaId) {
       listaCli.forEach(function(c){ if(String(c.id)===String(a.id_cliente_ref) || (a.num_cliente && String(c.num_cliente)===String(a.num_cliente))) cli=c; });
       if (!cli) { toast('Cliente no encontrado','e'); return; }
       if (!confirm('¿Rechazar para modificar el expediente de "' + nombreClienteDatos(cli) + '"? Se desbloqueará su edición.')) return;
+      var comEl = document.getElementById('apr-comentario');
+      var comentario = comEl ? comEl.value.trim() : '';
+      var quien = App.cuenta ? (App.cuenta.name || App.cuenta.username) : '';
       spPatch('PLD_Clientes', cli.id, { aprobacion:'Rechazado' }, function(){
-        spPatch('PLD_Alertas', a.id, { aprobacion_estado:'Rechazado', estatus_atencion:'Devuelta' }, function(){
+        spPatch('PLD_Alertas', a.id, {
+          aprobacion_estado:'Rechazado', estatus_atencion:'Cerrada', estatus:'Cerrada',
+          comentario_aprobacion: comentario, resuelto_por: quien, fecha_resolucion: hoy()
+        }, function(){
           cli.aprobacion='Rechazado';
           correoRechazado(cli);
           toast('Expediente devuelto para corrección. Se notificó al asesor.','w');
