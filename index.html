@@ -276,7 +276,7 @@ var MSAL_CONFIG = {
 var SP_SITE = 'nexxusonline.sharepoint.com';
 var SP_PATH = '/sites/PLDCorporativoSMS';
 var GRAPH   = 'https://graph.microsoft.com/v1.0';
-var SCOPES  = ['User.Read','Sites.ReadWrite.All','Files.ReadWrite.All'];
+var SCOPES  = ['User.Read','Mail.Send','Sites.ReadWrite.All','Files.ReadWrite.All'];
 
 var msalApp = null;
 function initMsal() {
@@ -3196,6 +3196,11 @@ function iniciarForm(tipo, datos) {
     toast('Selecciona una entidad específica para crear un expediente', 'e');
     return;
   }
+  // Candado: no editar clientes en validación (pendientes de aprobación)
+  if (datos && datos.aprobacion === 'Pendiente') {
+    toast('El expediente está en validación. Un administrador debe aprobarlo o rechazarlo para modificar.', 'e');
+    return;
+  }
   cerrarMo('mo-tipo');
   setMain(htmlFormBase(tipo, datos||{}));
 }
@@ -3839,6 +3844,24 @@ function submitCliente(tipo, idEx) {
   datos.riesgo = riesgo.nivel;
   datos.puntaje_ebr = riesgo.puntaje;
 
+  // ── Rutina de aprobación: solo si los datos están completos ──
+  // Dispara si el cliente es riesgo alto o coincide en screening.
+  var datosCompletos = (val.faltantes.length === 0);
+  var evalAprob = { dispara:false, motivo:'', scrMatches:[] };
+  if (datosCompletos) {
+    evalAprob = evaluarAprobacionCliente(datos);
+    if (evalAprob.dispara) {
+      datos.estatus = 'Prospecto';
+      datos.aprobacion = 'Pendiente';
+      datos.motivo_aprobacion = evalAprob.motivo;
+      var selEst2 = frm.querySelector('[name="estatus"]');
+      if (selEst2) selEst2.value = 'Prospecto';
+    } else {
+      datos.aprobacion = '';           // sin condición de aprobación
+      datos.motivo_aprobacion = '';
+    }
+  }
+
   // Si es edición y estamos en vista consolidada, conservar entidad_id original
   if (idEx && App.entidadActual && App.entidadActual.id === 'TODAS' && App.clienteActual) {
     datos.entidad_id   = App.clienteActual.entidad_id   || '';
@@ -3878,14 +3901,31 @@ function submitCliente(tipo, idEx) {
 
     if (idEx) {
       spUpdate('PLD_Clientes', idEx, datos, function(r) {
-        if (r) { toast('Expediente actualizado correctamente', 's'); pgClientes(); }
+        if (r) {
+          if (evalAprob.dispara) {
+            datos.id_cliente_ref = idEx;
+            crearAlertaAprobacion(datos, evalAprob);
+            correoEnValidacion(datos);
+            toast('Expediente en validación: se guardó como PROSPECTO y se notificó por correo', 'w');
+          } else {
+            toast('Expediente actualizado correctamente', 's');
+          }
+          pgClientes();
+        }
       });
     } else {
       spCreate('PLD_Clientes', datos, function(item) {
         if (item) {
-          toast('Expediente #'+item.num_cliente+' creado correctamente', 's');
-          scrAlertarCliente(datos.Title || nombreClienteDatos(datos), item.id, item.num_cliente);
           _subirDocsPendientes(item.num_cliente, datos.Title || nombreClienteDatos(datos));
+          if (evalAprob.dispara) {
+            datos.id_cliente_ref = item.id;
+            datos.num_cliente = item.num_cliente;
+            crearAlertaAprobacion(datos, evalAprob);
+            correoEnValidacion(datos);
+            toast('Expediente #'+item.num_cliente+' en validación (PROSPECTO). Se notificó por correo.', 'w');
+          } else {
+            toast('Expediente #'+item.num_cliente+' creado correctamente', 's');
+          }
           pgClientes();
         }
       });
@@ -3966,7 +4006,9 @@ function renderFicha(c) {
     +(c.asesor_nombre?' · <span style="color:var(--az)">Asesor: '+c.asesor_nombre+'</span>':'')+'</div>'
     +'</div>'
     +'<div style="display:flex;gap:8px">'
-    +'<button class="btn btn-p" onclick="iniciarForm(\''+c.tipo+'\',App.clienteActual)">Editar</button>'
+    +(c.aprobacion==='Pendiente'
+       ? '<span class="pill p-am" title="En validación">🔒 En validación — pendiente de aprobación</span>'
+       : '<button class="btn btn-p" onclick="iniciarForm(\''+c.tipo+'\',App.clienteActual)">Editar</button>')
     +'<button class="btn" onclick="pgClientes()">Volver</button>'
     +'</div></div>'
     +'<div style="display:flex;border-bottom:1px solid var(--brd);flex-wrap:wrap">'
@@ -4388,6 +4430,7 @@ function cargarAlertas(modo, valor) {
       var scr  = todas.filter(function(a){ return altCategoria(a)==='Screening'; });
       var umb  = todas.filter(function(a){ return altCategoria(a)==='Umbral'; });
       var man  = todas.filter(function(a){ return altCategoria(a)==='Manual'; });
+      var apr  = todas.filter(function(a){ return a.requiere_aprobacion; });
       var pend = todas.filter(function(a){ return (a.estatus_atencion||'Pendiente')==='Pendiente'; });
 
       function card(titulo, lista, color, icono) {
@@ -4412,6 +4455,7 @@ function cargarAlertas(modo, valor) {
       el.innerHTML = '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">'
         + card('Total', todas, 'var(--tx2)', '📋')
         + card('Pendientes', pend, 'var(--am)', '⏳')
+        + card('Aprobación', apr, 'var(--mo)', '🔒')
         + card('Screening', scr, 'var(--rj)', '🔍')
         + card('Umbral', umb, 'var(--mo)', '⚠')
         + card('Manual', man, 'var(--az2)', '✎')
@@ -4498,6 +4542,10 @@ function renderFichaAlerta(a) {
     +'</div>'
     +'<div style="display:flex;gap:8px">'
     +(esUmbral?'<button class="btn btn-p crear-aviso-btn" data-altid="'+a.id+'">Crear aviso</button>':'')
+    +((a.requiere_aprobacion && App.rol==='admin' && (a.aprobacion_estado||'Pendiente')==='Pendiente')
+       ? '<button class="btn btn-p" style="background:var(--vd);border-color:var(--vd)" onclick="aprobarCliente(\''+a.id+'\')">✓ Aprobar cliente</button>'
+         +'<button class="btn" style="color:var(--rj);border-color:var(--rj)" onclick="rechazarClienteModificar(\''+a.id+'\')">Rechazar para modificar</button>'
+       : '')
     +'<button class="btn" onclick="pgAlertas()">Volver</button>'
     +'</div></div>'
 
@@ -6115,10 +6163,10 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
 
 // ── Screening automático al dar de alta un cliente ────────────
 // Solo usa listas ya cargadas en memoria — no bloquea el alta si no están disponibles
-function scrAlertarCliente(nombreCliente, idCli, numCli) {
+// Evalúa un nombre contra las listas de screening cargadas y DEVUELVE las coincidencias (sin crear alerta)
+function scrEvaluarCliente(nombreCliente) {
   var conDatos = SCR_LISTAS.filter(function(l){ return l.activa && l._datos && l._datos.length > 0; });
-  if (!conDatos.length) return;
-
+  if (!conDatos.length) return [];
   var coincidencias = [];
   conDatos.forEach(function(lista) {
     var matches = scrBuscarEnLista(nombreCliente, lista._datos, SCR.umbralMatch);
@@ -6128,6 +6176,11 @@ function scrAlertarCliente(nombreCliente, idCli, numCli) {
         tipo: m.entrada.tipo, uid: m.entrada.uid });
     });
   });
+  return coincidencias;
+}
+
+function scrAlertarCliente(nombreCliente, idCli, numCli) {
+  var coincidencias = scrEvaluarCliente(nombreCliente);
   if (!coincidencias.length) return;
 
   var maxScore = coincidencias.reduce(function(mx,c){ return Math.max(mx,c.score); }, 0);
@@ -6155,6 +6208,179 @@ function scrAlertarCliente(nombreCliente, idCli, numCli) {
   };
   spCreate('PLD_Alertas', alerta, null);
   toast('⚠ ALERTA SCREENING: "' + nombreCliente + '" coincide en ' + coincidencias.length + ' lista(s) de sanciones', 'e');
+}
+
+// ================================================================
+//  FLUJO DE APROBACIÓN DE CLIENTES (riesgo alto / screening)
+// ================================================================
+
+// Envía un correo vía Microsoft Graph (sendMail) desde el buzón del usuario conectado.
+function enviarCorreo(destinatarios, asunto, cuerpoHtml, cb) {
+  var tos = (destinatarios || []).filter(Boolean).map(function(e){ return {emailAddress:{address:e}}; });
+  if (!tos.length) { if(cb) cb(false); return; }
+  var payload = { message: { subject: asunto,
+    body: { contentType: 'HTML', content: cuerpoHtml },
+    toRecipients: tos }, saveToSentItems: true };
+  fetch(GRAPH+'/me/sendMail', {
+    method:'POST',
+    headers:{'Authorization':'Bearer '+App.token,'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  }).then(function(r){
+    if (r.status === 202 || r.ok) { if(cb) cb(true); }
+    else { r.json().then(function(d){ console.warn('[MAIL] error', d); }).catch(function(){}); if(cb) cb(false); }
+  }).catch(function(e){ console.warn('[MAIL] fallo', e); if(cb) cb(false); });
+}
+
+// Destinatarios de los correos de aprobación: asesor del cliente + administradores
+function _destinatariosAprobacion(cliente) {
+  var arr = ADMINS.slice();
+  var asesor = ASESORES.find(function(a){ return a.id === cliente.asesor_id; });
+  if (asesor && asesor.email) arr.push(asesor.email);
+  return arr.filter(function(v,i,s){ return v && s.indexOf(v)===i; });
+}
+
+var _PIE_CORREO = '<hr style="border:none;border-top:1px solid #ddd;margin:16px 0">'
+  + '<p style="font-size:12px;color:#888">Este es un correo automático generado por el sistema PLD Corporativo SMS. '
+  + '<b>No admite respuestas.</b></p>';
+
+function _tablaDatosCliente(cliente) {
+  function fila(k,v){ return v ? '<tr><td style="padding:3px 10px 3px 0;color:#666">'+k+'</td><td style="padding:3px 0"><b>'+v+'</b></td></tr>' : ''; }
+  var nom = nombreClienteDatos(cliente);
+  return '<table style="font-size:13px;border-collapse:collapse">'
+    + fila('Núm. cliente', cliente.num_cliente)
+    + fila('Nombre / razón social', nom)
+    + fila('Entidad', cliente.entidad_nombre || cliente.entidad_id)
+    + fila('Tipo', labelTipo(cliente.tipo))
+    + fila('RFC', cliente.rfc)
+    + fila('Nivel de riesgo', cliente.riesgo + (cliente.puntaje_ebr ? ' ('+cliente.puntaje_ebr+' pts)' : ''))
+    + fila('Asesor comercial', cliente.asesor_nombre)
+    + fila('Motivo de validación', cliente.motivo_aprobacion)
+    + '</table>';
+}
+
+function correoEnValidacion(cliente) {
+  var asunto = '[PLD] Cliente en validación: ' + nombreClienteDatos(cliente) + ' (' + (cliente.num_cliente||'') + ')';
+  var cuerpo = '<div style="font-family:Arial,sans-serif;color:#222">'
+    + '<h2 style="color:#854F0B">Cliente en validación</h2>'
+    + '<p>El siguiente expediente fue capturado y quedó <b>en validación</b> por haberse detectado una condición que requiere aprobación '
+    + '(riesgo alto o coincidencia en listas de sanciones).</p>'
+    + '<p>El cliente permanecerá como <b>PROSPECTO</b> y no podrá operar hasta que sea <b>aprobado por el administrador o el representante de cumplimiento</b>.</p>'
+    + _tablaDatosCliente(cliente)
+    + _PIE_CORREO + '</div>';
+  enviarCorreo(_destinatariosAprobacion(cliente), asunto, cuerpo, null);
+}
+
+function correoAprobado(cliente) {
+  var asunto = '[PLD] Cliente APROBADO: ' + nombreClienteDatos(cliente) + ' (' + (cliente.num_cliente||'') + ')';
+  var cuerpo = '<div style="font-family:Arial,sans-serif;color:#222">'
+    + '<h2 style="color:#0F6E56">Cliente aprobado y activado</h2>'
+    + '<p>El expediente fue <b>aprobado</b> por ' + (App.cuenta ? App.cuenta.name || App.cuenta.username : 'el administrador')
+    + ' y ha quedado en estatus <b>ACTIVO</b>.</p>'
+    + _tablaDatosCliente(cliente)
+    + _PIE_CORREO + '</div>';
+  enviarCorreo(_destinatariosAprobacion(cliente), asunto, cuerpo, null);
+}
+
+function correoRechazado(cliente) {
+  var asunto = '[PLD] Expediente devuelto para corrección: ' + nombreClienteDatos(cliente) + ' (' + (cliente.num_cliente||'') + ')';
+  var cuerpo = '<div style="font-family:Arial,sans-serif;color:#222">'
+    + '<h2 style="color:#A32D2D">Expediente devuelto para corrección</h2>'
+    + '<p>El expediente fue <b>rechazado para modificación</b> por ' + (App.cuenta ? App.cuenta.name || App.cuenta.username : 'el administrador')
+    + '. El asesor comercial puede editarlo y volver a enviarlo a validación.</p>'
+    + _tablaDatosCliente(cliente)
+    + _PIE_CORREO + '</div>';
+  enviarCorreo(_destinatariosAprobacion(cliente), asunto, cuerpo, null);
+}
+
+// Evalúa si el alta/edición de un cliente dispara el flujo de aprobación.
+// Devuelve {dispara:bool, motivo:string, scrMatches:[]}
+function evaluarAprobacionCliente(datos) {
+  var motivos = [];
+  var scrMatches = scrEvaluarCliente(nombreClienteDatos(datos)) || [];
+  if (datos.riesgo === 'Alto') motivos.push('Riesgo alto' + (datos.puntaje_ebr ? ' ('+datos.puntaje_ebr+' pts)' : ''));
+  if (scrMatches.length) motivos.push('Coincidencia en screening (' + scrMatches.length + ')');
+  return { dispara: motivos.length > 0, motivo: motivos.join(' · '), scrMatches: scrMatches };
+}
+
+// Crea la alerta de aprobación ligada al cliente recién guardado.
+function crearAlertaAprobacion(datos, evalRes) {
+  var scr = evalRes.scrMatches;
+  var desc = 'Cliente "' + nombreClienteDatos(datos) + '" requiere aprobación. Motivo: ' + evalRes.motivo + '.';
+  if (scr.length) {
+    desc += '\nCoincidencias screening:\n' + scr.map(function(c){
+      return '• ' + c.lista + ': ' + c.nombre + ' (' + c.score + '%)' + (c.uid ? ' [ID: '+c.uid+']' : '');
+    }).join('\n');
+  }
+  var maxScore = scr.reduce(function(mx,c){ return Math.max(mx,c.score); }, 0);
+  var alerta = {
+    Title: 'ALT-APR-' + Date.now(),
+    nombre_cliente: nombreClienteDatos(datos),
+    num_cliente: datos.num_cliente || '',
+    id_cliente_ref: datos.id_cliente_ref || datos.id || '',
+    categoria: scr.length ? 'Screening' : 'Riesgo',
+    tipo: 'Aprobación de cliente',
+    requiere_aprobacion: true,
+    aprobacion_estado: 'Pendiente',
+    nivel: (datos.riesgo === 'Alto' || maxScore >= 90) ? 'Alto' : 'Medio',
+    descripcion: desc,
+    coincidencias_scr: scr.length ? JSON.stringify(scr.slice(0,5)) : '',
+    estatus: 'Abierta',
+    estatus_atencion: 'Pendiente',
+    asesor_id: datos.asesor_id || '',
+    asesor_nombre: datos.asesor_nombre || '',
+    registrado_por: App.cuenta ? App.cuenta.username : '',
+    fecha_registro: hoy(),
+    entidad_id: App.entidadActual ? App.entidadActual.id : '',
+    entidad_nombre: App.entidadActual ? App.entidadActual.nombre : ''
+  };
+  spCreate('PLD_Alertas', alerta, null);
+}
+
+// El administrador aprueba el cliente ligado a una alerta de aprobación.
+function aprobarCliente(alertaId) {
+  if (App.rol !== 'admin') { toast('Solo un administrador puede aprobar','e'); return; }
+  spGet('PLD_Alertas', function(listaAlt) {
+    var a = null; listaAlt.forEach(function(x){ if(String(x.id)===String(alertaId)) a=x; });
+    if (!a) { toast('Alerta no encontrada','e'); return; }
+    var idCli = a.id_cliente_ref;
+    spGet('PLD_Clientes', function(listaCli) {
+      var cli = null;
+      listaCli.forEach(function(c){ if(String(c.id)===String(idCli) || (a.num_cliente && String(c.num_cliente)===String(a.num_cliente))) cli=c; });
+      if (!cli) { toast('Cliente no encontrado','e'); return; }
+      if (!confirm('¿Aprobar y ACTIVAR al cliente "' + nombreClienteDatos(cli) + '"?')) return;
+      spPatch('PLD_Clientes', cli.id, { aprobacion:'Aprobado', estatus:'Activo' }, function(){
+        spPatch('PLD_Alertas', a.id, { aprobacion_estado:'Aprobado', estatus_atencion:'Aprobada', estatus:'Cerrada' }, function(){
+          cli.aprobacion='Aprobado'; cli.estatus='Activo';
+          correoAprobado(cli);
+          toast('Cliente aprobado y activado. Se notificó por correo.','s');
+          pgAlertas();
+        });
+      });
+    });
+  });
+}
+
+// El administrador rechaza para modificar: desbloquea la edición del cliente.
+function rechazarClienteModificar(alertaId) {
+  if (App.rol !== 'admin') { toast('Solo un administrador puede rechazar','e'); return; }
+  spGet('PLD_Alertas', function(listaAlt) {
+    var a = null; listaAlt.forEach(function(x){ if(String(x.id)===String(alertaId)) a=x; });
+    if (!a) { toast('Alerta no encontrada','e'); return; }
+    spGet('PLD_Clientes', function(listaCli) {
+      var cli = null;
+      listaCli.forEach(function(c){ if(String(c.id)===String(a.id_cliente_ref) || (a.num_cliente && String(c.num_cliente)===String(a.num_cliente))) cli=c; });
+      if (!cli) { toast('Cliente no encontrado','e'); return; }
+      if (!confirm('¿Rechazar para modificar el expediente de "' + nombreClienteDatos(cli) + '"? Se desbloqueará su edición.')) return;
+      spPatch('PLD_Clientes', cli.id, { aprobacion:'Rechazado' }, function(){
+        spPatch('PLD_Alertas', a.id, { aprobacion_estado:'Rechazado', estatus_atencion:'Devuelta' }, function(){
+          cli.aprobacion='Rechazado';
+          correoRechazado(cli);
+          toast('Expediente devuelto para corrección. Se notificó al asesor.','w');
+          pgAlertas();
+        });
+      });
+    });
+  });
 }
 
 function crearAlertaUmbral(datos) {
