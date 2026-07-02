@@ -3742,9 +3742,13 @@ function validarCliente(frm, datos, tipo) {
     if (v && v.length !== 18) bloq.push('La CURP debe tener 18 caracteres; "' + el.name + '" tiene ' + v.length);
   });
 
-  // Fecha de alta no puede ser futura
-  if (datos.fecha_alta && datos.fecha_alta > hoy())
-    bloq.push('La fecha de alta (' + datos.fecha_alta + ') no puede ser posterior a hoy');
+  // Fecha de alta no puede ser posterior a la fecha de captura (normaliza AAAA-MM-DD o DD-MM-AAAA)
+  if (datos.fecha_alta) {
+    var fAlta = fechaXML(datos.fecha_alta);      // → AAAAMMDD
+    var fHoy  = hoy().replace(/-/g,'');           // → AAAAMMDD
+    if (fAlta && fAlta > fHoy)
+      bloq.push('La fecha de alta (' + datos.fecha_alta + ') no puede ser posterior a la fecha de captura');
+  }
 
   // Campos obligatorios visibles (marcados con * en el formulario)
   frm.querySelectorAll('.fg').forEach(function(w){
