@@ -6213,6 +6213,40 @@ function scrEvaluarCliente(nombreCliente) {
   return coincidencias;
 }
 
+// Recopila todos los nombres a evaluar en screening (cliente y partes relacionadas)
+function _nombresAScreening(datos) {
+  var arr = [];
+  function nom(parts){ return (parts||[]).filter(Boolean).join(' ').trim(); }
+  function add(parte, nombre){ if (nombre && nombre.trim()) arr.push({ parte: parte, nombre: nombre.trim() }); }
+
+  add('Cliente', nombreClienteDatos(datos));
+  add('Representante legal', nom([datos.rl_nombre, datos.rl_ap_pat, datos.rl_ap_mat]));
+  add('Delegado fiduciario', nom([datos.df_nombre, datos.df_ap_pat, datos.df_ap_mat]));
+  if (datos.tiene_dueno_ben === 'SI')
+    add('Dueño beneficiario', nom([datos.db_nombre, datos.db_ap_pat, datos.db_ap_mat]));
+  add('Fiduciario', datos.fiduciario);
+  add('Fideicomitente', datos.fideicomitente_nombre);
+  add('Fideicomisario', datos.fideicomisario_nombre);
+  (datos.beneficiarios || []).forEach(function(bc, i){
+    add('Beneficiario controlador #'+(i+1), nom([bc.nombre, bc.ap_pat, bc.ap_mat]));
+  });
+  return arr;
+}
+
+// Evalúa TODAS las partes del expediente contra las listas de screening.
+// Devuelve coincidencias etiquetadas con la parte (cliente, rep. legal, DB, etc.)
+function scrEvaluarClienteCompleto(datos) {
+  var resultados = [];
+  _nombresAScreening(datos).forEach(function(item){
+    scrEvaluarCliente(item.nombre).forEach(function(c){
+      c.parte = item.parte;
+      c.nombre_evaluado = item.nombre;
+      resultados.push(c);
+    });
+  });
+  return resultados;
+}
+
 function scrAlertarCliente(nombreCliente, idCli, numCli) {
   var coincidencias = scrEvaluarCliente(nombreCliente);
   if (!coincidencias.length) return;
@@ -6345,9 +6379,12 @@ function correoRechazado(cliente) {
 // Devuelve {dispara:bool, motivo:string, scrMatches:[]}
 function evaluarAprobacionCliente(datos) {
   var motivos = [];
-  var scrMatches = scrEvaluarCliente(nombreClienteDatos(datos)) || [];
+  var scrMatches = scrEvaluarClienteCompleto(datos) || [];
   if (datos.riesgo === 'Alto') motivos.push('Riesgo alto' + (datos.puntaje_ebr ? ' ('+datos.puntaje_ebr+' pts)' : ''));
-  if (scrMatches.length) motivos.push('Coincidencia en screening (' + scrMatches.length + ')');
+  if (scrMatches.length) {
+    var partes = scrMatches.map(function(c){ return c.parte; }).filter(function(v,i,s){ return s.indexOf(v)===i; });
+    motivos.push('Coincidencia en screening (' + scrMatches.length + ') en: ' + partes.join(', '));
+  }
   return { dispara: motivos.length > 0, motivo: motivos.join(' · '), scrMatches: scrMatches };
 }
 
@@ -6357,7 +6394,7 @@ function crearAlertaAprobacion(datos, evalRes) {
   var desc = 'Cliente "' + nombreClienteDatos(datos) + '" requiere aprobación. Motivo: ' + evalRes.motivo + '.';
   if (scr.length) {
     desc += '\nCoincidencias screening:\n' + scr.map(function(c){
-      return '• ' + c.lista + ': ' + c.nombre + ' (' + c.score + '%)' + (c.uid ? ' [ID: '+c.uid+']' : '');
+      return '• [' + (c.parte||'Cliente') + '] "' + (c.nombre_evaluado||'') + '" → ' + c.lista + ': ' + c.nombre + ' (' + c.score + '%)' + (c.uid ? ' [ID: '+c.uid+']' : '');
     }).join('\n');
   }
   var maxScore = scr.reduce(function(mx,c){ return Math.max(mx,c.score); }, 0);
