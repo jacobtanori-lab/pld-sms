@@ -3849,6 +3849,10 @@ function submitCliente(tipo, idEx) {
   datos.riesgo = riesgo.nivel;
   datos.puntaje_ebr = riesgo.puntaje;
 
+  // Asegurar que las listas de screening estén cargadas (última versión en SharePoint)
+  // antes de cotejar — sin importar quién ni cuándo las cargó ese día.
+  cargarListasScreening(function(){
+
   // ── Rutina de aprobación: solo si los datos están completos ──
   // Dispara si el cliente es riesgo alto o coincide en screening.
   var datosCompletos = (val.faltantes.length === 0);
@@ -3938,6 +3942,7 @@ function submitCliente(tipo, idEx) {
       });
     }
   });
+  }); // cargarListasScreening
 }
 
 function _subirDocsPendientes(numCliente, nombreCliente) {
@@ -7739,10 +7744,12 @@ function cargarListasScreening(cb, forzar) {
               notas:String(r.notas||'').trim() });
           });
         }
-        App._scrData = Object.keys(listas).map(function(k){ return listas[k]; });
-        App._scrDataFecha = new Date();
-        console.log('[PEPM] listas cargadas:', App._scrData.map(function(l){ return l.id+':'+l._datos.length; }).join(', '));
-        if (cb) cb(App._scrData);
+        var arr = Object.keys(listas).map(function(k){ return listas[k]; });
+        var total = arr.reduce(function(s,l){ return s + l._datos.length; }, 0);
+        // Solo cachear si realmente cargó datos; si vino vacío, dejar null para reintentar
+        if (total > 0) { App._scrData = arr; App._scrDataFecha = new Date(); }
+        console.log('[PEPM] listas cargadas:', total, 'registros');
+        if (cb) cb(App._scrData || arr);
       });
     });
   });
