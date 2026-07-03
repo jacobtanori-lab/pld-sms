@@ -7561,6 +7561,20 @@ function _filaTrim(row){
   var o = {}; Object.keys(row).forEach(function(k){ o[String(k).trim()] = row[k]; }); return o;
 }
 
+// Convierte un valor de fecha (serial de Excel, Date o texto) a DD/MM/AAAA legible
+function _fmtFechaCampo(v){
+  if (v === null || v === undefined || v === '') return '';
+  function fmt(d){ return pad(d.getUTCDate())+'/'+pad(d.getUTCMonth()+1)+'/'+d.getUTCFullYear(); }
+  if (v instanceof Date) return fmt(v);
+  var s = String(v).trim();
+  // Serial de Excel (rango razonable de fechas ~1954-2064)
+  if (/^\d{5}$/.test(s)) {
+    var n = parseInt(s,10);
+    if (n > 20000 && n < 60000) return fmt(new Date(Math.round((n - 25569) * 86400000)));
+  }
+  return s; // ya es texto (año suelto, DD/MM/AAAA, etc.)
+}
+
 // Carga y parsea ambos archivos hacia App._scrData (cache en memoria por sesión).
 function cargarListasScreening(cb, forzar) {
   if (App._scrData && !forzar) { if(cb) cb(App._scrData); return; }
@@ -7585,8 +7599,8 @@ function cargarListasScreening(cb, forzar) {
             var comun = { alias:String(r.alias||'').trim(), tipo:String(r.tipo_sujeto||'').trim(),
               pais:String(r.nacionalidad||'').trim(), uid:String(r.id_original||'').trim(),
               programa:String(r.programa_motivo||'').trim(), lista:origen,
-              fnac:String(r.fecha_nacimiento||'').trim(), estatus:String(r.estatus||'').trim(),
-              notas:String(r.notas||'').trim(), fuente:String(r.fecha_fuente||'').trim(),
+              fnac:_fmtFechaCampo(r.fecha_nacimiento), estatus:String(r.estatus||'').trim(),
+              notas:String(r.notas||'').trim(), fuente:_fmtFechaCampo(r.fecha_fuente),
               regid:String(r.registro_id||'').trim() };
             var ent = Object.assign({ nombre:nom }, comun);
             pushEntrada(origen, origen, 'Sancion/Fiscal', ent);
@@ -7611,7 +7625,7 @@ function cargarListasScreening(cb, forzar) {
               nombre:nom, tipo:'Persona (PEP)', uid:String(r.persona_id||'').trim(),
               curp:String(r.CURP||'').trim(), rfc:String(r.RFC||'').trim(),
               programa:String(r.tipo_pep||'').trim(), lista:'PEP_NACIONAL',
-              fnac:String(r.fecha_nacimiento||'').trim(), estatus:String(r.estatus||'').trim(),
+              fnac:_fmtFechaCampo(r.fecha_nacimiento), estatus:String(r.estatus||'').trim(),
               cargo:String(r.cargo_id||'').trim(), entidad:String(r['enitdad_federativa']||r.entidad_federativa||'').trim(),
               municipio:String(r.municipio||'').trim(), fuenteurl:String(r.fuenteurl||'').trim(),
               notas:String(r.notas||'').trim() });
