@@ -4413,6 +4413,7 @@ function pgAlertas() {
     +'<div class="sb-item on" onclick="altVista(this,\'todas\',null)">Panel general</div>'
     +'<div class="sb-sec" style="margin-top:8px">Por categoría</div>'
     +'<div class="sb-item" onclick="altVista(this,\'cat\',\'Screening\')">🔍 Screening</div>'
+    +'<div class="sb-item" onclick="altVista(this,\'cat\',\'Riesgo\')">🔴 Riesgo alto</div>'
     +'<div class="sb-item" onclick="altVista(this,\'cat\',\'Umbral\')">⚠ Umbral operaciones</div>'
     +'<div class="sb-item" onclick="altVista(this,\'cat\',\'Manual\')">✎ Manuales</div>'
     +'<div class="sb-sec" style="margin-top:8px">Por estatus</div>'
@@ -4450,6 +4451,7 @@ function cargarAlertas(modo, valor) {
     // ── Panel general: dashboard con cards + tabla reciente ───
     if (modo === 'todas') {
       var scr  = todas.filter(function(a){ return altCategoria(a)==='Screening'; });
+      var rsg  = todas.filter(function(a){ return altCategoria(a)==='Riesgo'; });
       var umb  = todas.filter(function(a){ return altCategoria(a)==='Umbral'; });
       var man  = todas.filter(function(a){ return altCategoria(a)==='Manual'; });
       var apr  = todas.filter(function(a){ return a.requiere_aprobacion; });
@@ -4479,6 +4481,7 @@ function cargarAlertas(modo, valor) {
         + card('Pendientes', pend, 'var(--am)', '⏳')
         + card('Aprobación', apr, 'var(--mo)', '🔒')
         + card('Screening', scr, 'var(--rj)', '🔍')
+        + card('Riesgo alto', rsg, 'var(--rj)', '🔴')
         + card('Umbral', umb, 'var(--mo)', '⚠')
         + card('Manual', man, 'var(--az2)', '✎')
         +'</div>'
@@ -4494,7 +4497,7 @@ function cargarAlertas(modo, valor) {
     var titulo = 'Todas las alertas';
     if (modo === 'cat') {
       lista = todas.filter(function(a){ return altCategoria(a) === valor; });
-      titulo = { Screening: '🔍 Alertas de Screening', Umbral: '⚠ Alertas de Umbral', Manual: '✎ Alertas manuales' }[valor] || valor;
+      titulo = { Screening: '🔍 Alertas de Screening', Riesgo: '🔴 Alertas de Riesgo alto', Umbral: '⚠ Alertas de Umbral', Manual: '✎ Alertas manuales' }[valor] || valor;
     } else if (modo === 'est') {
       lista = todas.filter(function(a){ return (a.estatus_atencion||'Pendiente') === valor; });
       titulo = 'Alertas ' + valor.toLowerCase() + 's';
@@ -7289,7 +7292,7 @@ var SCR_LISTAS = [
 var SCR = {
   listasSeleccionadas: ['ofac_sdn','ofac_cons','onu','ue','sat_69b'],
   cargando: {},
-  umbralMatch: 75,
+  umbralMatch: 70,
   apiKeys: { opensanctions: '' }  // configurar desde la pantalla de Screening
 };
 
