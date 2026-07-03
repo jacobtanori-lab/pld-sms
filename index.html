@@ -3907,6 +3907,7 @@ function submitCliente(tipo, idEx) {
     if (idEx) {
       spUpdate('PLD_Clientes', idEx, datos, function(r) {
         if (r) {
+          subirConstanciaScreening(datos);   // re-cotejo: nueva constancia de busqueda
           if (evalAprob.dispara) {
             datos.id_cliente_ref = idEx;
             crearAlertaAprobacion(datos, evalAprob);
@@ -4294,15 +4295,14 @@ function renderDocs() {
   graph('GET', '/sites/'+App.siteId+'/drive/root:/'+carpeta+':/children', null, function(data) {
     var archivos = (data && data.value) ? data.value : [];
 
-    function archivoDoc(td) {
-      var arch = null;
-      archivos.forEach(function(a){ if(a.name.indexOf(td.replace(/\s/g,'_').substring(0,20))>=0) arch=a; });
-      return arch;
+    function archivosDoc(td) {
+      var pref = td.replace(/\s/g,'_').substring(0,20);
+      return archivos.filter(function(a){ return a.name.indexOf(pref) >= 0; });
     }
 
     // Progreso: obligatorios cargados
     var oblTotal    = obligatorios.length;
-    var oblCargados = obligatorios.filter(function(td){ return !!archivoDoc(td); }).length;
+    var oblCargados = obligatorios.filter(function(td){ return archivosDoc(td).length > 0; }).length;
     var pct         = oblTotal ? Math.round(oblCargados / oblTotal * 100) : 100;
     var colorBarra  = pct === 100 ? 'var(--vd)' : pct >= 50 ? 'var(--am)' : 'var(--rj)';
 
@@ -4321,7 +4321,8 @@ function renderDocs() {
     var compDocs = lista.filter(function(td){ return obligatorios.indexOf(td) < 0; });
 
     function renderRow(td) {
-      var arch = archivoDoc(td);
+      var files = archivosDoc(td);
+      var tiene = files.length > 0;
       var esObl = obligatorios.indexOf(td) >= 0;
       var esCond = !!DOCS_OBL_COND[td];
       var tagObl = esObl
@@ -4331,21 +4332,22 @@ function renderDocs() {
         : '';
       var icono = !esObl
         ? '<span style="color:var(--tx3);font-size:16px">○</span>'
-        : arch
+        : tiene
           ? '<span style="color:var(--vd);font-size:16px">✓</span>'
           : '<span style="color:var(--rj);font-size:16px">✗</span>';
-      return '<div class="doc-row">'
-        +'<div style="display:flex;align-items:center;gap:8px">'
+      var listaArch = tiene
+        ? files.map(function(a){ return '<div><a href="'+a.webUrl+'" target="_blank" style="font-size:11px;color:var(--az2)">'+a.name+'</a></div>'; }).join('')
+        : '<span style="font-size:11px;color:var(--tx3)">Sin documento</span>';
+      return '<div class="doc-row" style="align-items:flex-start">'
+        +'<div style="display:flex;align-items:flex-start;gap:8px">'
         +icono
         +'<div><div style="font-weight:500;font-size:13px">'+td+tagObl+'</div>'
-        +(arch?'<a href="'+arch.webUrl+'" target="_blank" style="font-size:11px;color:var(--az2)">'+arch.name+'</a>'
-               :'<span style="font-size:11px;color:var(--tx3)">Sin documento</span>')
+        +listaArch
         +'</div></div>'
         +'<div style="display:flex;gap:8px;align-items:center">'
-        +'<span class="doc-bdg'+(arch?'':' pend')+'">'+(arch?'Cargado':'Pendiente')+'</span>'
-        +(arch?'<a href="'+arch.webUrl+'" target="_blank" class="btn btn-xs">Ver</a>':'')
+        +'<span class="doc-bdg'+(tiene?'':' pend')+'">'+(tiene?(files.length+' archivo'+(files.length>1?'s':'')):'Pendiente')+'</span>'
         +'<label class="btn btn-xs btn-p" style="cursor:pointer">Subir'
-        +'<input type="file" style="display:none" onchange="subirDoc(this,\''+td+'\',\''+carpeta+'\')">'
+        +'<input type="file" multiple style="display:none" onchange="subirDoc(this,\''+td+'\',\''+carpeta+'\')">'
         +'</label>'
         +'</div></div>';
     }
@@ -4364,20 +4366,29 @@ function renderDocs() {
 }
 
 function subirDoc(input, tipoDoc, carpeta) {
-  var file = input.files[0]; if(!file) return;
-  toast('Subiendo '+file.name+'...');
-  var reader = new FileReader();
-  reader.onload = function(e) {
-    var nombre = tipoDoc.replace(/\s/g,'_').substring(0,30)+'_'+file.name;
-    var url = GRAPH+'/sites/'+App.siteId+'/drive/root:/'+carpeta+'/'+nombre+':/content';
-    fetch(url, {method:'PUT', headers:{'Authorization':'Bearer '+App.token,'Content-Type':file.type||'application/octet-stream'}, body:e.target.result})
-      .then(function(r){return r.json();})
-      .then(function(d){
-        if (d && d.id) { toast('Documento guardado en OneDrive','s'); renderDocs(); }
-        else toast('Error al subir documento','e');
-      }).catch(function(){toast('Error al subir','e');});
-  };
-  reader.readAsArrayBuffer(file);
+  var files = Array.prototype.slice.call(input.files || []);
+  input.value = '';
+  if (!files.length) return;
+  toast('Subiendo '+files.length+' archivo(s)...');
+  var pref = tipoDoc.replace(/\s/g,'_').substring(0,30);
+  var pend = files.length, ok = 0;
+  files.forEach(function(file, i){
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      // Sufijo único para no sobrescribir cuando hay varios documentos por campo
+      var uniq = Date.now().toString(36) + (i>0?('-'+i):'');
+      var limpio = file.name.replace(/[^a-zA-Z0-9._\-]/g,'_');
+      var nombre = pref + '_' + uniq + '_' + limpio;
+      var ruta = carpeta.split('/').map(encodeURIComponent).join('/') + '/' + encodeURIComponent(nombre);
+      var url = GRAPH+'/sites/'+App.siteId+'/drive/root:/'+ruta+':/content';
+      fetch(url, {method:'PUT', headers:{'Authorization':'Bearer '+App.token,'Content-Type':file.type||'application/octet-stream'}, body:e.target.result})
+        .then(function(r){return r.json();})
+        .then(function(d){ if (d && d.id) ok++; })
+        .catch(function(){})
+        .then(function(){ if(--pend===0){ toast(ok+' documento(s) guardado(s)', ok?'s':'e'); renderDocs(); } });
+    };
+    reader.readAsArrayBuffer(file);
+  });
 }
 
 // ================================================================
