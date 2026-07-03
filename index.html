@@ -1554,6 +1554,8 @@ function iniciarApp() {
           cargarConfigUMA();
           irA('dashboard');
         }
+        // Sincroniza listas de screening desde PEP Manager (en segundo plano)
+        try { autoSyncPEPManager(); } catch(e){ console.warn('[PEPM] auto-sync', e); }
       });
       }); // cargarRolUsuario
     });
@@ -6199,7 +6201,9 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
 // Solo usa listas ya cargadas en memoria — no bloquea el alta si no están disponibles
 // Evalúa un nombre contra las listas de screening cargadas y DEVUELVE las coincidencias (sin crear alerta)
 function scrEvaluarCliente(nombreCliente) {
-  var conDatos = SCR_LISTAS.filter(function(l){ return l.activa && l._datos && l._datos.length > 0; });
+  // Preferir las listas de PEP Manager (App._scrData); si no, las de SCR_LISTAS
+  var fuente = (App._scrData && App._scrData.length) ? App._scrData : SCR_LISTAS;
+  var conDatos = fuente.filter(function(l){ return l.activa && l._datos && l._datos.length > 0; });
   if (!conDatos.length) return [];
   var coincidencias = [];
   conDatos.forEach(function(lista) {
@@ -7490,6 +7494,121 @@ function scrLeerArchivoOD(nombreArchivo, encoding, cb) {
   .catch(function(e) { cb(e, null); });
 }
 
+// ════════════════════════════════════════════════════════════
+//  INTEGRACIÓN CON PEP MANAGER (listas normalizadas en OneDrive)
+// ════════════════════════════════════════════════════════════
+var PEPM_OD_CARPETA = 'Apps/PEP-Manager';        // en el OneDrive del usuario (/me/drive)
+var PEPM_FILE_INT   = 'listas_internacionales.xlsx';
+var PEPM_FILE_PEP   = 'database.xlsx';
+var PEPM_CONFIG_KEY = 'pepm_sync';                // fecha de última sincronización en PLD_Config
+var PEPM_DIAS_SYNC  = 1;                           // re-sincroniza si pasó más de N días
+
+function _rutaEnc(ruta){ return ruta.split('/').map(encodeURIComponent).join('/'); }
+
+// Sincroniza los .xlsx desde el OneDrive del usuario (PEP Manager) al SharePoint del sitio.
+// Solo funciona en la sesión del dueño de los archivos (/me/drive); si no existen, se omite.
+function sincronizarPEPManager(cb) {
+  var archivos = [PEPM_FILE_INT, PEPM_FILE_PEP];
+  var pend = archivos.length, copiados = 0, errs = 0;
+  archivos.forEach(function(f){
+    var urlGet = GRAPH+'/me/drive/root:/'+_rutaEnc(PEPM_OD_CARPETA)+'/'+encodeURIComponent(f)+':/content';
+    fetch(urlGet, {headers:{'Authorization':'Bearer '+App.token}})
+      .then(function(r){ if(!r.ok) throw new Error('http '+r.status); return r.arrayBuffer(); })
+      .then(function(buf){
+        var urlPut = GRAPH+'/sites/'+App.siteId+'/drive/root:/'+_rutaEnc(SCR_CARPETA_OD)+'/'+encodeURIComponent(f)+':/content';
+        return fetch(urlPut, {method:'PUT', headers:{'Authorization':'Bearer '+App.token,'Content-Type':'application/octet-stream'}, body:buf})
+          .then(function(rp){ if(rp.ok) copiados++; else errs++; });
+      })
+      .catch(function(e){ console.warn('[PEPM] no se pudo sincronizar '+f+':', e.message); errs++; })
+      .then(function(){ if(--pend===0){ if(cb) cb(copiados, errs); } });
+  });
+}
+
+// Lee un .xlsx del drive del sitio y lo parsea con SheetJS (arraybuffer → workbook).
+function _leerXlsxSitio(nombre, cb) {
+  var url = GRAPH+'/sites/'+App.siteId+'/drive/root:/'+_rutaEnc(SCR_CARPETA_OD)+'/'+encodeURIComponent(nombre)+':/content';
+  fetch(url, {headers:{'Authorization':'Bearer '+App.token}})
+    .then(function(r){ if(!r.ok) throw new Error('http '+r.status); return r.arrayBuffer(); })
+    .then(function(buf){ cb(XLSX.read(new Uint8Array(buf), {type:'array'})); })
+    .catch(function(e){ console.warn('[PEPM] no se pudo leer '+nombre+':', e.message); cb(null); });
+}
+
+// Normaliza las claves de una fila (quita espacios sobrantes en encabezados)
+function _filaTrim(row){
+  var o = {}; Object.keys(row).forEach(function(k){ o[String(k).trim()] = row[k]; }); return o;
+}
+
+// Carga y parsea ambos archivos hacia App._scrData (cache en memoria por sesión).
+function cargarListasScreening(cb, forzar) {
+  if (App._scrData && !forzar) { if(cb) cb(App._scrData); return; }
+  cargarSheetJS(function(){
+    var listas = {}; // lista_origen -> {id, nombre, categoria, _datos:[]}
+    function pushEntrada(id, nombre, categoria, ent){
+      if (!listas[id]) listas[id] = { id:id, nombre:nombre, categoria:categoria, activa:true, _datos:[] };
+      listas[id]._datos.push(ent);
+    }
+    _leerXlsxSitio(PEPM_FILE_INT, function(wbInt){
+      if (wbInt) {
+        wbInt.SheetNames.forEach(function(sn){
+          var rows = XLSX.utils.sheet_to_json(wbInt.Sheets[sn], {defval:''});
+          if (!rows.length) return;
+          var first = _filaTrim(rows[0]);
+          if (!('nombre_principal' in first)) return; // no es una tabla de registros
+          rows.forEach(function(raw){
+            var r = _filaTrim(raw);
+            var nom = String(r.nombre_principal||'').trim();
+            if (!nom) return;
+            var origen = String(r.lista_origen||sn).trim();
+            var ent = { nombre:nom, alias:String(r.alias||'').trim(), tipo:String(r.tipo_sujeto||'').trim(),
+              pais:String(r.nacionalidad||'').trim(), uid:String(r.id_original||'').trim(),
+              programa:String(r.programa_motivo||'').trim(), lista:origen };
+            pushEntrada(origen, origen, 'Sancion/Fiscal', ent);
+            var al = String(r.alias||'').trim();
+            if (al && al.toUpperCase()!==nom.toUpperCase())
+              pushEntrada(origen, origen, 'Sancion/Fiscal', { nombre:al, alias:nom, tipo:ent.tipo, pais:ent.pais, uid:ent.uid, programa:ent.programa, lista:origen, esAlias:true });
+          });
+        });
+      }
+      _leerXlsxSitio(PEPM_FILE_PEP, function(wbDb){
+        if (wbDb) {
+          var shPer = wbDb.Sheets['Personas'] || wbDb.Sheets[wbDb.SheetNames[0]];
+          var rows = shPer ? XLSX.utils.sheet_to_json(shPer, {defval:''}) : [];
+          rows.forEach(function(raw){
+            var r = _filaTrim(raw);
+            var nom = String(r.nombre_completo||r.nombre_normalizado||'').trim();
+            if (!nom) return;
+            pushEntrada('PEP_NACIONAL', 'PEP Nacional (Mexico)', 'PEP', {
+              nombre:nom, tipo:'Persona', uid:String(r.persona_id||'').trim(),
+              curp:String(r.CURP||'').trim(), rfc:String(r.RFC||'').trim(),
+              programa:String(r.tipo_pep||'').trim(), lista:'PEP_NACIONAL' });
+          });
+        }
+        App._scrData = Object.keys(listas).map(function(k){ return listas[k]; });
+        App._scrDataFecha = new Date();
+        console.log('[PEPM] listas cargadas:', App._scrData.map(function(l){ return l.id+':'+l._datos.length; }).join(', '));
+        if (cb) cb(App._scrData);
+      });
+    });
+  });
+}
+
+// Auto-sync al iniciar sesión (solo en la sesión del dueño de los archivos), si toca por cadencia.
+function autoSyncPEPManager() {
+  scrLeerConfigFechas(function(fechas, configId){
+    var ultima = fechas[PEPM_CONFIG_KEY];
+    var vencido = !ultima || ((Date.now() - new Date(ultima).getTime()) / 86400000) >= PEPM_DIAS_SYNC;
+    if (!vencido) { cargarListasScreening(function(){}); return; }
+    sincronizarPEPManager(function(copiados){
+      if (copiados > 0) {
+        fechas[PEPM_CONFIG_KEY] = new Date().toISOString();
+        scrGuardarConfigFechas(fechas, configId);
+        console.log('[PEPM] sincronizados', copiados, 'archivo(s) desde PEP Manager');
+      }
+      cargarListasScreening(function(){}, true);
+    });
+  });
+}
+
 // ── Obtener/guardar config de fechas de actualización ─────────
 function scrLeerConfigFechas(cb) {
   spGet('PLD_Config', function(lista) {
@@ -7825,10 +7944,23 @@ function scrGuardarResultado(nombre, resultados, clienteId, clienteNom) {
 // ── Ejecutar screening sobre un nombre ───────────────────────
 function scrEjecutar(nombre, clienteId, clienteNom, cbResultados) {
   var listasActivas = SCR_LISTAS.filter(function(l){ return l.activa && SCR.listasSeleccionadas.indexOf(l.id) >= 0; });
-  var pendientes = listasActivas.length;
+  var pepm = (App._scrData || []).filter(function(l){ return l._datos && l._datos.length; });
+  var pendientes = listasActivas.length + pepm.length;
   var resultados = [];
 
   if (!pendientes) { if (cbResultados) cbResultados([]); return; }
+
+  // Listas de PEP Manager (búsqueda síncrona en memoria)
+  pepm.forEach(function(lista) {
+    var matches = scrBuscarEnLista(nombre, lista._datos, SCR.umbralMatch);
+    resultados.push({ listaId: lista.id, lista: lista.nombre, matches: matches, total: lista._datos.length });
+    pendientes--;
+  });
+  if (pendientes === 0) {
+    scrGuardarResultado(nombre, resultados, clienteId, clienteNom);
+    if (cbResultados) cbResultados(resultados);
+    return;
+  }
 
   function registrarResultado(listaId, listaNombre, matches, total) {
     resultados.push({ listaId: listaId, lista: listaNombre, matches: matches, total: total });
@@ -7981,7 +8113,8 @@ function pgScreening() {
   });
 
   sbHtml += '<div style="padding:8px 12px">'
-    + '<button class="btn" style="width:100%;font-size:11px" onclick="scrForzarActualizacion()">↻ Actualizar listas</button>'
+    + '<button class="btn btn-p" style="width:100%;font-size:11px;margin-bottom:6px" onclick="scrActualizarDesdePEPManager()">⤓ Actualizar desde PEP Manager</button>'
+    + '<button class="btn" style="width:100%;font-size:11px" onclick="scrForzarActualizacion()">↻ Actualizar listas (fuentes)</button>'
     + '</div>'
     + '<div id="scr-log-actualizacion" style="padding:4px 12px"></div>';
 
@@ -7990,6 +8123,31 @@ function pgScreening() {
   scrActualizarEstadoListas();
   // Verificar listas vencidas al abrir el módulo
   setTimeout(scrVerificarYActualizarAlAbrir, 500);
+}
+
+// Sincroniza y recarga las listas desde PEP Manager (manual, con feedback en el log)
+function scrActualizarDesdePEPManager() {
+  var logEl = document.getElementById('scr-log-actualizacion');
+  if (logEl) logEl.innerHTML = '<div style="color:var(--am);font-size:12px">Sincronizando desde PEP Manager…</div>';
+  sincronizarPEPManager(function(copiados, errs){
+    if (copiados === 0) {
+      if (logEl) logEl.innerHTML = '<div style="color:var(--rj);font-size:12px">No se pudo leer PEP Manager. Verifica que los archivos existan en tu OneDrive /Apps/PEP-Manager y que seas tú quien inicia sesión.</div>';
+      toast('No se pudo sincronizar desde PEP Manager','e');
+      return;
+    }
+    // Registrar fecha de sync
+    scrLeerConfigFechas(function(fechas, configId){
+      fechas[PEPM_CONFIG_KEY] = new Date().toISOString();
+      scrGuardarConfigFechas(fechas, configId);
+    });
+    if (logEl) logEl.innerHTML = '<div style="color:var(--tx3);font-size:12px">Archivos copiados ('+copiados+'). Cargando registros…</div>';
+    cargarListasScreening(function(data){
+      var total = (data||[]).reduce(function(s,l){ return s + l._datos.length; }, 0);
+      var resumen = (data||[]).map(function(l){ return l.nombre+': '+l._datos.length; }).join(' · ');
+      if (logEl) logEl.innerHTML = '<div style="color:var(--vd);font-size:12px">✓ '+total.toLocaleString('es-MX')+' registros cargados<br><span style="color:var(--tx3)">'+resumen+'</span></div>';
+      toast('Listas actualizadas desde PEP Manager','s');
+    }, true);
+  });
 }
 
 function scrForzarActualizacion() {
