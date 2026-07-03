@@ -7601,9 +7601,12 @@ function cargarListasScreening(cb, forzar) {
               pais:String(r.nacionalidad||'').trim(), uid:String(r.id_original||'').trim(),
               programa:String(r.programa_motivo||'').trim(), lista:origen };
             pushEntrada(origen, origen, 'Sancion/Fiscal', ent);
-            var al = String(r.alias||'').trim();
-            if (al && al.toUpperCase()!==nom.toUpperCase())
-              pushEntrada(origen, origen, 'Sancion/Fiscal', { nombre:al, alias:nom, tipo:ent.tipo, pais:ent.pais, uid:ent.uid, programa:ent.programa, lista:origen, esAlias:true });
+            // Separar múltiples alias en una misma celda (; | o saltos de línea) → una entrada por alias
+            String(r.alias||'').split(/\s*[;|]\s*|\r?\n/).forEach(function(al){
+              al = al.trim();
+              if (al && al.toUpperCase()!==nom.toUpperCase())
+                pushEntrada(origen, origen, 'Sancion/Fiscal', { nombre:al, alias:nom, tipo:ent.tipo, pais:ent.pais, uid:ent.uid, programa:ent.programa, lista:origen, esAlias:true });
+            });
           });
         });
       }
