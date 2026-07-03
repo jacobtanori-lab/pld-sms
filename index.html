@@ -7501,17 +7501,49 @@ var PEPM_OD_CARPETA = 'Apps/PEP-Manager';        // en el OneDrive del usuario (
 var PEPM_FILE_INT   = 'listas_internacionales.xlsx';
 var PEPM_FILE_PEP   = 'database.xlsx';
 var PEPM_CONFIG_KEY = 'pepm_sync';                // fecha de última sincronización en PLD_Config
+var PEPM_SHARES_KEY = 'pepm_shares';              // enlaces compartidos de los archivos (OneDrive personal)
 var PEPM_DIAS_SYNC  = 1;                           // re-sincroniza si pasó más de N días
 
 function _rutaEnc(ruta){ return ruta.split('/').map(encodeURIComponent).join('/'); }
 
+// Codifica una URL de compartir de OneDrive para el endpoint /shares/ de Graph
+function _encodeShareUrl(u){
+  var b64 = btoa(unescape(encodeURIComponent(String(u).trim())));
+  return 'u!' + b64.replace(/=+$/,'').replace(/\//g,'_').replace(/\+/g,'-');
+}
+
+// Carga los enlaces compartidos configurados (PLD_Config clave pepm_shares) → App._pepmShares = {int, pep}
+function cargarSharesPEPM(cb) {
+  spGet('PLD_Config', function(lista){
+    var item = null;
+    (lista||[]).forEach(function(c){ if(c.clave===PEPM_SHARES_KEY) item=c; });
+    App._pepmShares = item ? { int:item.int||'', pep:item.pep||'', id:item.id } : { int:'', pep:'' };
+    if (cb) cb(App._pepmShares);
+  });
+}
+
+// Guarda/actualiza los enlaces compartidos (solo admin lo usa desde la UI)
+function guardarSharesPEPM(urlInt, urlPep, cb) {
+  var datos = { clave: PEPM_SHARES_KEY, Title: PEPM_SHARES_KEY, int: (urlInt||'').trim(), pep: (urlPep||'').trim() };
+  var id = App._pepmShares && App._pepmShares.id;
+  if (id) spUpdate('PLD_Config', id, datos, function(){ App._pepmShares={int:datos.int,pep:datos.pep,id:id}; if(cb)cb(); });
+  else spCreate('PLD_Config', datos, function(item){ if(item){ App._pepmShares={int:datos.int,pep:datos.pep,id:item.id}; } if(cb)cb(); });
+}
+
 // Sincroniza los .xlsx desde el OneDrive del usuario (PEP Manager) al SharePoint del sitio.
 // Solo funciona en la sesión del dueño de los archivos (/me/drive); si no existen, se omite.
 function sincronizarPEPManager(cb) {
-  var archivos = [PEPM_FILE_INT, PEPM_FILE_PEP];
+  var sh = App._pepmShares || {};
+  // Cada archivo: {nombre destino, url de lectura}. Prefiere enlace compartido; si no, /me/drive.
+  var archivos = [
+    { f: PEPM_FILE_INT, url: sh.int ? GRAPH+'/shares/'+_encodeShareUrl(sh.int)+'/driveItem/content'
+        : GRAPH+'/me/drive/root:/'+_rutaEnc(PEPM_OD_CARPETA)+'/'+encodeURIComponent(PEPM_FILE_INT)+':/content' },
+    { f: PEPM_FILE_PEP, url: sh.pep ? GRAPH+'/shares/'+_encodeShareUrl(sh.pep)+'/driveItem/content'
+        : GRAPH+'/me/drive/root:/'+_rutaEnc(PEPM_OD_CARPETA)+'/'+encodeURIComponent(PEPM_FILE_PEP)+':/content' }
+  ];
   var pend = archivos.length, copiados = 0, errs = 0, detalles = [];
-  archivos.forEach(function(f){
-    var urlGet = GRAPH+'/me/drive/root:/'+_rutaEnc(PEPM_OD_CARPETA)+'/'+encodeURIComponent(f)+':/content';
+  archivos.forEach(function(item){
+    var f = item.f, urlGet = item.url;
     fetch(urlGet, {headers:{'Authorization':'Bearer '+App.token}})
       .then(function(r){
         if(!r.ok) { return r.text().then(function(t){ throw new Error('lectura '+f+' → HTTP '+r.status+' '+(t||'').substring(0,140)); }); }
@@ -7600,6 +7632,9 @@ function cargarListasScreening(cb, forzar) {
 
 // Auto-sync al iniciar sesión (solo en la sesión del dueño de los archivos), si toca por cadencia.
 function autoSyncPEPManager() {
+  cargarSharesPEPM(function(){ _autoSyncPEPManager(); });
+}
+function _autoSyncPEPManager() {
   scrLeerConfigFechas(function(fechas, configId){
     var ultima = fechas[PEPM_CONFIG_KEY];
     var vencido = !ultima || ((Date.now() - new Date(ultima).getTime()) / 86400000) >= PEPM_DIAS_SYNC;
@@ -8120,6 +8155,7 @@ function pgScreening() {
 
   sbHtml += '<div style="padding:8px 12px">'
     + '<button class="btn btn-p" style="width:100%;font-size:11px;margin-bottom:6px" onclick="scrActualizarDesdePEPManager()">⤓ Actualizar desde PEP Manager</button>'
+    + (App.rol==='admin' ? '<button class="btn" style="width:100%;font-size:11px;margin-bottom:6px" onclick="scrConfigurarSharesPEPM()">⚙ Configurar enlaces PEP Manager</button>' : '')
     + '<button class="btn" style="width:100%;font-size:11px" onclick="scrForzarActualizacion()">↻ Actualizar listas (fuentes)</button>'
     + '</div>'
     + '<div id="scr-log-actualizacion" style="padding:4px 12px"></div>';
@@ -8131,11 +8167,26 @@ function pgScreening() {
   setTimeout(scrVerificarYActualizarAlAbrir, 500);
 }
 
+// Abre un diálogo para pegar los enlaces compartidos de OneDrive de los dos archivos
+function scrConfigurarSharesPEPM() {
+  if (App.rol !== 'admin') { toast('Solo un administrador puede configurar los enlaces','e'); return; }
+  cargarSharesPEPM(function(sh){
+    var urlInt = prompt('Enlace compartido de listas_internacionales.xlsx\n(OneDrive → Compartir → "Cualquier persona con el vínculo puede ver" → Copiar vínculo):', sh.int||'');
+    if (urlInt === null) return;
+    var urlPep = prompt('Enlace compartido de database.xlsx (PEP nacionales):', sh.pep||'');
+    if (urlPep === null) return;
+    guardarSharesPEPM(urlInt, urlPep, function(){
+      toast('Enlaces de PEP Manager guardados','s');
+      scrActualizarDesdePEPManager();
+    });
+  });
+}
+
 // Sincroniza y recarga las listas desde PEP Manager (manual, con feedback en el log)
 function scrActualizarDesdePEPManager() {
   var logEl = document.getElementById('scr-log-actualizacion');
   if (logEl) logEl.innerHTML = '<div style="color:var(--am);font-size:12px">Sincronizando desde PEP Manager…</div>';
-  sincronizarPEPManager(function(copiados, errs, detalles){
+  var _run = function(){ sincronizarPEPManager(function(copiados, errs, detalles){
     if (copiados === 0) {
       var det = (detalles && detalles.length) ? '<br><span style="color:var(--tx3);font-size:11px">'+detalles.join('<br>')+'</span>' : '';
       if (logEl) logEl.innerHTML = '<div style="color:var(--rj);font-size:12px">No se pudo leer PEP Manager. Verifica que los archivos existan en tu OneDrive /Apps/PEP-Manager y que seas tú quien inicia sesión.'+det+'</div>';
@@ -8154,7 +8205,8 @@ function scrActualizarDesdePEPManager() {
       if (logEl) logEl.innerHTML = '<div style="color:var(--vd);font-size:12px">✓ '+total.toLocaleString('es-MX')+' registros cargados<br><span style="color:var(--tx3)">'+resumen+'</span></div>';
       toast('Listas actualizadas desde PEP Manager','s');
     }, true);
-  });
+  }); };
+  if (App._pepmShares) _run(); else cargarSharesPEPM(function(){ _run(); });
 }
 
 function scrForzarActualizacion() {
