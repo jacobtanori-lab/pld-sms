@@ -3921,10 +3921,11 @@ function submitCliente(tipo, idEx) {
     } else {
       spCreate('PLD_Clientes', datos, function(item) {
         if (item) {
+          datos.num_cliente = item.num_cliente;
           _subirDocsPendientes(item.num_cliente, datos.Title || nombreClienteDatos(datos));
+          subirConstanciaScreening(datos);   // constancia de búsqueda contra listas
           if (evalAprob.dispara) {
             datos.id_cliente_ref = item.id;
-            datos.num_cliente = item.num_cliente;
             crearAlertaAprobacion(datos, evalAprob);
             correoEnValidacion(datos);
             toast('Expediente #'+item.num_cliente+' en validación (PROSPECTO). Se notificó por correo.', 'w');
@@ -6249,6 +6250,102 @@ function scrEvaluarClienteCompleto(datos) {
     });
   });
   return resultados;
+}
+
+// ── Constancia de screening (PDF) para el expediente ─────────
+function cargarJsPDF(cb){
+  if (window.jspdf && window.jspdf.jsPDF) { cb(); return; }
+  var s = document.createElement('script');
+  s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+  s.onload = cb;
+  s.onerror = function(){ toast('No se pudo cargar el generador de PDF','e'); cb(); };
+  document.head.appendChild(s);
+}
+
+// Construye un reporte estructurado de la búsqueda contra listas
+function screeningReporte(datos){
+  var fuente = (App._scrData && App._scrData.length) ? App._scrData : SCR_LISTAS;
+  var listas = fuente.filter(function(l){ return l.activa && l._datos && l._datos.length > 0; });
+  var nombres = _nombresAScreening(datos);
+  var resultados = [];
+  nombres.forEach(function(n){
+    listas.forEach(function(l){
+      var matches = scrBuscarEnLista(n.nombre, l._datos, SCR.umbralMatch);
+      if (matches.length) resultados.push({ parte:n.parte, nombre:n.nombre, lista:l.nombre, matches:matches.slice(0,5) });
+    });
+  });
+  return {
+    listas: listas.map(function(l){ return { nombre:l.nombre, total:l._datos.length }; }),
+    nombres: nombres, umbral: SCR.umbralMatch, resultados: resultados
+  };
+}
+
+// Genera el PDF compacto de la constancia (devuelve ArrayBuffer)
+function generarConstanciaScreeningPDF(cliente, rep){
+  var doc = new window.jspdf.jsPDF({unit:'mm', format:'a4', compress:true});
+  var L = 12, W = 186, y = 14;
+  function txt(s, size, bold){
+    doc.setFontSize(size); doc.setFont('helvetica', bold?'bold':'normal');
+    doc.splitTextToSize(String(s), W).forEach(function(ln){
+      if (y > 285) { doc.addPage(); y = 14; }
+      doc.text(ln, L, y); y += size*0.42 + 0.6;
+    });
+  }
+  function sep(){ y += 1.2; doc.setDrawColor(200); if(y>285){doc.addPage();y=14;} doc.line(L,y,L+W,y); y += 2.5; }
+
+  txt('CONSTANCIA DE BÚSQUEDA EN LISTAS DE SANCIONES Y PEP', 11, true);
+  txt('PLD Corporativo SMS — ' + (cliente.entidad_nombre||cliente.entidad_id||''), 8);
+  sep();
+  txt('Fecha y hora: ' + new Date().toLocaleString('es-MX'), 8, true);
+  txt('Cliente: ' + (cliente.num_cliente||'') + ' — ' + nombreClienteDatos(cliente), 8);
+  txt('Tipo: ' + labelTipo(cliente.tipo) + (cliente.rfc?('   RFC: '+cliente.rfc):''), 8);
+  txt('Generado por: ' + (App.cuenta ? (App.cuenta.name||App.cuenta.username) : '') , 8);
+  txt('Umbral de similitud aplicado: ' + rep.umbral + '%', 8);
+  sep();
+  txt('Listas cotejadas (' + rep.listas.length + '):', 8, true);
+  if (rep.listas.length) txt(rep.listas.map(function(l){ return l.nombre+' ('+l.total.toLocaleString('es-MX')+')'; }).join('  ·  '), 7);
+  else txt('ADVERTENCIA: no había listas cargadas en memoria al momento de la búsqueda.', 8, true);
+  sep();
+  txt('Nombres / partes evaluadas (' + rep.nombres.length + '):', 8, true);
+  rep.nombres.forEach(function(n){ txt('•  ['+n.parte+']  '+n.nombre, 7); });
+  sep();
+  if (!rep.resultados.length) {
+    txt('RESULTADO: SIN COINCIDENCIAS por encima del umbral en las listas cotejadas.', 9, true);
+  } else {
+    txt('RESULTADO: ' + rep.resultados.length + ' coincidencia(s) detectada(s):', 9, true);
+    rep.resultados.forEach(function(r){
+      r.matches.forEach(function(m){
+        var e = m.entrada||{};
+        txt('•  ['+r.parte+'] "'+r.nombre+'"  →  '+r.lista+':  '+e.nombre+'  ('+m.score+'%)'
+          + (e.uid?('  ID:'+e.uid):'') + (e.pais?('  '+e.pais):'') + (e.programa?('  '+e.programa):''), 7);
+      });
+    });
+  }
+  sep();
+  txt('Documento generado automáticamente por el sistema PLD Corporativo SMS como constancia del cotejo contra listas de sanciones y personas políticamente expuestas. No admite modificaciones.', 6.5);
+
+  return doc.output('arraybuffer');
+}
+
+// Genera y sube la constancia a "Otros documentos soporte" del expediente
+function subirConstanciaScreening(cliente){
+  try {
+    var rep = screeningReporte(cliente);
+    cargarJsPDF(function(){
+      if (!(window.jspdf && window.jspdf.jsPDF)) return;
+      var buf = generarConstanciaScreeningPDF(cliente, rep);
+      var nom = (nombreClienteDatos(cliente)||'').replace(/[^a-zA-Z0-9_\-]/g,'_').substring(0,40);
+      var carpeta = 'PLD_Documentos/'+nStr(cliente.num_cliente)+'_'+nom;
+      var ts = new Date().toISOString().replace(/[:.]/g,'-').substring(0,19);
+      var fname = 'Otros_documentos_soporte_Constancia_Screening_'+ts+'.pdf';
+      var ruta = carpeta.split('/').map(encodeURIComponent).join('/') + '/' + encodeURIComponent(fname);
+      var url = GRAPH+'/sites/'+App.siteId+'/drive/root:/'+ruta+':/content';
+      fetch(url, {method:'PUT', headers:{'Authorization':'Bearer '+App.token,'Content-Type':'application/pdf'}, body:buf})
+        .then(function(r){ return r.json(); })
+        .then(function(d){ if (d && d.id) toast('📄 Constancia de screening guardada en el expediente','s'); })
+        .catch(function(e){ console.warn('[CONSTANCIA] no se pudo subir:', e); });
+    });
+  } catch(e){ console.warn('[CONSTANCIA] error:', e); }
 }
 
 function scrAlertarCliente(nombreCliente, idCli, numCli) {
