@@ -7377,11 +7377,13 @@ function scrIDF(t) {
   return Math.log((N + 1) / ((df[t] || 0) + 1)) + 0.5;
 }
 
-// ¿Todos los tokens significativos de 'chico' están en 'grande'? (coincidencia de subconjunto)
+// ¿Todos los tokens significativos DISTINTOS de 'chico' están en 'grande'? (subconjunto)
 function scrSubset(chico, grande) {
+  // Tokens significativos únicos (evita que "Ismael Ismael" cuente como 2 tokens)
   var sig = chico.filter(function(t){ return t.length > 2; });
-  if (sig.length < 2) return false;
-  return sig.every(function(t){ return grande.indexOf(t) >= 0; });
+  var distintos = sig.filter(function(t,i){ return sig.indexOf(t) === i; });
+  if (distintos.length < 2) return false;                 // requiere ≥2 tokens distintos
+  return distintos.every(function(t){ return grande.indexOf(t) >= 0; });
 }
 
 // Núcleo de similitud sobre nombres ya normalizados (0–100)
