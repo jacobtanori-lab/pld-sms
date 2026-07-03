@@ -7509,18 +7509,24 @@ function _rutaEnc(ruta){ return ruta.split('/').map(encodeURIComponent).join('/'
 // Solo funciona en la sesión del dueño de los archivos (/me/drive); si no existen, se omite.
 function sincronizarPEPManager(cb) {
   var archivos = [PEPM_FILE_INT, PEPM_FILE_PEP];
-  var pend = archivos.length, copiados = 0, errs = 0;
+  var pend = archivos.length, copiados = 0, errs = 0, detalles = [];
   archivos.forEach(function(f){
     var urlGet = GRAPH+'/me/drive/root:/'+_rutaEnc(PEPM_OD_CARPETA)+'/'+encodeURIComponent(f)+':/content';
     fetch(urlGet, {headers:{'Authorization':'Bearer '+App.token}})
-      .then(function(r){ if(!r.ok) throw new Error('http '+r.status); return r.arrayBuffer(); })
+      .then(function(r){
+        if(!r.ok) { return r.text().then(function(t){ throw new Error('lectura '+f+' → HTTP '+r.status+' '+(t||'').substring(0,140)); }); }
+        return r.arrayBuffer();
+      })
       .then(function(buf){
         var urlPut = GRAPH+'/sites/'+App.siteId+'/drive/root:/'+_rutaEnc(SCR_CARPETA_OD)+'/'+encodeURIComponent(f)+':/content';
         return fetch(urlPut, {method:'PUT', headers:{'Authorization':'Bearer '+App.token,'Content-Type':'application/octet-stream'}, body:buf})
-          .then(function(rp){ if(rp.ok) copiados++; else errs++; });
+          .then(function(rp){
+            if(rp.ok){ copiados++; }
+            else { return rp.text().then(function(t){ throw new Error('escritura '+f+' → HTTP '+rp.status+' '+(t||'').substring(0,140)); }); }
+          });
       })
-      .catch(function(e){ console.warn('[PEPM] no se pudo sincronizar '+f+':', e.message); errs++; })
-      .then(function(){ if(--pend===0){ if(cb) cb(copiados, errs); } });
+      .catch(function(e){ console.warn('[PEPM]', e.message); errs++; detalles.push(e.message); })
+      .then(function(){ if(--pend===0){ App._pepmError = detalles.join(' | '); if(cb) cb(copiados, errs, detalles); } });
   });
 }
 
@@ -8129,9 +8135,10 @@ function pgScreening() {
 function scrActualizarDesdePEPManager() {
   var logEl = document.getElementById('scr-log-actualizacion');
   if (logEl) logEl.innerHTML = '<div style="color:var(--am);font-size:12px">Sincronizando desde PEP Manager…</div>';
-  sincronizarPEPManager(function(copiados, errs){
+  sincronizarPEPManager(function(copiados, errs, detalles){
     if (copiados === 0) {
-      if (logEl) logEl.innerHTML = '<div style="color:var(--rj);font-size:12px">No se pudo leer PEP Manager. Verifica que los archivos existan en tu OneDrive /Apps/PEP-Manager y que seas tú quien inicia sesión.</div>';
+      var det = (detalles && detalles.length) ? '<br><span style="color:var(--tx3);font-size:11px">'+detalles.join('<br>')+'</span>' : '';
+      if (logEl) logEl.innerHTML = '<div style="color:var(--rj);font-size:12px">No se pudo leer PEP Manager. Verifica que los archivos existan en tu OneDrive /Apps/PEP-Manager y que seas tú quien inicia sesión.'+det+'</div>';
       toast('No se pudo sincronizar desde PEP Manager','e');
       return;
     }
