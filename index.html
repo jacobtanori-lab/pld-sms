@@ -7327,29 +7327,109 @@ function scrNorm(s) {
   return scrStripLegal(n);
 }
 
-// Calcula similitud entre dos strings (0–100)
-// Algoritmo: combinación de coincidencia de tokens + Dice coefficient
-function scrSimilitud(a, b) {
-  var na = scrNorm(a), nb = scrNorm(b);
-  if (!na || !nb) return 0;
-  if (na === nb) return 100;
+// Dice coefficient (0–100) sobre bigramas de dos strings ya sin espacios
+function scrDice(sa, sb) {
+  if (!sa || !sb) return 0;
+  function bg(s){ var a=[]; for (var i=0;i<s.length-1;i++) a.push(s.substr(i,2)); return a; }
+  var ba = bg(sa), bb = bg(sb);
+  if (!ba.length || !bb.length) return 0;
+  var inter = ba.filter(function(g){ return bb.indexOf(g) >= 0; }).length;
+  return Math.round(2 * inter / (ba.length + bb.length) * 100);
+}
 
-  // Coincidencia exacta de tokens clave
-  var ta = na.split(' '), tb = nb.split(' ');
-  var comunes = ta.filter(function(t){ return t.length > 2 && tb.indexOf(t) >= 0; });
-  var tokenScore = comunes.length > 0 ? Math.round(comunes.length / Math.max(ta.length, tb.length) * 100) : 0;
-
-  // Dice coefficient sobre bigramas
-  function bigramas(s) {
-    var bg = [];
-    for (var i=0; i<s.length-1; i++) bg.push(s.substring(i,i+2));
-    return bg;
+// Jaro-Winkler (0–100): favorece coincidencias al inicio (bueno para nombres)
+function scrJaroWinkler(s1, s2) {
+  if (s1 === s2) return 100;
+  if (!s1.length || !s2.length) return 0;
+  var md = Math.max(0, Math.floor(Math.max(s1.length, s2.length) / 2) - 1);
+  var m1 = new Array(s1.length), m2 = new Array(s2.length), m = 0;
+  for (var i=0; i<s1.length; i++) {
+    var lo = Math.max(0, i-md), hi = Math.min(i+md+1, s2.length);
+    for (var j=lo; j<hi; j++) if (!m2[j] && s1[i]===s2[j]) { m1[i]=m2[j]=true; m++; break; }
   }
-  var ba = bigramas(na.replace(/\s/g,'')), bb = bigramas(nb.replace(/\s/g,''));
-  var intersect = ba.filter(function(bg){ return bb.indexOf(bg) >= 0; }).length;
-  var dice = ba.length + bb.length > 0 ? Math.round(2 * intersect / (ba.length + bb.length) * 100) : 0;
+  if (!m) return 0;
+  var t = 0, k = 0;
+  for (var x=0; x<s1.length; x++) if (m1[x]) { while(!m2[k]) k++; if (s1[x]!==s2[k]) t++; k++; }
+  t = t/2;
+  var jaro = (m/s1.length + m/s2.length + (m-t)/m) / 3;
+  var p = 0; for (var l=0; l<Math.min(4, s1.length, s2.length); l++){ if (s1[l]===s2[l]) p++; else break; }
+  return Math.round((jaro + p*0.1*(1-jaro)) * 100);
+}
 
-  return Math.round((tokenScore * 0.5) + (dice * 0.5));
+// Código fonético simplificado (español / transliteraciones): colapsa sonidos equivalentes
+function scrFon(t) {
+  t = String(t).replace(/[^a-zñ]/g,'');
+  if (!t) return '';
+  return t
+    .replace(/h/g,'')
+    .replace(/qu/g,'k').replace(/q/g,'k')
+    .replace(/gu([ei])/g,'g$1').replace(/g([ei])/g,'j$1')
+    .replace(/c([ei])/g,'s$1').replace(/c/g,'k').replace(/z/g,'s')
+    .replace(/ll/g,'y').replace(/v/g,'b').replace(/w/g,'b')
+    .replace(/x/g,'ks').replace(/ñ/g,'ni')
+    .replace(/(.)\1+/g,'$1');
+}
+
+// Peso IDF de un token (más raro → más peso). Usa el mapa construido al cargar listas.
+function scrIDF(t) {
+  var df = App._scrTokenDF, N = App._scrTotalDocs || 0;
+  if (!df || !N) return 1;
+  return Math.log((N + 1) / ((df[t] || 0) + 1)) + 0.5;
+}
+
+// ¿Todos los tokens significativos de 'chico' están en 'grande'? (coincidencia de subconjunto)
+function scrSubset(chico, grande) {
+  var sig = chico.filter(function(t){ return t.length > 2; });
+  if (sig.length < 2) return false;
+  return sig.every(function(t){ return grande.indexOf(t) >= 0; });
+}
+
+// Núcleo de similitud sobre nombres ya normalizados (0–100)
+function scrSimilCore(qNorm, qTokens, eNorm) {
+  if (!qNorm || !eNorm) return 0;
+  if (qNorm === eNorm) return 100;
+  var eTokens = eNorm.split(' ');
+
+  // 1) Tokens comunes ponderados por IDF
+  var union = {};
+  qTokens.concat(eTokens).forEach(function(t){ if (t.length > 2) union[t] = 1; });
+  var num = 0, den = 0;
+  Object.keys(union).forEach(function(t){
+    var w = scrIDF(t); den += w;
+    if (qTokens.indexOf(t) >= 0 && eTokens.indexOf(t) >= 0) num += w;
+  });
+  var tokenScore = den > 0 ? Math.round(num / den * 100) : 0;
+
+  // 2) Dice sobre bigramas
+  var dice = scrDice(qNorm.replace(/\s/g,''), eNorm.replace(/\s/g,''));
+
+  // Coincidencia de subconjunto (uno contenido en el otro)
+  var sub = scrSubset(qTokens, eTokens) || scrSubset(eTokens, qTokens);
+
+  // Corte barato: nombres claramente distintos no ameritan JW/fonético
+  if (!sub && tokenScore < 20 && dice < 40) return Math.round(tokenScore * 0.5 + dice * 0.5);
+
+  // 3) Jaro-Winkler
+  var jw = scrJaroWinkler(qNorm.replace(/\s/g,''), eNorm.replace(/\s/g,''));
+
+  // 4) Coincidencia fonética por token
+  var qf = qTokens.filter(function(t){return t.length>2;}).map(scrFon);
+  var ef = eTokens.filter(function(t){return t.length>2;}).map(scrFon);
+  var phon = 0;
+  if (qf.length && ef.length) {
+    var pm = qf.filter(function(f){ return f && ef.indexOf(f) >= 0; }).length;
+    phon = Math.round(pm / Math.max(qf.length, ef.length) * 100);
+  }
+
+  var base = tokenScore * 0.35 + dice * 0.25 + jw * 0.25 + phon * 0.15;
+  if (sub) base = Math.max(base, 90);   // subconjunto completo → coincidencia fuerte
+  return Math.max(0, Math.min(100, Math.round(base)));
+}
+
+// Similitud entre dos strings (0–100) — normaliza y delega al núcleo
+function scrSimilitud(a, b) {
+  var na = scrNorm(a);
+  return scrSimilCore(na, na.split(' '), scrNorm(b));
 }
 
 // ── Parsers de CSV/XML ────────────────────────────────────────
@@ -7747,7 +7827,17 @@ function cargarListasScreening(cb, forzar) {
         var arr = Object.keys(listas).map(function(k){ return listas[k]; });
         var total = arr.reduce(function(s,l){ return s + l._datos.length; }, 0);
         // Solo cachear si realmente cargó datos; si vino vacío, dejar null para reintentar
-        if (total > 0) { App._scrData = arr; App._scrDataFecha = new Date(); }
+        if (total > 0) {
+          // Precalcular nombre normalizado y construir mapa IDF (frecuencia de documento por token)
+          var df = {}, N = 0;
+          arr.forEach(function(l){ l._datos.forEach(function(e){
+            var nn = scrNorm(e.nombre); e._norm = nn; N++;
+            var vistos = {};
+            nn.split(' ').forEach(function(t){ if (t.length > 2 && !vistos[t]) { vistos[t] = 1; df[t] = (df[t]||0) + 1; } });
+          }); });
+          App._scrTokenDF = df; App._scrTotalDocs = N;
+          App._scrData = arr; App._scrDataFecha = new Date();
+        }
         console.log('[PEPM] listas cargadas:', total, 'registros');
         if (cb) cb(App._scrData || arr);
       });
@@ -8060,12 +8150,13 @@ function scrBuscarOpenSanctions(nombre, cb) {
 
 // ── Buscar en una lista ya cargada ────────────────────────────
 function scrBuscarEnLista(nombre, datos, umbral) {
+  var qNorm = scrNorm(nombre);
+  var qTokens = qNorm.split(' ');
   var matches = [];
   datos.forEach(function(entrada) {
-    var score = scrSimilitud(nombre, entrada.nombre);
-    if (score >= umbral) {
-      matches.push({ score: score, entrada: entrada });
-    }
+    var eNorm = entrada._norm || (entrada._norm = scrNorm(entrada.nombre));
+    var score = scrSimilCore(qNorm, qTokens, eNorm);
+    if (score >= umbral) matches.push({ score: score, entrada: entrada });
   });
   matches.sort(function(a,b){ return b.score - a.score; });
   return matches.slice(0, 10); // top 10 por lista
