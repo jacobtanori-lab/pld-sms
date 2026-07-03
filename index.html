@@ -7635,18 +7635,11 @@ function autoSyncPEPManager() {
   cargarSharesPEPM(function(){ _autoSyncPEPManager(); });
 }
 function _autoSyncPEPManager() {
-  scrLeerConfigFechas(function(fechas, configId){
-    var ultima = fechas[PEPM_CONFIG_KEY];
-    var vencido = !ultima || ((Date.now() - new Date(ultima).getTime()) / 86400000) >= PEPM_DIAS_SYNC;
-    if (!vencido) { cargarListasScreening(function(){}); return; }
-    sincronizarPEPManager(function(copiados){
-      if (copiados > 0) {
-        fechas[PEPM_CONFIG_KEY] = new Date().toISOString();
-        scrGuardarConfigFechas(fechas, configId);
-        console.log('[PEPM] sincronizados', copiados, 'archivo(s) desde PEP Manager');
-      }
-      cargarListasScreening(function(){}, true);
-    });
+  // Los archivos se suben manualmente a SharePoint (cross-cuenta no es posible);
+  // al iniciar sesión solo cargamos en memoria las copias ya guardadas.
+  cargarListasScreening(function(data){
+    var total = (data||[]).reduce(function(s,l){ return s + l._datos.length; }, 0);
+    if (total) console.log('[PEPM] listas cargadas al iniciar:', total, 'registros');
   });
 }
 
@@ -8154,8 +8147,11 @@ function pgScreening() {
   });
 
   sbHtml += '<div style="padding:8px 12px">'
-    + '<button class="btn btn-p" style="width:100%;font-size:11px;margin-bottom:6px" onclick="scrActualizarDesdePEPManager()">⤓ Actualizar desde PEP Manager</button>'
-    + (App.rol==='admin' ? '<button class="btn" style="width:100%;font-size:11px;margin-bottom:6px" onclick="scrConfigurarSharesPEPM()">⚙ Configurar enlaces PEP Manager</button>' : '')
+    + (App.rol==='admin'
+        ? '<label class="btn btn-p" style="width:100%;font-size:11px;margin-bottom:6px;cursor:pointer;display:block;text-align:center">⤒ Subir listas (.xlsx) de PEP Manager'
+          + '<input type="file" accept=".xlsx" multiple style="display:none" onchange="scrSubirXlsxPEPM(this)"></label>'
+        : '')
+    + '<button class="btn" style="width:100%;font-size:11px;margin-bottom:6px" onclick="scrRecargarListasGuardadas()">⤓ Recargar listas guardadas</button>'
     + '<button class="btn" style="width:100%;font-size:11px" onclick="scrForzarActualizacion()">↻ Actualizar listas (fuentes)</button>'
     + '</div>'
     + '<div id="scr-log-actualizacion" style="padding:4px 12px"></div>';
@@ -8180,6 +8176,60 @@ function scrConfigurarSharesPEPM() {
       scrActualizarDesdePEPManager();
     });
   });
+}
+
+// Re-parsea las listas ya guardadas en SharePoint (sin volver a subir).
+function scrRecargarListasGuardadas() {
+  var logEl = document.getElementById('scr-log-actualizacion');
+  if (logEl) logEl.innerHTML = '<div style="color:var(--am);font-size:12px">Cargando listas desde SharePoint…</div>';
+  cargarListasScreening(function(data){
+    var total = (data||[]).reduce(function(s,l){ return s + l._datos.length; }, 0);
+    if (!total) {
+      if (logEl) logEl.innerHTML = '<div style="color:var(--rj);font-size:12px">No hay listas cargadas en SharePoint. Sube los archivos con el botón de arriba.</div>';
+      return;
+    }
+    var resumen = (data||[]).map(function(l){ return l.nombre+': '+l._datos.length; }).join(' · ');
+    if (logEl) logEl.innerHTML = '<div style="color:var(--vd);font-size:12px">✓ '+total.toLocaleString('es-MX')+' registros cargados<br><span style="color:var(--tx3)">'+resumen+'</span></div>';
+    toast('Listas cargadas ('+total.toLocaleString('es-MX')+' registros)','s');
+  }, true);
+}
+
+// Sube los .xlsx desde el equipo a la carpeta de SharePoint que la app lee, y recarga.
+function scrSubirXlsxPEPM(input) {
+  var files = Array.prototype.slice.call(input.files || []);
+  input.value = '';
+  if (!files.length) return;
+  var logEl = document.getElementById('scr-log-actualizacion');
+  if (logEl) logEl.innerHTML = '<div style="color:var(--am);font-size:12px">Subiendo '+files.length+' archivo(s) a SharePoint…</div>';
+  var pend = files.length, ok = 0, errs = [];
+  files.forEach(function(file){
+    var destino = /internacional/i.test(file.name) ? PEPM_FILE_INT
+                : /database|pep/i.test(file.name)   ? PEPM_FILE_PEP
+                : file.name;
+    var reader = new FileReader();
+    reader.onload = function(e){
+      scrSubirArchivoOD(destino, e.target.result, true, function(err){
+        if (err) { errs.push(destino+': '+err.message); } else { ok++; }
+        if (--pend === 0) finalizar();
+      });
+    };
+    reader.readAsArrayBuffer(file);
+  });
+  function finalizar(){
+    if (ok === 0) {
+      if (logEl) logEl.innerHTML = '<div style="color:var(--rj);font-size:12px">No se pudo subir. '+errs.join(' | ')+'</div>';
+      toast('Error al subir los archivos','e'); return;
+    }
+    // Registrar fecha
+    scrLeerConfigFechas(function(fechas, configId){ fechas[PEPM_CONFIG_KEY]=new Date().toISOString(); scrGuardarConfigFechas(fechas, configId); });
+    if (logEl) logEl.innerHTML = '<div style="color:var(--tx3);font-size:12px">'+ok+' archivo(s) en SharePoint. Cargando registros…</div>';
+    cargarListasScreening(function(data){
+      var total = (data||[]).reduce(function(s,l){ return s + l._datos.length; }, 0);
+      var resumen = (data||[]).map(function(l){ return l.nombre+': '+l._datos.length; }).join(' · ');
+      if (logEl) logEl.innerHTML = '<div style="color:var(--vd);font-size:12px">✓ '+total.toLocaleString('es-MX')+' registros cargados<br><span style="color:var(--tx3)">'+resumen+'</span></div>';
+      toast('Listas actualizadas ('+total.toLocaleString('es-MX')+' registros)','s');
+    }, true);
+  }
 }
 
 // Sincroniza y recarga las listas desde PEP Manager (manual, con feedback en el log)
