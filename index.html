@@ -6222,7 +6222,7 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
 // Evalúa un nombre contra las listas de screening cargadas y DEVUELVE las coincidencias (sin crear alerta)
 function scrEvaluarCliente(nombreCliente) {
   // Preferir las listas de PEP Manager (App._scrData); si no, las de SCR_LISTAS
-  var fuente = (App._scrData && App._scrData.length) ? App._scrData : SCR_LISTAS;
+  var fuente = App._scrData || [];   // fuente única: archivos de PEP Manager
   var conDatos = fuente.filter(function(l){ return l.activa && l._datos && l._datos.length > 0; });
   if (!conDatos.length) return [];
   var coincidencias = [];
@@ -6283,7 +6283,7 @@ function cargarJsPDF(cb){
 
 // Construye un reporte estructurado de la búsqueda contra listas
 function screeningReporte(datos){
-  var fuente = (App._scrData && App._scrData.length) ? App._scrData : SCR_LISTAS;
+  var fuente = App._scrData || [];   // fuente única: archivos de PEP Manager
   var listas = fuente.filter(function(l){ return l.activa && l._datos && l._datos.length > 0; });
   var nombres = _nombresAScreening(datos);
   var resultados = [];
@@ -8198,61 +8198,21 @@ function scrGuardarResultado(nombre, resultados, clienteId, clienteNom) {
 
 // ── Ejecutar screening sobre un nombre ───────────────────────
 function scrEjecutar(nombre, clienteId, clienteNom, cbResultados) {
-  var listasActivas = SCR_LISTAS.filter(function(l){ return l.activa && SCR.listasSeleccionadas.indexOf(l.id) >= 0; });
-  var pepm = (App._scrData || []).filter(function(l){ return l._datos && l._datos.length; });
-  var pendientes = listasActivas.length + pepm.length;
-  var resultados = [];
+  // Fuente única: listas cargadas desde los archivos de PEP Manager (App._scrData)
+  var data = (App._scrData || []).filter(function(l){ return l._datos && l._datos.length; });
+  // Respetar selección de listas; si no hay selección válida, consultar todas
+  var sel = SCR.listasSeleccionadas || [];
+  var listas = data.filter(function(l){ return sel.indexOf(l.id) >= 0; });
+  if (!listas.length) listas = data;   // por defecto todas
 
-  if (!pendientes) { if (cbResultados) cbResultados([]); return; }
+  if (!listas.length) { toast('No hay listas cargadas para consultar','w'); if (cbResultados) cbResultados([]); return; }
 
-  // Listas de PEP Manager (búsqueda síncrona en memoria)
-  pepm.forEach(function(lista) {
+  var resultados = listas.map(function(lista){
     var matches = scrBuscarEnLista(nombre, lista._datos, SCR.umbralMatch);
-    resultados.push({ listaId: lista.id, lista: lista.nombre, matches: matches, total: lista._datos.length });
-    pendientes--;
+    return { listaId: lista.id, lista: scrNombreLista(lista), matches: matches, total: lista._datos.length };
   });
-  if (pendientes === 0) {
-    scrGuardarResultado(nombre, resultados, clienteId, clienteNom);
-    if (cbResultados) cbResultados(resultados);
-    return;
-  }
-
-  function registrarResultado(listaId, listaNombre, matches, total) {
-    resultados.push({ listaId: listaId, lista: listaNombre, matches: matches, total: total });
-    pendientes--;
-    if (pendientes === 0) {
-      resultados.sort(function(a,b){
-        var ia = SCR_LISTAS.findIndex(function(l){ return l.id===a.listaId; });
-        var ib = SCR_LISTAS.findIndex(function(l){ return l.id===b.listaId; });
-        return ia - ib;
-      });
-      scrGuardarResultado(nombre, resultados, clienteId, clienteNom);
-      if (cbResultados) cbResultados(resultados);
-    }
-  }
-
-  listasActivas.forEach(function(lista) {
-    if (lista.tipo === 'api') {
-      SCR.cargando[lista.id] = true;
-      scrActualizarEstadoListas();
-      scrBuscarOpenSanctions(nombre, function(err, matches, total) {
-        SCR.cargando[lista.id] = false;
-        if (err) {
-          lista._error = err.message;
-          console.error('[SCR OpenSanctions]', err.message);
-        } else {
-          lista._error = null;
-        }
-        scrActualizarEstadoListas();
-        registrarResultado(lista.id, lista.nombre, err ? [] : matches, total);
-      });
-    } else {
-      scrCargarLista(lista, function(datos) {
-        var matches = scrBuscarEnLista(nombre, datos, SCR.umbralMatch);
-        registrarResultado(lista.id, lista.nombre, matches, datos.length);
-      });
-    }
-  });
+  scrGuardarResultado(nombre, resultados, clienteId, clienteNom);
+  if (cbResultados) cbResultados(resultados);
 }
 
 // ── Renderizar resultado de una búsqueda ─────────────────────
@@ -8371,40 +8331,49 @@ function pgScreening() {
     + '<div class="sb-item" onclick="scrVistaCliente()">Por cliente</div>'
     + '<div class="sb-item" onclick="scrVistaMasivo()">Screening masivo</div>'
     + '<div class="sb-item" onclick="scrVistaHistorial()">Historial</div>'
-    + '<div class="sb-sec" style="margin-top:12px">Listas</div>';
-
-  SCR_LISTAS.forEach(function(lista) {
-    sbHtml += '<div style="padding:4px 12px;font-size:12px">'
-      + '<div style="display:flex;justify-content:space-between;align-items:center">'
-      + '<span style="color:var(--tx2)">' + lista.nombre + '</span>'
-      + '<span id="scr-estado-' + lista.id + '"><span style="color:var(--tx3);font-size:11px">—</span></span>'
-      + '</div>'
-      + '<div style="display:flex;gap:6px;margin-top:3px">'
-      + '<a href="' + lista.url + '" target="_blank" title="Abrir URL oficial en nueva pestaña" '
-      +   'style="font-size:10px;color:var(--az2);text-decoration:none;padding:2px 6px;border:1px solid var(--az2);border-radius:3px">🔗 URL oficial</a>'
-      + '<label title="Subir archivo descargado a OneDrive" '
-      +   'style="font-size:10px;color:var(--tx2);cursor:pointer;padding:2px 6px;border:1px solid var(--brd);border-radius:3px;background:var(--bg2)">📂 Subir archivo'
-      + '<input type="file" style="display:none" accept=".csv,.xml" onchange="scrSubirManual(\'' + lista.id + '\',this)">'
-      + '</label>'
-      + '</div>'
-      + '</div>';
-  });
+    + '<div class="sb-sec" style="margin-top:12px">Listas cargadas</div>'
+    + '<div id="scr-listas-sb" style="padding:4px 12px;font-size:12px"><span style="color:var(--tx3);font-size:11px">Cargando…</span></div>';
 
   sbHtml += '<div style="padding:8px 12px">'
     + (App.rol==='admin'
         ? '<label class="btn btn-p" style="width:100%;font-size:11px;margin-bottom:6px;cursor:pointer;display:block;text-align:center">⤒ Subir listas (.xlsx) de PEP Manager'
           + '<input type="file" accept=".xlsx" multiple style="display:none" onchange="scrSubirXlsxPEPM(this)"></label>'
         : '')
-    + '<button class="btn" style="width:100%;font-size:11px;margin-bottom:6px" onclick="scrRecargarListasGuardadas()">⤓ Recargar listas guardadas</button>'
-    + '<button class="btn" style="width:100%;font-size:11px" onclick="scrForzarActualizacion()">↻ Actualizar listas (fuentes)</button>'
+    + '<button class="btn" style="width:100%;font-size:11px" onclick="scrRecargarListasGuardadas()">⤓ Recargar listas guardadas</button>'
     + '</div>'
     + '<div id="scr-log-actualizacion" style="padding:4px 12px"></div>';
 
   setSB(sbHtml);
   scrVistaManual();
-  scrActualizarEstadoListas();
-  // Verificar listas vencidas al abrir el módulo
-  setTimeout(scrVerificarYActualizarAlAbrir, 500);
+  cargarListasScreening(function(){ scrRenderListasSidebar(); scrVistaManual(); });
+}
+
+// Nombres legibles por id de lista (App._scrData)
+var SCR_NOMBRES = {
+  OFAC_SDN:'OFAC SDN', OFAC_NONSDN:'OFAC Non-SDN', ONU:'ONU', UE:'Unión Europea',
+  SAT_69B:'SAT 69-B (México)', UK:'Reino Unido (UK)', PEP_NACIONAL:'PEP Nacional (México)'
+};
+function scrNombreLista(l){ return SCR_NOMBRES[l.id] || l.nombre || l.id; }
+
+// Renderiza en el sidebar las listas realmente cargadas desde los archivos, con su conteo
+function scrRenderListasSidebar(){
+  var el = document.getElementById('scr-listas-sb');
+  if (!el) return;
+  var data = App._scrData || [];
+  if (!data.length) {
+    el.innerHTML = '<span style="color:var(--tx3);font-size:11px">No hay listas cargadas. Sube los archivos de PEP Manager.</span>';
+    return;
+  }
+  var total = 0;
+  var filas = data.map(function(l){
+    total += l._datos.length;
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0">'
+      + '<span style="color:var(--tx2)">' + scrNombreLista(l) + '</span>'
+      + '<span style="color:var(--vd);font-size:11px">' + l._datos.length.toLocaleString('es-MX') + '</span></div>';
+  }).join('');
+  el.innerHTML = filas
+    + '<div style="border-top:1px solid var(--brd);margin-top:4px;padding-top:4px;display:flex;justify-content:space-between;font-weight:600">'
+    + '<span>Total</span><span style="color:var(--tx1)">' + total.toLocaleString('es-MX') + '</span></div>';
 }
 
 // Abre un diálogo para pegar los enlaces compartidos de OneDrive de los dos archivos
@@ -8541,12 +8510,20 @@ function scrVistaManual() {
     + '</div></div>'
     + '<div class="fg full"><label class="lbl">Listas a consultar</label>'
     + '<div style="display:flex;flex-wrap:wrap;gap:8px">'
-    + SCR_LISTAS.map(function(l){
-        var sel = SCR.listasSeleccionadas.indexOf(l.id) >= 0;
-        return '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12.5px">'
-          + '<input type="checkbox" ' + (sel?'checked':'') + ' onchange="scrToggleLista(\'' + l.id + '\',this.checked)">'
-          + l.nombre + '</label>';
-      }).join('')
+    + (function(){
+        var data = App._scrData || [];
+        if (!data.length) return '<span style="color:var(--tx3);font-size:12px">Sin listas cargadas — sube los archivos de PEP Manager.</span>';
+        // Por defecto todas seleccionadas si no hay selección válida previa
+        var ids = data.map(function(l){ return l.id; });
+        if (!SCR.listasSeleccionadas.some(function(x){ return ids.indexOf(x) >= 0; }))
+          SCR.listasSeleccionadas = ids.slice();
+        return data.map(function(l){
+          var sel = SCR.listasSeleccionadas.indexOf(l.id) >= 0;
+          return '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12.5px">'
+            + '<input type="checkbox" ' + (sel?'checked':'') + ' onchange="scrToggleLista(\'' + l.id + '\',this.checked)">'
+            + scrNombreLista(l) + ' <span style="color:var(--tx3)">('+l._datos.length.toLocaleString('es-MX')+')</span></label>';
+        }).join('');
+      })()
     + '</div></div>'
     + '</div>'
     + '<div style="padding:12px 16px;border-top:1px solid var(--brd);display:flex;justify-content:flex-end">'
@@ -8652,12 +8629,18 @@ function scrVistaMasivo() {
     + '<div class="alerta-banner" style="margin-bottom:12px">Este proceso consulta <strong>' + totalCli + ' clientes</strong> contra todas las listas seleccionadas. '
     + 'Puede tomar varios minutos dependiendo de la conexión. Los resultados se guardan en <strong>PLD_Screening</strong>.</div>'
     + '<div style="display:flex;gap:12px;flex-wrap:wrap">'
-    + SCR_LISTAS.map(function(l){
-        var sel = SCR.listasSeleccionadas.indexOf(l.id) >= 0;
-        return '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12.5px">'
-          + '<input type="checkbox" ' + (sel?'checked':'') + ' onchange="scrToggleLista(\'' + l.id + '\',this.checked)">'
-          + l.nombre + '</label>';
-      }).join('')
+    + (function(){
+        var data = App._scrData || [];
+        if (!data.length) return '<span style="color:var(--tx3);font-size:12px">Sin listas cargadas — sube los archivos de PEP Manager.</span>';
+        var ids = data.map(function(l){ return l.id; });
+        if (!SCR.listasSeleccionadas.some(function(x){ return ids.indexOf(x) >= 0; })) SCR.listasSeleccionadas = ids.slice();
+        return data.map(function(l){
+          var sel = SCR.listasSeleccionadas.indexOf(l.id) >= 0;
+          return '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12.5px">'
+            + '<input type="checkbox" ' + (sel?'checked':'') + ' onchange="scrToggleLista(\'' + l.id + '\',this.checked)">'
+            + scrNombreLista(l) + '</label>';
+        }).join('');
+      })()
     + '</div>'
     + '</div>'
     + '<div style="padding:12px 16px;border-top:1px solid var(--brd);display:flex;justify-content:flex-end;gap:8px">'
