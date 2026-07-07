@@ -6746,12 +6746,12 @@ function descargarLayoutOps() {
   cargarSheetJS(function(){
     if (typeof XLSX === 'undefined') { toast('No se pudo cargar el generador','e'); return; }
     // Hoja de datos
-    var cols = ['Num. Cliente','Nombre / Razon social','Fecha de pago (AAAA-MM-DD)',
+    var cols = ['Num. Cliente','RFC','Nombre / Razon social','Fecha de pago (AAAA-MM-DD)',
       'Forma de pago (codigo)','Instrumento monetario (codigo)','Moneda (codigo)',
       'Subtotal','IVA','Accesorios','Referencia de aviso','Observaciones'];
-    var ejemplo = ['CIN-0001','JUAN PEREZ LOPEZ','2026-07-01','1','1','1',100000,16000,0,'','Fila de ejemplo — borrar antes de cargar'];
+    var ejemplo = ['CIN-0001','','JUAN PEREZ LOPEZ','2026-07-01','1','1','1',100000,16000,0,'','Fila de ejemplo — borrar antes de cargar'];
     var wsDatos = XLSX.utils.aoa_to_sheet([cols, ejemplo]);
-    wsDatos['!cols'] = cols.map(function(c,i){ return {wch: (i===1?34:(i===10?30:16))}; });
+    wsDatos['!cols'] = cols.map(function(c,i){ return {wch: (i===2?34:(i===11?30:16))}; });
 
     // Hoja de catálogos (códigos válidos)
     var cat = [['CATALOGOS — usa el CODIGO (número) en las columnas correspondientes del layout'],[]];
@@ -6773,7 +6773,7 @@ function descargarLayoutOps() {
     var inst = [
       ['INSTRUCCIONES — Carga masiva de operaciones (PLD Corporativo SMS)'],[],
       ['1. Captura una operación por fila en la hoja "Operaciones".'],
-      ['2. Num. Cliente: usa el número del expediente (ej. CIN-0001). Si lo dejas vacío, se usa el Nombre/Razon social.'],
+      ['2. Identifica al cliente por Num. Cliente (ej. CIN-0001) O por RFC. Basta con llenar UNA de las dos; si dejas Num. Cliente vacío se buscará por el RFC. El Nombre/Razon social es solo de referencia.'],
       ['3. Fecha de pago: formato AAAA-MM-DD (ej. 2026-07-01).'],
       ['4. Forma de pago / Instrumento / Moneda: escribe el CODIGO numérico según la hoja "Catalogos".'],
       ['5. Subtotal, IVA y Accesorios: montos en pesos. El Total de operación se calcula solo (Subtotal + IVA + Accesorios).'],
@@ -6852,6 +6852,7 @@ function procesarExcel(data, fraccion) {
         }
         // Mapear columna
         if (val.indexOf('num') >= 0 && val.indexOf('cliente') >= 0) headerMap['num_cliente'] = c;
+        else if (val.indexOf('rfc') >= 0) headerMap['rfc'] = c;
         else if (val.indexOf('nombre') >= 0 || val.indexOf('raz') >= 0 || val.indexOf('cliente') >= 0) headerMap['nombre'] = c;
         else if (val.indexOf('fecha pago') >= 0 || val === 'fecha') headerMap['fecha'] = c;
         else if (val.indexOf('forma') >= 0) headerMap['forma'] = c;
@@ -6905,8 +6906,19 @@ function procesarExcel(data, fraccion) {
       if (headerMap['num_cliente'] !== undefined) {
         numCli = String(row[headerMap['num_cliente']] || '').trim();
         App.clientes.forEach(function(c) {
-          if (String(c.num_cliente) === String(numCli).replace(/^0+/,'')) {
+          if (numCli && String(c.num_cliente) === String(numCli).replace(/^0+/,'')) {
             idCli = c.id;
+            if (!nombre) nombre = nombreCliente(c);
+          }
+        });
+      }
+      // Alternativa: identificar al cliente por RFC si no se resolvió por número
+      if (!idCli && headerMap['rfc'] !== undefined) {
+        var rfcVal = String(row[headerMap['rfc']] || '').trim().toUpperCase();
+        if (rfcVal) App.clientes.forEach(function(c) {
+          if (c.rfc && String(c.rfc).trim().toUpperCase() === rfcVal) {
+            idCli = c.id;
+            numCli = c.num_cliente || numCli;
             if (!nombre) nombre = nombreCliente(c);
           }
         });
