@@ -6221,8 +6221,7 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
 // Solo usa listas ya cargadas en memoria — no bloquea el alta si no están disponibles
 // Evalúa un nombre contra las listas de screening cargadas y DEVUELVE las coincidencias (sin crear alerta)
 function scrEvaluarCliente(nombreCliente) {
-  // Preferir las listas de PEP Manager (App._scrData); si no, las de SCR_LISTAS
-  var fuente = App._scrData || [];   // fuente única: archivos de PEP Manager
+  var fuente = App._scrData || [];   // fuente única: listas cargadas de los archivos de PEP Manager
   var conDatos = fuente.filter(function(l){ return l.activa && l._datos && l._datos.length > 0; });
   if (!conDatos.length) return [];
   var coincidencias = [];
