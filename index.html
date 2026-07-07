@@ -7012,7 +7012,7 @@ function pgReportes() {
   setSB('<div class="sb-sec">Reportes</div>'
     +'<div class="sb-item on">Avisos regulatorios</div>'
     +'<div class="sb-sec">Exportar</div>'
-    +'<div class="sb-item" onclick="exportarClientesXLS()">&#x2193; Clientes (XLS)</div>'
+    +'<div class="sb-item" onclick="exportarClientesXLS()">&#x2193; Clientes 360 (XLS)</div>'
     +'<div class="sb-item" onclick="exportarOpsLiqXLS()">&#x2193; Operaciones de liquidacion (XLS)</div>');
   setMain('<div class="phdr"><div><div class="ptit">Reportes regulatorios</div><div class="psub">LFPIORPI - Avisos SPPLD/SAT/UIF</div></div>'
     +'<button class="btn btn-p" onclick="nuevoRepForm()">+ Generar reporte</button></div>'
@@ -7107,88 +7107,132 @@ function _generarXLSX() {
     var clientes = datos.clientes || [];
     if (!esConsolidada) clientes = clientes.filter(function(c){ return c.entidad_id === entId; });
 
-    var sumaOps={}, cntOps={}, sumaLiq={}, cntLiq={}, cntAlt={}, cntAvi={};
-    (datos.ops||[]).forEach(function(o){
-      var k=o.num_cliente; if(!k) return;
-      sumaOps[k]=(sumaOps[k]||0)+parseFloat(o.monto||0); cntOps[k]=(cntOps[k]||0)+1;
-    });
-    (datos.liq||[]).forEach(function(o){
-      var k=o.num_cliente; if(!k) return;
-      sumaLiq[k]=(sumaLiq[k]||0)+parseFloat(o.monto||0); cntLiq[k]=(cntLiq[k]||0)+1;
-    });
-    (datos.alertas||[]).forEach(function(a){ var k=a.num_cliente; if(k) cntAlt[k]=(cntAlt[k]||0)+1; });
+    // ── Agregados de operaciones / avisos por num_cliente ──
+    var sumaOps={}, cntOps={}, sumaLiq={}, cntLiq={}, cntAvi={};
+    (datos.ops||[]).forEach(function(o){ var k=o.num_cliente; if(!k) return; sumaOps[k]=(sumaOps[k]||0)+parseFloat(o.monto||0); cntOps[k]=(cntOps[k]||0)+1; });
+    (datos.liq||[]).forEach(function(o){ var k=o.num_cliente; if(!k) return; sumaLiq[k]=(sumaLiq[k]||0)+parseFloat(o.total_operacion||o.monto||0); cntLiq[k]=(cntLiq[k]||0)+1; });
     (datos.avisos||[]).forEach(function(r){ var k=r.num_cliente; if(k) cntAvi[k]=(cntAvi[k]||0)+1; });
 
     var entNombre = esConsolidada ? 'Todas las entidades' : (App.entidadActual.nombre || entId);
     var fecha = hoy();
 
-    // Encabezados
-    var cols = ['Num. Cliente','Entidad','Nombre / Razon social','Tipo','RFC','CURP',
-      'Fecha nac / const','Pais nacimiento','Nacionalidad','Actividad / giro','Fraccion LFPIORPI',
-      'Nivel de riesgo','Puntaje EBR','Domicilio','Colonia','Municipio','Estado','CP','Pais',
-      'Registrado por','Fecha registro',
-      'Ops. inmob. (cant)','Ops. inmob. (MXN)','Liquidaciones (cant)','Liquidaciones (MXN)',
-      'Alertas PLD','Avisos regulatorios'];
+    // ── Helpers ──
+    function asesorNombre(id){ if(!id) return ''; var a=(typeof ASESORES!=='undefined'?ASESORES:[]).find(function(x){return x.id===id;}); return a?a.nombre:id; }
+    function estadoTxt(c,pref){ pref=pref||''; var e=c[pref+'estado']; return (e==='Otro'&&c[pref+'estado_ext'])?c[pref+'estado_ext']:(e||''); }
+    function actividadTxt(c){ return actPFLabel(c.actividad_pf)||giroPMLabel(c.actividad_scian)||c.actividad||c.giro||''; }
+    function alertasDe(c){ return (datos.alertas||[]).filter(function(a){ return (a.num_cliente&&String(a.num_cliente)===String(c.num_cliente))||(a.id_cliente_ref&&a.id_cliente_ref===c.id); }); }
+    function hoja(cols, filas){
+      var ws = XLSX.utils.aoa_to_sheet([cols].concat(filas));
+      ws['!cols'] = cols.map(function(c){ return {wch: Math.max(12, String(c).length+2)}; });
+      try {
+        var rg = XLSX.utils.decode_range(ws['!ref']);
+        for (var col=rg.s.c; col<=rg.e.c; col++){
+          var ad = XLSX.utils.encode_cell({r:0,c:col});
+          if (ws[ad]) ws[ad].s = {font:{bold:true,color:{rgb:'FFFFFF'}},fill:{fgColor:{rgb:'1E3A5F'}},alignment:{horizontal:'center'}};
+        }
+      } catch(e){}
+      return ws;
+    }
 
-    // Filas de datos
-    var filas = clientes.map(function(c){
+    // ── HOJA 1: Clientes (1 fila por cliente, expandida) ──
+    var colsCli = ['Num. Cliente','Entidad','Tipo de persona','Estatus','Estatus PEP','Nivel de riesgo','Puntaje EBR','Fraccion','Asesor comercial','Registrado por','Fecha alta','Fecha baja','Fecha registro',
+      'Nombre / Razon social','RFC','CURP','Fecha nac/const','Pais nacimiento','Pais nacionalidad','Actividad / giro','Telefono','Correo','Tipo ID','Num ID','Autoridad ID',
+      'Pais domicilio','CP','Calle','Num ext','Num int','Colonia','Municipio','Ciudad','Estado',
+      'Cond. migratoria','Forma migratoria','Venc. estancia','Tipo entidad (simp)','Justif. simplificado',
+      'Tiene dueno beneficiario','Tiene rep. legal','# Benef. controladores',
+      'Alertas Screening','Alertas Riesgo','Alertas Umbral','Alertas Manuales','Alertas Total','Alertas Pendientes',
+      'Ops (cant)','Ops (MXN)','Liquidaciones (cant)','Liquidaciones (MXN)','Avisos regulatorios','Observaciones'];
+    var filasCli = clientes.map(function(c){
       var k = c.num_cliente;
-      var domicilio = [c.calle, c.num_ext?'No.'+c.num_ext:'', c.num_int?'Int.'+c.num_int:''].filter(Boolean).join(' ');
+      var alts = alertasDe(c);
+      function nCat(cat){ return alts.filter(function(a){ return altCategoria(a)===cat; }).length; }
       return [
-        nStr(k),
-        c.entidad_nombre||c.entidad_id||'',
-        c.Title||nombreCliente(c),
-        labelTipo(c.tipo),
-        c.rfc||'', c.curp||'',
-        c.fecha_nac||c.fecha_const||'',
-        c.pais_nac||'', c.pais_nac2||c.pais_nac||'',
-        actPFLabel(c.actividad_pf)||giroPMLabel(c.actividad_scian)||c.actividad||c.giro||'', c.fraccion||'',
-        c.riesgo||'', parseFloat(c.puntaje_ebr)||0,
-        domicilio, c.colonia||'', c.municipio||'',
-        (c.estado==='Otro'&&c.estado_ext?c.estado_ext:c.estado)||'', c.cp||'', c.pais_dom||c.pais||'',
-        c.registrado_por||'', c.fecha_registro||'',
-        cntOps[k]||0, parseFloat(sumaOps[k])||0,
-        cntLiq[k]||0, parseFloat(sumaLiq[k])||0,
-        cntAlt[k]||0, cntAvi[k]||0
+        nStr(k), c.entidad_nombre||c.entidad_id||'', labelTipo(c.tipo), c.estatus||'', c.estatus_pep||'',
+        c.riesgo||'', parseFloat(c.puntaje_ebr)||0, c.fraccion||'', asesorNombre(c.asesor_id), c.registrado_por||'',
+        c.fecha_alta||'', c.fecha_baja||'', c.fecha_registro||'',
+        c.Title||nombreCliente(c), c.rfc||'', c.curp||'', c.fecha_nac||c.fecha_const||'',
+        c.pais_nac||'', c.pais_nac2||c.pais_nac||'', actividadTxt(c), c.telefono||'', c.email||'',
+        c.tipo_id||'', c.num_id||'', c.autoridad_id||'',
+        c.pais_dom||c.pais||'', c.cp||'', c.calle||'', c.num_ext||'', c.num_int||'', c.colonia||'', c.municipio||'', c.ciudad||'', estadoTxt(c,''),
+        c.condicion_migratoria||'', c.num_forma_migratoria||'', c.fecha_venc_estancia||'', c.tipo_entidad||'', c.justificacion_simp||'',
+        c.tiene_dueno_ben==='SI'?'SI':'NO', (c.rl_nombre||c.rl_ap_pat)?'SI':'NO', (c.beneficiarios||[]).length,
+        nCat('Screening'), nCat('Riesgo'), nCat('Umbral'), nCat('Manual'), alts.length, alts.filter(function(a){ return (a.estatus_atencion||'Pendiente')==='Pendiente'; }).length,
+        cntOps[k]||0, parseFloat(sumaOps[k])||0, cntLiq[k]||0, parseFloat(sumaLiq[k])||0, cntAvi[k]||0, c.observaciones||''
       ];
     });
 
-    var aoa = [cols].concat(filas);
-    var ws = XLSX.utils.aoa_to_sheet(aoa);
-
-    // Ancho de columnas
-    ws['!cols'] = cols.map(function(c, i){
-      var w = i===2 ? 40 : i===13 ? 30 : i===1 ? 28 : 16;
-      return {wch: w};
+    // ── HOJA 2: Representantes legales y delegados fiduciarios ──
+    var colsRep = ['Num. Cliente','Nombre cliente','Rol','Apellido paterno','Apellido materno','Nombre(s)','Fecha nac','Pais nac','Pais nacionalidad','RFC','CURP','Tipo ID','Num ID','Autoridad ID','Telefono'];
+    var filasRep = [];
+    clientes.forEach(function(c){
+      var nom = c.Title||nombreCliente(c);
+      if (c.rl_nombre||c.rl_ap_pat) filasRep.push([nStr(c.num_cliente),nom,'Representante legal',c.rl_ap_pat||'',c.rl_ap_mat||'',c.rl_nombre||'',c.rl_fecha_nac||'',c.rl_pais_nac||'',c.rl_pais_nac2||'',c.rl_rfc||'',c.rl_curp||'',c.rl_tipo_id||'',c.rl_num_id||'',c.rl_autoridad_id||'',c.rl_telefono||'']);
+      if (c.df_nombre||c.df_ap_pat) filasRep.push([nStr(c.num_cliente),nom,'Delegado fiduciario',c.df_ap_pat||'',c.df_ap_mat||'',c.df_nombre||'',c.df_fecha_nac||'',c.df_pais_nac||'',c.df_pais_nac2||'',c.df_rfc||'',c.df_curp||'',c.df_tipo_id||'',c.df_num_id||'',c.df_autoridad_id||'',c.df_telefono||'']);
     });
 
-    // Estilo de encabezado (solo disponible en versión pro, pero definimos para compatibilidad)
-    var range = XLSX.utils.decode_range(ws['!ref']);
-    for (var col = range.s.c; col <= range.e.c; col++) {
-      var cellAddr = XLSX.utils.encode_cell({r:0, c:col});
-      if (ws[cellAddr]) {
-        ws[cellAddr].s = {
-          font: {bold: true, color: {rgb: 'FFFFFF'}},
-          fill: {fgColor: {rgb: '1E3A5F'}},
-          alignment: {horizontal: 'center'}
-        };
-      }
-    }
+    // ── HOJA 3: Duenos beneficiarios (declaracion Art. 12 Fr. VII) ──
+    var colsDB = ['Num. Cliente','Nombre cliente','Apellido paterno','Apellido materno','Nombre(s)','Fecha nac','Pais nac','Pais nacionalidad','RFC','CURP','Tipo ID','Num ID','Autoridad ID','Telefono','Correo','Actividad','Como ejerce el control'];
+    var filasDB = [];
+    clientes.forEach(function(c){
+      if (c.tiene_dueno_ben==='SI') filasDB.push([nStr(c.num_cliente),c.Title||nombreCliente(c),c.db_ap_pat||'',c.db_ap_mat||'',c.db_nombre||'',c.db_fecha_nac||'',c.db_pais_nac||'',c.db_pais_nac2||'',c.db_rfc||'',c.db_curp||'',c.db_tipo_id||'',c.db_num_id||'',c.db_autoridad_id||'',c.db_telefono||'',c.db_email||'',actPFLabel(c.db_actividad)||c.db_actividad||'',c.db_como_controla||'']);
+    });
 
+    // ── HOJA 4: Beneficiarios controladores (1 fila por BC) ──
+    var colsBC = ['Num. Cliente','Nombre cliente','# BC','Apellido paterno','Apellido materno','Nombre(s)','Fecha nac','Pais nac','Pais nacionalidad','RFC','CURP','Tipo ID','Num ID','Autoridad ID','% participacion','Como ejerce el control'];
+    var filasBC = [];
+    clientes.forEach(function(c){
+      (c.beneficiarios||[]).forEach(function(bc,i){
+        filasBC.push([nStr(c.num_cliente),c.Title||nombreCliente(c),i+1,bc.ap_pat||'',bc.ap_mat||'',bc.nombre||'',bc.fecha_nac||'',bc.pais_nac||'',bc.pais_nac2||'',bc.rfc||'',bc.curp||'',bc.tipo_id||'',bc.num_id||'',bc.autoridad_id||'',bc.pct||'',bc.control||'']);
+      });
+    });
+
+    // ── HOJA 5: Fideicomisos ──
+    var colsFid = ['Num. Cliente','Num fideicomiso','RFC','Fiduciario','Fecha const','Objeto','Bien fideicomitido','Fideicomitente','Fideicomitente RFC','Fideicomitente tipo','Fideicomisario','Fideicomisario RFC','Fideicomisario tipo'];
+    var filasFid = [];
+    clientes.forEach(function(c){
+      if (c.tipo==='FIDEICOMISO') filasFid.push([nStr(c.num_cliente),c.num_fideicomiso||'',c.rfc||'',c.fiduciario||'',c.fecha_const||'',c.objeto_fideicomiso||'',c.bien_fideicomitido||'',c.fideicomitente_nombre||'',c.fideicomitente_rfc||'',c.fideicomitente_tipo||'',c.fideicomisario_nombre||'',c.fideicomisario_rfc||'',c.fideicomisario_tipo||'']);
+    });
+
+    // ── HOJA 6: Alertas (detalle, 1 fila por alerta) ──
+    var setNum={}, setId={};
+    clientes.forEach(function(c){ if(c.num_cliente) setNum[String(c.num_cliente)]=1; if(c.id) setId[c.id]=1; });
+    var alertasFil = (datos.alertas||[]).filter(function(a){
+      if (esConsolidada) return true;
+      return (a.num_cliente&&setNum[String(a.num_cliente)])||(a.id_cliente_ref&&setId[a.id_cliente_ref]);
+    });
+    var colsAlt = ['Num. Cliente','Nombre cliente','Entidad','Tipo de alerta','Nivel','Fraccion','Descripcion','Monto acumulado','Monto umbral','# operaciones','Estatus atencion','Folio acuse','Fecha'];
+    var filasAlt = alertasFil.map(function(a){
+      return [nStr(a.num_cliente),a.nombre_cliente||'',a.entidad_nombre||a.entidad_id||'',altCategoria(a),a.nivel||'',a.fraccion||'',a.descripcion||'',parseFloat(a.monto_acumulado)||0,parseFloat(a.monto_umbral)||0,a.num_operaciones||0,a.estatus_atencion||'Pendiente',a.folio_acuse||'',String(a.fecha_registro||'').substring(0,10)];
+    });
+
+    // ── Ensamblar libro ──
     var wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Clientes');
+    XLSX.utils.book_append_sheet(wb, hoja(colsCli, filasCli), 'Clientes');
+    XLSX.utils.book_append_sheet(wb, hoja(colsRep, filasRep), 'Representantes');
+    XLSX.utils.book_append_sheet(wb, hoja(colsDB,  filasDB),  'Duenos beneficiarios');
+    XLSX.utils.book_append_sheet(wb, hoja(colsBC,  filasBC),  'Benef. controladores');
+    XLSX.utils.book_append_sheet(wb, hoja(colsFid, filasFid), 'Fideicomisos');
+    XLSX.utils.book_append_sheet(wb, hoja(colsAlt, filasAlt), 'Alertas');
 
-    // Hoja de info
+    // ── HOJA 7: Info ──
     var wsInfo = XLSX.utils.aoa_to_sheet([
+      ['Reporte de Clientes 360 - PLD Corporativo SMS'],
       ['Entidad', entNombre],
       ['Fecha de exportacion', fecha],
-      ['Total de clientes', clientes.length]
+      [],
+      ['Total de clientes', clientes.length],
+      ['Representantes / delegados', filasRep.length],
+      ['Duenos beneficiarios declarados', filasDB.length],
+      ['Beneficiarios controladores', filasBC.length],
+      ['Fideicomisos', filasFid.length],
+      ['Alertas', filasAlt.length]
     ]);
+    wsInfo['!cols'] = [{wch:34},{wch:30}];
     XLSX.utils.book_append_sheet(wb, wsInfo, 'Info');
 
-    var nombre = 'Clientes_PLD_'+(esConsolidada?'TODAS':entId)+'_'+fecha.replace(/-/g,'')+'.xlsx';
+    var nombre = 'Clientes_360_PLD_'+(esConsolidada?'TODAS':entId)+'_'+fecha.replace(/-/g,'')+'.xlsx';
     XLSX.writeFile(wb, nombre);
-    toast('Reporte exportado: '+clientes.length+' clientes', 's');
+    toast('Reporte 360 exportado: '+clientes.length+' clientes, '+filasAlt.length+' alertas', 's');
   }
 
   spGet('PLD_Clientes',    function(r){ datos.clientes=r; intentarGenerar(); });
