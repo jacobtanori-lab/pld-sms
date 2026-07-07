@@ -5891,6 +5891,7 @@ function pgOps() {
     +'<div class="psub">Seguimiento de operaciones por cliente y fraccion</div></div>'
     +'<div style="display:flex;gap:8px">'
     +'<button class="btn btn-p" onclick="nuevaLiqForm()">+ Nueva operacion</button>'
+    +'<button class="btn" onclick="descargarLayoutOps()">⤓ Descargar layout</button>'
     +'<label class="btn" style="cursor:pointer">Cargar Excel<input type="file" accept=".xlsx,.xls,.csv" style="display:none" onchange="cargarLayoutExcel(this)"></label>'
     +'</div></div>'
     +'<div class="tabs">'
@@ -6739,6 +6740,59 @@ function guardarLiq(idEx) {
 }
 
 // ── CARGA EXCEL ──────────────────────────────────────────────
+// Genera y descarga la plantilla (layout) de carga masiva de operaciones
+function descargarLayoutOps() {
+  toast('Generando layout...', 'i');
+  cargarSheetJS(function(){
+    if (typeof XLSX === 'undefined') { toast('No se pudo cargar el generador','e'); return; }
+    // Hoja de datos
+    var cols = ['Num. Cliente','Nombre / Razon social','Fecha de pago (AAAA-MM-DD)',
+      'Forma de pago (codigo)','Instrumento monetario (codigo)','Moneda (codigo)',
+      'Subtotal','IVA','Accesorios','Referencia de aviso','Observaciones'];
+    var ejemplo = ['CIN-0001','JUAN PEREZ LOPEZ','2026-07-01','1','1','1',100000,16000,0,'','Fila de ejemplo — borrar antes de cargar'];
+    var wsDatos = XLSX.utils.aoa_to_sheet([cols, ejemplo]);
+    wsDatos['!cols'] = cols.map(function(c,i){ return {wch: (i===1?34:(i===10?30:16))}; });
+
+    // Hoja de catálogos (códigos válidos)
+    var cat = [['CATALOGOS — usa el CODIGO (número) en las columnas correspondientes del layout'],[]];
+    cat.push(['FORMA DE PAGO  → columna "Forma de pago (codigo)"']);
+    cat.push(['Codigo','Descripcion']);
+    FORMAS_PAGO.forEach(function(f){ cat.push([f.codigo, f.desc]); });
+    cat.push([]);
+    cat.push(['INSTRUMENTO MONETARIO  → columna "Instrumento monetario (codigo)"']);
+    cat.push(['Codigo','Descripcion']);
+    INSTRUMENTOS_MON.forEach(function(f){ cat.push([f.codigo, f.desc]); });
+    cat.push([]);
+    cat.push(['MONEDA  → columna "Moneda (codigo)"  (1 = Peso mexicano)']);
+    cat.push(['Codigo','Abreviatura']);
+    MONEDAS.forEach(function(f){ cat.push([f.codigo, f.desc]); });
+    var wsCat = XLSX.utils.aoa_to_sheet(cat);
+    wsCat['!cols'] = [{wch:12},{wch:50}];
+
+    // Hoja de instrucciones
+    var inst = [
+      ['INSTRUCCIONES — Carga masiva de operaciones (PLD Corporativo SMS)'],[],
+      ['1. Captura una operación por fila en la hoja "Operaciones".'],
+      ['2. Num. Cliente: usa el número del expediente (ej. CIN-0001). Si lo dejas vacío, se usa el Nombre/Razon social.'],
+      ['3. Fecha de pago: formato AAAA-MM-DD (ej. 2026-07-01).'],
+      ['4. Forma de pago / Instrumento / Moneda: escribe el CODIGO numérico según la hoja "Catalogos".'],
+      ['5. Subtotal, IVA y Accesorios: montos en pesos. El Total de operación se calcula solo (Subtotal + IVA + Accesorios).'],
+      ['6. Los umbrales de identificación y aviso (Fr. V y Fr. XV) se calculan sobre el SUBTOTAL.'],
+      ['7. La fracción (V Compraventa o XV Arrendamiento) se toma de la pestaña activa al momento de cargar el archivo.'],
+      ['8. Borra la fila de ejemplo antes de cargar.']
+    ];
+    var wsInst = XLSX.utils.aoa_to_sheet(inst);
+    wsInst['!cols'] = [{wch:110}];
+
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, wsInst, 'Instrucciones');
+    XLSX.utils.book_append_sheet(wb, wsDatos, 'Operaciones');
+    XLSX.utils.book_append_sheet(wb, wsCat, 'Catalogos');
+    XLSX.writeFile(wb, 'Layout_Operaciones_PLD.xlsx');
+    toast('Layout descargado','s');
+  });
+}
+
 function cargarLayoutExcel(input) {
   var file = input.files[0]; if(!file) return;
   var fraccion = App._fraccionOps || 'INM';
@@ -6803,6 +6857,9 @@ function procesarExcel(data, fraccion) {
         else if (val.indexOf('forma') >= 0) headerMap['forma'] = c;
         else if (val.indexOf('instrumento') >= 0) headerMap['instrumento'] = c;
         else if (val.indexOf('moneda') >= 0) headerMap['moneda'] = c;
+        else if (val.indexOf('subtotal') >= 0) headerMap['subtotal'] = c;
+        else if (val.indexOf('iva') >= 0) headerMap['iva'] = c;
+        else if (val.indexOf('accesor') >= 0) headerMap['accesorios'] = c;
         else if (val.indexOf('monto') >= 0) headerMap['monto'] = c;
         else if (val.indexOf('referencia') >= 0 || val.indexOf('ref') >= 0) headerMap['ref'] = c;
         else if (val.indexOf('observ') >= 0) headerMap['obs'] = c;
@@ -6819,8 +6876,14 @@ function procesarExcel(data, fraccion) {
     for (var ri = headerRow + 1; ri < allRows.length; ri++) {
       var row = allRows[ri];
       var nombre = String(row[headerMap['nombre'] !== undefined ? headerMap['nombre'] : 0] || '').trim();
-      var monto = parseFloat(String(row[headerMap['monto'] !== undefined ? headerMap['monto'] : 5] || '0').replace(/[^0-9.]/g,'')) || 0;
-      if (!nombre && !monto) continue; // Fila vacía
+      function _num(key){ var idx = headerMap[key]; if (idx===undefined) return 0; return parseFloat(String(row[idx]||'0').replace(/[^0-9.\-]/g,''))||0; }
+      // Subtotal desde su columna; compat con layout viejo que solo traía "monto"
+      var subtotal = headerMap['subtotal'] !== undefined ? _num('subtotal')
+                   : (headerMap['monto'] !== undefined ? _num('monto') : 0);
+      var iva = _num('iva');
+      var accesorios = _num('accesorios');
+      var total_operacion = subtotal + iva + accesorios;
+      if (!nombre && !subtotal && !total_operacion) continue; // Fila vacía
 
       // Procesar fecha
       var fechaVal = row[headerMap['fecha'] !== undefined ? headerMap['fecha'] : 1];
@@ -6858,7 +6921,9 @@ function procesarExcel(data, fraccion) {
         forma_pago: String(row[headerMap['forma'] !== undefined ? headerMap['forma'] : 2] || '').trim(),
         instrumento_monetario: String(row[headerMap['instrumento'] !== undefined ? headerMap['instrumento'] : 3] || '').trim(),
         moneda: String(row[headerMap['moneda'] !== undefined ? headerMap['moneda'] : 4] || '1').trim() || '1',
-        monto: monto,
+        subtotal: subtotal, iva: iva, accesorios: accesorios,
+        total_operacion: total_operacion,
+        monto: subtotal, // compat: umbrales usan el subtotal
         ref_aviso: String(row[headerMap['ref'] !== undefined ? headerMap['ref'] : 6] || '').trim(),
         observaciones: String(row[headerMap['obs'] !== undefined ? headerMap['obs'] : 7] || '').trim(),
         entidad_id: App.entidadActual ? App.entidadActual.id : '',
