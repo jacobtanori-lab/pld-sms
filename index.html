@@ -1740,10 +1740,10 @@ function fi(name,v,ph,cls){
   else if (name.indexOf('rfc')>=0) extra = ' maxlength="13" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"';
   // Campos de fecha DD-MM-AAAA: máscara de guiones + botón calendario
   if (ph === 'DD-MM-AAAA') {
-    return '<div style="display:flex;gap:6px;align-items:stretch">'
+    return '<div style="display:flex;gap:6px;align-items:stretch;position:relative">'
       +'<input class="inp'+(cls?' '+cls:'')+'" name="'+name+'" value="'+(v||'')+'" placeholder="DD-MM-AAAA" maxlength="10" oninput="autoFechaDMY(this)" style="flex:1">'
       +'<button type="button" class="btn" style="padding:0 10px;font-size:15px" title="Elegir fecha" onclick="abrirCalendario(this)">📅</button>'
-      +'<input type="date" tabindex="-1" style="width:0;height:0;padding:0;margin:0;border:0;opacity:0;position:absolute" onchange="fechaDesdeCalendario(this)">'
+      +'<input type="date" tabindex="-1" aria-hidden="true" style="position:absolute;right:4px;bottom:0;width:32px;height:1px;padding:0;margin:0;border:0;opacity:0;pointer-events:none" onchange="fechaDesdeCalendario(this)">'
       +'</div></div>';
   }
   return '<input class="inp'+(cls?' '+cls:'')+'" name="'+name+'" value="'+(v||'')+'" placeholder="'+(ph||'')+'"'+extra+'></div>';
