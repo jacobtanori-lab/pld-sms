@@ -6323,9 +6323,18 @@ function screeningReporte(datos){
 function generarConstanciaScreeningPDF(cliente, rep){
   var doc = new window.jspdf.jsPDF({unit:'mm', format:'a4', compress:true});
   var L = 12, W = 186, y = 14;
+  // Sanea caracteres fuera de WinAnsi (que rompen el calculo de ancho de jsPDF
+  // y provocan que el texto no se ajuste al margen). Las tildes/ñ si son validas.
+  function san(s){
+    return String(s)
+      .replace(/[→⇒➔➜]/g,'->')  // flechas ->
+      .replace(/[←⇐]/g,'<-')              // flechas <-
+      .replace(/[✓✔]/g,'OK')               // check
+      .replace(/⚠/g,'!');                       // advertencia
+  }
   function txt(s, size, bold){
     doc.setFontSize(size); doc.setFont('helvetica', bold?'bold':'normal');
-    doc.splitTextToSize(String(s), W).forEach(function(ln){
+    doc.splitTextToSize(san(s), W).forEach(function(ln){
       if (y > 285) { doc.addPage(); y = 14; }
       doc.text(ln, L, y); y += size*0.42 + 0.6;
     });
