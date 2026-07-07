@@ -323,9 +323,9 @@ var USUARIOS_GLOBALES = ['jcastillo@nexxus.com.mx','plealr@nexxus.com.mx'];
 // Roles: 'admin' | 'supervisor' | 'usuario'
 var ADMINS = ['jcastillo@nexxus.com.mx','plealr@nexxus.com.mx'];
 var ROL_MODULOS = {
-  admin:      ['dashboard','clientes','alertas','avisos','operaciones','reportes','screening','config'],
-  supervisor: ['dashboard','clientes','alertas','avisos','operaciones','reportes'],
-  usuario:    ['dashboard','clientes','operaciones','reportes']
+  admin:      ['dashboard','clientes','alertas','avisos','operaciones','reportes','screening','capacitacion','config'],
+  supervisor: ['dashboard','clientes','alertas','avisos','operaciones','reportes','capacitacion'],
+  usuario:    ['dashboard','clientes','operaciones','reportes','capacitacion']
 };
 
 // Dominios con acceso restringido a ciertas entidades
@@ -1654,7 +1654,7 @@ function spDelete(lista, itemId, cb) {
 //  NAVEGACIÓN
 // ================================================================
 function renderNav() {
-  var todos = [['dashboard','Inicio'],['clientes','Clientes'],['alertas','Alertas'],['avisos','Avisos'],['operaciones','Operaciones'],['reportes','Reportes'],['screening','Screening'],['config','Config']];
+  var todos = [['dashboard','Inicio'],['clientes','Clientes'],['alertas','Alertas'],['avisos','Avisos'],['operaciones','Operaciones'],['reportes','Reportes'],['screening','Screening'],['capacitacion','Capacitacion'],['config','Config']];
   var permitidos = ROL_MODULOS[App.rol] || ROL_MODULOS.usuario;
   var html = '';
   todos.forEach(function(i){
@@ -1666,7 +1666,7 @@ function renderNav() {
 function irA(sec) {
   document.querySelectorAll('.nav-item').forEach(function(e){e.classList.remove('on');});
   var el=document.getElementById('nav-'+sec); if(el) el.classList.add('on');
-  ({dashboard:pgDash,clientes:pgClientes,alertas:pgAlertas,avisos:pgAvisos,operaciones:pgOps,reportes:pgReportes,screening:pgScreening,config:pgConfig})[sec]();
+  ({dashboard:pgDash,clientes:pgClientes,alertas:pgAlertas,avisos:pgAvisos,operaciones:pgOps,reportes:pgReportes,screening:pgScreening,capacitacion:pgCapacitacion,config:pgConfig})[sec]();
 }
 function setSB(h){document.getElementById('sb-ct').innerHTML=h;}
 function setMain(h){document.getElementById('main').innerHTML=h;}
@@ -7012,6 +7012,387 @@ function procesarExcel(data, fraccion) {
     console.error('procesarExcel error:', err);
     toast('Error al procesar Excel: ' + err.message, 'e');
   }
+}
+
+// ================================================================
+//  CAPACITACION (Art. 20 LFPIORPI)
+// ================================================================
+function capV(id){ var e=document.getElementById(id); return e?String(e.value||'').trim():''; }
+function capEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function capListasFaltantes(){ return ['PLD_Capacitacion','PLD_Evaluaciones','PLD_Resultados'].filter(function(l){ return !App.listas[l]; }); }
+function capAvisoSetup(){
+  var falt = capListasFaltantes();
+  if (!falt.length) return '';
+  return '<div class="alerta-banner" style="background:#fff4e5;border:1px solid #c98a12;color:#7a5200;margin-bottom:12px">'
+    +'<strong>Configuracion pendiente.</strong> Falta crear en SharePoint la(s) lista(s): <strong>'+falt.join(', ')+'</strong> '
+    +'(cada una con una columna <em>Datos</em> de texto multilinea). Mientras no existan, no se podra guardar en esta seccion.'
+    +(App.rol==='admin'?'':' Contacta a un administrador.')+'</div>';
+}
+
+function pgCapacitacion(){
+  if (!tieneAcceso('capacitacion')) { sinAcceso(); return; }
+  var v = App._capVista || 'biblioteca';
+  var esAdmin = App.rol==='admin';
+  setSB('<div class="sb-sec">Capacitacion</div>'
+    +'<div class="sb-item'+(v==='biblioteca'?' on':'')+'" onclick="capVista(\'biblioteca\')">&#128218; Biblioteca</div>'
+    +'<div class="sb-item'+(v==='evaluaciones'?' on':'')+'" onclick="capVista(\'evaluaciones\')">&#128221; Evaluaciones</div>'
+    +'<div class="sb-item'+(v==='resultados'?' on':'')+'" onclick="capVista(\'resultados\')">&#127891; Mis constancias</div>'
+    +(esAdmin?'<div class="sb-item'+(v==='seguimiento'?' on':'')+'" onclick="capVista(\'seguimiento\')">&#128202; Seguimiento</div>':''));
+  setMain('<div class="phdr"><div><div class="ptit">Capacitacion PLD/FT</div>'
+    +'<div class="psub">Material, evaluaciones y constancias (Art. 20 LFPIORPI)</div></div></div>'
+    +'<div id="cap-ct"><div class="empty"><div class="spin" style="margin:0 auto"></div></div></div>');
+  capRender();
+}
+function capVista(v){ App._capVista=v; pgCapacitacion(); }
+function capRender(){
+  var v = App._capVista||'biblioteca';
+  if (v==='evaluaciones') capEvaluaciones();
+  else if (v==='resultados') capResultados();
+  else if (v==='seguimiento') capSeguimiento();
+  else capBiblioteca();
+}
+
+// ── BIBLIOTECA DE DOCUMENTOS ─────────────────────────────────
+function capBiblioteca(){
+  var esAdmin = App.rol==='admin';
+  spGet('PLD_Capacitacion', function(lista){
+    var el = document.getElementById('cap-ct'); if(!el) return;
+    var html = capAvisoSetup();
+    if (esAdmin) html += '<div style="margin-bottom:12px"><button class="btn btn-p" onclick="capFormDoc()">+ Subir documento</button></div>';
+    lista = (lista||[]);
+    if (!lista.length) { el.innerHTML = html + '<div class="empty">Sin material de capacitacion cargado.</div>'; return; }
+    lista.sort(function(a,b){ return String(b.fecha_registro||'').localeCompare(String(a.fecha_registro||'')); });
+    html += lista.map(function(d){
+      return '<div class="card" style="margin-bottom:10px"><div class="card-b" style="padding:14px 16px">'
+        +'<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">'
+        +'<div style="flex:1">'
+        +'<div style="font-weight:600;font-size:14px">'+capEsc(d.titulo||d.Title||d.archivo_nombre)+'</div>'
+        +'<div style="font-size:12px;color:var(--tx3);margin-top:2px">'+capEsc(d.categoria||'Otros')
+        +(d.obligatorio?'  &middot;  <span style="color:#A32D2D;font-weight:600">Lectura obligatoria</span>':'')
+        +'  &middot;  '+String(d.fecha_registro||'').substring(0,10)+'</div>'
+        +(d.descripcion?'<div style="font-size:13px;color:var(--tx2);margin-top:6px">'+capEsc(d.descripcion)+'</div>':'')
+        +'<div style="font-size:11px;color:var(--tx3);margin-top:4px">&#128206; '+capEsc(d.archivo_nombre||'')+'</div>'
+        +'</div>'
+        +'<div style="display:flex;flex-direction:column;gap:6px">'
+        +'<button class="btn btn-sm" onclick="capDescargar(\''+(d.archivo_item_id||'')+'\',\''+capEsc(String(d.archivo_nombre||'documento').replace(/[\\\'"]/g,''))+'\')">&#8595; Descargar</button>'
+        +(esAdmin?'<button class="btn btn-sm btn-r" onclick="capEliminarDoc(\''+d.id+'\')">Eliminar</button>':'')
+        +'</div></div></div></div>';
+    }).join('');
+    el.innerHTML = html;
+  });
+}
+function capFormDoc(){
+  var el = document.getElementById('cap-ct'); if(!el) return;
+  var cats = ['Normatividad','Politicas internas','Guias y manuales','Boletines','Otros'];
+  el.innerHTML = '<div class="card"><div class="card-h"><span class="card-t">Subir documento de capacitacion</span>'
+    +'<button class="btn" onclick="capVista(\'biblioteca\')">Volver</button></div>'
+    +'<div class="fgrid">'
+    +'<div class="fg full"><label class="lbl">Titulo *</label><input class="inp" id="cap_titulo" placeholder="Ej: Politica PLD 2026"></div>'
+    +'<div class="fg"><label class="lbl">Categoria</label><select class="sel" id="cap_categoria">'+cats.map(function(c){return '<option>'+c+'</option>';}).join('')+'</select></div>'
+    +'<div class="fg"><label class="lbl">Lectura obligatoria</label><select class="sel" id="cap_oblig_sel"><option value="no">No</option><option value="si">Si</option></select></div>'
+    +'<div class="fg full"><label class="lbl">Descripcion</label><textarea class="inp" id="cap_desc" rows="3"></textarea></div>'
+    +'<div class="fg full"><label class="lbl">Archivo * (PDF, Word, PPT, Excel o imagen)</label><input type="file" id="cap_file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg"></div>'
+    +'</div>'
+    +'<div style="padding:12px 16px;border-top:1px solid var(--brd);display:flex;justify-content:flex-end">'
+    +'<button class="btn btn-p" onclick="capGuardarDoc()">Publicar documento</button></div></div>';
+}
+function capGuardarDoc(){
+  var titulo = capV('cap_titulo'); if(!titulo){ toast('Captura un titulo','e'); return; }
+  var fileInput = document.getElementById('cap_file');
+  var file = fileInput && fileInput.files[0];
+  if(!file){ toast('Selecciona un archivo','e'); return; }
+  var categoria = capV('cap_categoria'), desc = capV('cap_desc'), oblig = capV('cap_oblig_sel')==='si';
+  toast('Subiendo documento...','i');
+  var reader = new FileReader();
+  reader.onload = function(e){
+    var safe = String(file.name||'doc').replace(/[^a-zA-Z0-9_.\-]/g,'_');
+    var ts = new Date().toISOString().replace(/[:.]/g,'-').substring(0,19);
+    var ruta = ('PLD_Capacitacion/'+ts+'_'+safe).split('/').map(encodeURIComponent).join('/');
+    var url = GRAPH+'/sites/'+App.siteId+'/drive/root:/'+ruta+':/content';
+    fetch(url, {method:'PUT', headers:{'Authorization':'Bearer '+App.token,'Content-Type':file.type||'application/octet-stream'}, body:e.target.result})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(!d || !d.id){ console.warn('cap upload:', d); toast('Error al subir el archivo','e'); return; }
+        var meta = { Title:titulo, titulo:titulo, categoria:categoria, descripcion:desc, obligatorio:oblig,
+          archivo_item_id:d.id, archivo_url:d.webUrl||'', archivo_nombre:file.name,
+          creado_por:App.cuenta.username, fecha_registro:hoy() };
+        spCreate('PLD_Capacitacion', meta, function(item){ if(item){ toast('Documento publicado','s'); App._capVista='biblioteca'; pgCapacitacion(); } });
+      }).catch(function(err){ console.warn(err); toast('Error al subir el archivo','e'); });
+  };
+  reader.readAsArrayBuffer(file);
+}
+function capDescargar(itemId, nombre){
+  if(!itemId){ toast('Archivo no disponible','e'); return; }
+  toast('Descargando...','i');
+  fetch(GRAPH+'/sites/'+App.siteId+'/drive/items/'+itemId+'/content', {headers:{'Authorization':'Bearer '+App.token}})
+    .then(function(r){ if(!r.ok) throw new Error(r.status); return r.blob(); })
+    .then(function(b){ var u=URL.createObjectURL(b); var a=document.createElement('a'); a.href=u; a.download=nombre||'documento'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){URL.revokeObjectURL(u);},4000); })
+    .catch(function(e){ console.warn(e); toast('No se pudo descargar el archivo','e'); });
+}
+function capEliminarDoc(docId){
+  if(App.rol!=='admin') return;
+  if(!confirm('¿Eliminar este documento del material de capacitacion?')) return;
+  spDelete('PLD_Capacitacion', docId, function(ok){ if(ok){ toast('Documento eliminado','s'); capBiblioteca(); } else toast('No se pudo eliminar','e'); });
+}
+
+// ── EVALUACIONES ─────────────────────────────────────────────
+function capEvaluaciones(){
+  var esAdmin = App.rol==='admin';
+  spGet('PLD_Evaluaciones', function(lista){
+    var el = document.getElementById('cap-ct'); if(!el) return;
+    var html = capAvisoSetup();
+    if (esAdmin) html += '<div style="margin-bottom:12px"><button class="btn btn-p" onclick="capFormEval()">+ Nueva evaluacion</button></div>';
+    lista = (lista||[]);
+    if (!lista.length) { el.innerHTML = html + '<div class="empty">Sin evaluaciones disponibles.'+(esAdmin?' Crea una con "+ Nueva evaluacion".':'')+'</div>'; return; }
+    html += lista.map(function(ev){
+      var np = (ev.preguntas||[]).length;
+      return '<div class="card" style="margin-bottom:10px"><div class="card-h">'
+        +'<span class="card-t">'+capEsc(ev.titulo||ev.Title)+'</span>'
+        +'<span style="font-size:12px;color:var(--tx3)">'+np+' preguntas &middot; aprueba con '+(ev.calif_minima||80)+'%</span></div>'
+        +'<div class="card-b" style="padding:12px 16px">'
+        +(ev.descripcion?'<div style="font-size:13px;color:var(--tx2);margin-bottom:8px">'+capEsc(ev.descripcion)+'</div>':'')
+        +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
+        +'<button class="btn btn-p" onclick="capResponder(\''+ev.id+'\')">Responder</button>'
+        +(esAdmin?'<button class="btn btn-r" onclick="capEliminarEval(\''+ev.id+'\')">Eliminar</button>':'')
+        +'</div></div></div>';
+    }).join('');
+    el.innerHTML = html;
+  });
+}
+function capFormEval(){
+  var el = document.getElementById('cap-ct'); if(!el) return;
+  spGet('PLD_Capacitacion', function(cursos){
+    var opc = '<option value="">-- Ninguno --</option>'+(cursos||[]).map(function(c){ return '<option value="'+c.id+'">'+capEsc(c.titulo||c.Title||'')+'</option>'; }).join('');
+    el.innerHTML = '<div class="card"><div class="card-h"><span class="card-t">Nueva evaluacion</span>'
+      +'<button class="btn" onclick="capVista(\'evaluaciones\')">Volver</button></div>'
+      +'<div class="fgrid">'
+      +'<div class="fg full"><label class="lbl">Titulo de la evaluacion *</label><input class="inp" id="cap_ev_titulo" placeholder="Ej: Evaluacion Politica PLD 2026"></div>'
+      +'<div class="fg full"><label class="lbl">Descripcion / instrucciones</label><textarea class="inp" id="cap_ev_desc" rows="2"></textarea></div>'
+      +'<div class="fg"><label class="lbl">Documento relacionado (opcional)</label><select class="sel" id="cap_ev_curso">'+opc+'</select></div>'
+      +'<div class="fg"><label class="lbl">Calificacion minima para aprobar (%)</label><input class="inp" id="cap_ev_min" value="80"></div>'
+      +'</div>'
+      +'<div class="card-h" style="border-top:1px solid var(--brd)"><span class="card-t">Preguntas</span>'
+      +'<button class="btn btn-sm btn-p" onclick="capAddPregunta()">+ Agregar pregunta</button></div>'
+      +'<div id="cap-preguntas" data-count="0" style="padding:12px 16px"></div>'
+      +'<div style="padding:12px 16px;border-top:1px solid var(--brd);display:flex;justify-content:flex-end">'
+      +'<button class="btn btn-p" onclick="capGuardarEval()">Guardar evaluacion</button></div></div>';
+    capAddPregunta();
+  });
+}
+function capAddPregunta(){
+  var cont = document.getElementById('cap-preguntas'); if(!cont) return;
+  var n = parseInt(cont.getAttribute('data-count')||'0',10);
+  var opts = '';
+  for (var i=0;i<4;i++){
+    opts += '<div style="display:flex;gap:8px;align-items:center;margin-top:6px">'
+      +'<input type="radio" name="capcorr_'+n+'" value="'+i+'"'+(i===0?' checked':'')+' title="Marcar como correcta">'
+      +'<input class="inp capopt" data-opt="'+i+'" placeholder="Opcion '+(i+1)+'" style="flex:1">'
+      +'</div>';
+  }
+  var div = document.createElement('div');
+  div.className = 'cap-q';
+  div.style.cssText = 'border:1px solid var(--brd);border-radius:8px;padding:12px;margin-bottom:10px';
+  div.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
+    +'<strong style="font-size:13px">Pregunta</strong>'
+    +'<button class="btn btn-r btn-xs" onclick="this.closest(\'.cap-q\').remove()">Eliminar</button></div>'
+    +'<input class="inp capenun" placeholder="Enunciado de la pregunta">'
+    +'<div style="font-size:11px;color:var(--tx3);margin-top:6px">Marca el circulo de la opcion correcta:</div>'
+    +opts;
+  cont.appendChild(div);
+  cont.setAttribute('data-count', n+1);
+}
+function capGuardarEval(){
+  var titulo = capV('cap_ev_titulo'); if(!titulo){ toast('Captura un titulo','e'); return; }
+  var min = parseInt(capV('cap_ev_min')||'80',10); if(isNaN(min)||min<0||min>100) min = 80;
+  var cursoSel = document.getElementById('cap_ev_curso'); var curso_id = cursoSel?cursoSel.value:'';
+  var preguntas = [], errP = false;
+  var blocks = document.querySelectorAll('#cap-preguntas .cap-q');
+  blocks.forEach(function(b){
+    var enunEl = b.querySelector('.capenun');
+    var enun = enunEl ? String(enunEl.value||'').trim() : '';
+    if (!enun) return;
+    var opciones = [];
+    b.querySelectorAll('.capopt').forEach(function(o){ opciones.push(String(o.value||'').trim()); });
+    var checked = b.querySelector('input[type=radio]:checked');
+    var correcta = checked ? parseInt(checked.value,10) : 0;
+    var noVacias = opciones.filter(function(x){ return x; });
+    if (noVacias.length < 2 || !opciones[correcta]) { errP = true; return; }
+    preguntas.push({ q:enun, opciones:opciones, correcta:correcta });
+  });
+  if (errP) { toast('Cada pregunta necesita enunciado, al menos 2 opciones y la opcion correcta llena','e'); return; }
+  if (!preguntas.length) { toast('Agrega al menos una pregunta','e'); return; }
+  var ev = { Title:titulo, titulo:titulo, descripcion:capV('cap_ev_desc'), curso_id:curso_id, calif_minima:min, activa:true,
+    preguntas:preguntas, creado_por:App.cuenta.username, fecha_registro:hoy() };
+  spCreate('PLD_Evaluaciones', ev, function(item){ if(item){ toast('Evaluacion creada','s'); App._capVista='evaluaciones'; pgCapacitacion(); } });
+}
+function capEliminarEval(evId){
+  if(App.rol!=='admin') return;
+  if(!confirm('¿Eliminar esta evaluacion? Los resultados ya registrados se conservan.')) return;
+  spDelete('PLD_Evaluaciones', evId, function(ok){ if(ok){ toast('Evaluacion eliminada','s'); capEvaluaciones(); } else toast('No se pudo eliminar','e'); });
+}
+function capResponder(evalId){
+  spGet('PLD_Evaluaciones', function(lista){
+    var ev = (lista||[]).find(function(x){ return x.id===evalId; });
+    if(!ev){ toast('Evaluacion no encontrada','e'); return; }
+    App._capEval = ev;
+    var el = document.getElementById('cap-ct'); if(!el) return;
+    var qs = (ev.preguntas||[]).map(function(p,qi){
+      var opts = (p.opciones||[]).map(function(o,oi){
+        if(!o) return '';
+        return '<label style="display:flex;gap:8px;align-items:center;margin-top:6px;cursor:pointer">'
+          +'<input type="radio" name="capr_'+qi+'" value="'+oi+'"> <span>'+capEsc(o)+'</span></label>';
+      }).join('');
+      return '<div class="card" style="margin-bottom:10px"><div class="card-b" style="padding:12px 16px">'
+        +'<strong style="font-size:13px">'+(qi+1)+'. '+capEsc(p.q)+'</strong>'+opts+'</div></div>';
+    }).join('');
+    el.innerHTML = '<div class="card"><div class="card-h"><span class="card-t">'+capEsc(ev.titulo||ev.Title)+'</span>'
+      +'<button class="btn" onclick="capVista(\'evaluaciones\')">Cancelar</button></div>'
+      +(ev.descripcion?'<div style="padding:12px 16px;font-size:13px;color:var(--tx2)">'+capEsc(ev.descripcion)+'</div>':'')
+      +'<div style="padding:8px 16px;font-size:12px;color:var(--tx3)">Aprueba con '+(ev.calif_minima||80)+'%</div></div>'
+      +qs
+      +'<div style="display:flex;justify-content:flex-end;margin-bottom:20px"><button class="btn btn-p" onclick="capCalificar()">Enviar respuestas</button></div>';
+  });
+}
+function capCalificar(){
+  var ev = App._capEval; if(!ev) return;
+  var preguntas = ev.preguntas||[];
+  var respuestas = [], correctas = 0, sinResp = false;
+  for (var i=0;i<preguntas.length;i++){
+    var sel = document.querySelector('input[name="capr_'+i+'"]:checked');
+    if(!sel) sinResp = true;
+    var v = sel ? parseInt(sel.value,10) : -1;
+    respuestas.push(v);
+    if (v === preguntas[i].correcta) correctas++;
+  }
+  if (sinResp && !confirm('Hay preguntas sin responder; se contaran como incorrectas. ¿Enviar de todas formas?')) return;
+  var total = preguntas.length||1;
+  var calif = Math.round(correctas/total*100);
+  var minimo = ev.calif_minima||80;
+  var aprobado = calif >= minimo;
+  var folio = 'CAP-'+Date.now();
+  var res = { Title:folio, folio:folio, evaluacion_id:ev.id, evaluacion_titulo:ev.titulo||ev.Title,
+    usuario_email:App.cuenta.username, usuario_nombre:(App.cuenta.name||App.cuenta.username),
+    calificacion:calif, aprobado:aprobado, total_preguntas:total, correctas:correctas, calif_minima:minimo,
+    respuestas:respuestas, fecha:hoy(), fecha_hora:new Date().toLocaleString('es-MX'),
+    entidad_id:(App.entidadActual?App.entidadActual.id:''), entidad_nombre:(App.entidadActual?App.entidadActual.nombre:'') };
+  spCreate('PLD_Resultados', res, function(item){ if(item) res.id=item.id; App._capUltimoRes=res; capMostrarResultado(res); });
+}
+function capMostrarResultado(res){
+  var el = document.getElementById('cap-ct'); if(!el) return;
+  var color = res.aprobado?'#0F6E56':'#A32D2D';
+  el.innerHTML = '<div class="card"><div class="card-b" style="padding:24px;text-align:center">'
+    +'<div style="font-size:40px">'+(res.aprobado?'&#127891;':'&#128213;')+'</div>'
+    +'<h2 style="margin:8px 0;color:'+color+'">'+(res.aprobado?'APROBADO':'NO APROBADO')+'</h2>'
+    +'<div style="font-size:15px">Calificacion: <strong>'+res.calificacion+'%</strong> ('+res.correctas+'/'+res.total_preguntas+' correctas)</div>'
+    +'<div style="font-size:12px;color:var(--tx3);margin-top:4px">Minimo para aprobar: '+res.calif_minima+'%</div>'
+    +'<div style="margin-top:18px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">'
+    +(res.aprobado
+        ?'<button class="btn btn-p" onclick="capConstancia(\''+(res.id||'')+'\')">&#127891; Descargar constancia</button>'
+        :'<button class="btn btn-p" onclick="capResponder(\''+res.evaluacion_id+'\')">Reintentar</button>')
+    +'<button class="btn" onclick="capVista(\'evaluaciones\')">Volver a evaluaciones</button>'
+    +'</div></div></div>';
+}
+
+// ── MIS CONSTANCIAS / RESULTADOS ─────────────────────────────
+function capResultados(){
+  spGet('PLD_Resultados', function(lista){
+    var el = document.getElementById('cap-ct'); if(!el) return;
+    if (capListasFaltantes().indexOf('PLD_Resultados')>=0){ el.innerHTML = capAvisoSetup(); return; }
+    var mios = (lista||[]).filter(function(r){ return String(r.usuario_email||'').toLowerCase()===String(App.cuenta.username).toLowerCase(); });
+    if (!mios.length){ el.innerHTML = '<div class="empty">Aun no has presentado evaluaciones.</div>'; return; }
+    mios.sort(function(a,b){ return String(b.fecha||'').localeCompare(String(a.fecha||'')); });
+    var rows = mios.map(function(r){
+      var pill = r.aprobado
+        ? '<span class="pill" style="background:#d8f0e8;color:#0F6E56">Aprobado</span>'
+        : '<span class="pill" style="background:#f5dede;color:#A32D2D">No aprobado</span>';
+      return '<tr><td>'+capEsc(r.evaluacion_titulo||'')+'</td>'
+        +'<td style="font-weight:600">'+(r.calificacion||0)+'%</td>'
+        +'<td>'+pill+'</td>'
+        +'<td style="font-size:12px;color:var(--tx3)">'+String(r.fecha||'').substring(0,10)+'</td>'
+        +'<td>'+(r.aprobado?'<button class="btn btn-xs" onclick="capConstancia(\''+r.id+'\')">&#127891; Constancia</button>':'')+'</td></tr>';
+    }).join('');
+    el.innerHTML = '<div class="card"><div class="twrap"><table><thead><tr><th>Evaluacion</th><th>Calificacion</th><th>Estatus</th><th>Fecha</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  });
+}
+function capConstancia(resId){
+  if (App._capUltimoRes && (App._capUltimoRes.id===resId || !resId)) { capGenerarConstancia(App._capUltimoRes); return; }
+  spGet('PLD_Resultados', function(lista){
+    var res = (lista||[]).find(function(x){ return x.id===resId; });
+    if(!res){ toast('Resultado no encontrado','e'); return; }
+    capGenerarConstancia(res);
+  });
+}
+function capGenerarConstancia(res){
+  toast('Generando constancia...','i');
+  cargarJsPDF(function(){
+    if(!(window.jspdf && window.jspdf.jsPDF)){ toast('No se pudo cargar el generador PDF','e'); return; }
+    function san(s){ return String(s==null?'':s).replace(/[→⇒]/g,'->').replace(/[✓✔]/g,'OK').replace(/⚠/g,'!'); }
+    var doc = new window.jspdf.jsPDF({unit:'mm', format:'a4', orientation:'landscape'});
+    var W = 297, cx = W/2;
+    doc.setDrawColor(30,58,95); doc.setLineWidth(2); doc.rect(10,10,277,190);
+    doc.setLineWidth(0.4); doc.setDrawColor(150,170,190); doc.rect(14,14,269,182);
+    doc.setFont('helvetica','bold'); doc.setFontSize(26); doc.setTextColor(30,58,95);
+    doc.text('CONSTANCIA DE CAPACITACION', cx, 46, {align:'center'});
+    doc.setFont('helvetica','normal'); doc.setFontSize(11); doc.setTextColor(70);
+    doc.text('Prevencion de Lavado de Dinero y Financiamiento al Terrorismo (Art. 20 LFPIORPI)', cx, 55, {align:'center'});
+    doc.setFontSize(13); doc.setTextColor(60); doc.text('Se hace constar que', cx, 76, {align:'center'});
+    doc.setFont('helvetica','bold'); doc.setFontSize(20); doc.setTextColor(20);
+    doc.text(san(res.usuario_nombre||res.usuario_email), cx, 90, {align:'center'});
+    doc.setFont('helvetica','normal'); doc.setFontSize(13); doc.setTextColor(60);
+    doc.text('acredito satisfactoriamente la evaluacion', cx, 102, {align:'center'});
+    doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.setTextColor(30,58,95);
+    doc.splitTextToSize('"'+san(res.evaluacion_titulo||'')+'"', 240).forEach(function(ln,i){ doc.text(ln, cx, 114+i*8, {align:'center'}); });
+    doc.setFont('helvetica','normal'); doc.setFontSize(14); doc.setTextColor(60);
+    doc.text('con una calificacion de '+res.calificacion+'%', cx, 136, {align:'center'});
+    doc.setFontSize(11); doc.setTextColor(90);
+    doc.text('Fecha: '+san(res.fecha_hora||res.fecha||''), cx, 154, {align:'center'});
+    doc.text('Folio: '+san(res.folio||''), cx, 161, {align:'center'});
+    doc.text(san((res.entidad_nombre||(App.entidadActual?App.entidadActual.nombre:'')||'')+'  |  PLD Corporativo SMS'), cx, 168, {align:'center'});
+    var nomArch = 'Constancia_Capacitacion_'+String(res.usuario_nombre||res.usuario_email).replace(/[^a-zA-Z0-9]/g,'_').substring(0,30)+'.pdf';
+    doc.save(nomArch);
+    toast('Constancia generada','s');
+  });
+}
+
+// ── SEGUIMIENTO (admin) ──────────────────────────────────────
+function capSeguimiento(){
+  var el = document.getElementById('cap-ct'); if(!el) return;
+  var data = {usuarios:null, res:null, evs:null}, pend = 3;
+  function go(){
+    pend--; if(pend>0) return;
+    var evs = (data.evs||[]);
+    var roster = [];
+    (data.usuarios||[]).forEach(function(u){ if(u.email) roster.push({email:u.email, nombre:u.nombre||u.email}); });
+    (typeof ADMINS!=='undefined'?ADMINS:[]).forEach(function(a){ if(!roster.find(function(x){ return x.email.toLowerCase()===a.toLowerCase(); })) roster.push({email:a, nombre:a}); });
+    (data.res||[]).forEach(function(r){ if(r.usuario_email && !roster.find(function(x){ return x.email.toLowerCase()===String(r.usuario_email).toLowerCase(); })) roster.push({email:r.usuario_email, nombre:r.usuario_nombre||r.usuario_email}); });
+    if(!evs.length){ el.innerHTML = capAvisoSetup() + '<div class="empty">No hay evaluaciones para dar seguimiento.</div>'; return; }
+    function best(email, evId){
+      var rs = (data.res||[]).filter(function(r){ return String(r.usuario_email||'').toLowerCase()===email.toLowerCase() && r.evaluacion_id===evId; });
+      if(!rs.length) return null;
+      return rs.reduce(function(mx,r){ return (r.calificacion||0)>(mx.calificacion||0)?r:mx; }, rs[0]);
+    }
+    var thead = '<tr><th style="text-align:left">Colaborador</th>'+evs.map(function(ev){ return '<th style="font-size:11px">'+capEsc(String(ev.titulo||ev.Title||'').substring(0,26))+'</th>'; }).join('')+'</tr>';
+    var totalEsperado = roster.length*evs.length, totalAprob = 0;
+    var rows = roster.map(function(u){
+      var cells = evs.map(function(ev){
+        var b = best(u.email, ev.id);
+        if(!b) return '<td style="text-align:center;color:var(--tx3)">&mdash;</td>';
+        if(b.aprobado) totalAprob++;
+        var col = b.aprobado?'#0F6E56':'#A32D2D';
+        return '<td style="text-align:center;color:'+col+';font-weight:600">'+b.calificacion+'%</td>';
+      }).join('');
+      return '<tr><td style="font-size:12px">'+capEsc(u.nombre)+'<br><span style="color:var(--tx3);font-size:11px">'+capEsc(u.email)+'</span></td>'+cells+'</tr>';
+    }).join('');
+    var pct = totalEsperado?Math.round(totalAprob/totalEsperado*100):0;
+    el.innerHTML = capAvisoSetup()
+      +'<div class="card" style="margin-bottom:12px"><div class="card-b" style="padding:14px 16px">'
+      +'<strong>Avance global de capacitacion: '+pct+'%</strong> '
+      +'<span style="color:var(--tx3);font-size:12px">('+totalAprob+' de '+totalEsperado+' aprobadas &middot; '+roster.length+' colaboradores &middot; '+evs.length+' evaluaciones)</span></div></div>'
+      +'<div class="card"><div class="twrap"><table><thead>'+thead+'</thead><tbody>'+rows+'</tbody></table></div></div>';
+  }
+  spGet('PLD_Usuarios',     function(r){ data.usuarios=r; go(); });
+  spGet('PLD_Resultados',   function(r){ data.res=r;      go(); });
+  spGet('PLD_Evaluaciones', function(r){ data.evs=r;      go(); });
 }
 
 // ================================================================
