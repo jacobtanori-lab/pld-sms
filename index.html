@@ -1641,6 +1641,15 @@ function spPatch(lista, itemId, campos, cb) {
   });
 }
 
+function spDelete(lista, itemId, cb) {
+  var lid = App.listas[lista];
+  if (!lid) { if(cb) cb(false); return; }
+  graph('DELETE', '/sites/'+App.siteId+'/lists/'+lid+'/items/'+itemId, null, function(d){
+    if (d && d.error) { console.error('spDelete error:', d.error); if(cb) cb(false); return; }
+    if(cb) cb(true);
+  });
+}
+
 // ================================================================
 //  NAVEGACIÓN
 // ================================================================
@@ -5940,7 +5949,8 @@ function cargarOpsRegistros(fraccion) {
         +'<div class="card-h"><span class="card-t">'+grupo.nombre+'</span>'
         +'<span style="font-size:12px;color:var(--tx3)">'+grupo.ops.length+' ops | Total: $'+totalMonto.toLocaleString('es-MX')+'</span>'
         +'</div><div class="twrap"><table>'
-        +'<thead><tr><th>Fecha pago</th><th>Forma pago</th><th>Instrumento</th><th>Moneda</th><th>Subtotal</th><th>IVA</th><th>Accesorios</th><th>Total</th><th>Estado</th></tr></thead>'
+        +'<thead><tr><th>Fecha pago</th><th>Forma pago</th><th>Instrumento</th><th>Moneda</th><th>Subtotal</th><th>IVA</th><th>Accesorios</th><th>Total</th><th>Estado</th>'
+        +(App.rol==='admin'?'<th></th>':'')+'</tr></thead>'
         +'<tbody>';
       grupo.ops.forEach(function(op) {
         var fp = FORMAS_PAGO.find(function(x){return x.codigo===op.forma_pago;});
@@ -5963,11 +5973,21 @@ function cargarOpsRegistros(fraccion) {
           +'<td>$'+acc.toLocaleString('es-MX')+'</td>'
           +'<td style="font-weight:600">$'+tot.toLocaleString('es-MX')+'</td>'
           +'<td>'+badgeOp+'</td>'
+          +(App.rol==='admin'?'<td><button class="btn" style="padding:2px 8px;font-size:12px;color:var(--rj)" title="Eliminar operacion" onclick="eliminarOp(\''+op.id+'\')">&#128465;</button></td>':'')
           +'</tr>';
       });
       html += '</tbody></table></div></div>';
     });
     el.innerHTML = html;
+  });
+}
+
+function eliminarOp(opId) {
+  if (App.rol !== 'admin') { toast('Solo un administrador puede eliminar operaciones','e'); return; }
+  if (!confirm('¿Eliminar esta operacion de forma permanente?\n\nEsta accion no se puede deshacer.')) return;
+  spDelete('PLD_Ops_Liq', opId, function(ok){
+    if (ok) { toast('Operacion eliminada','s'); cargarOpsRegistros(App._fraccionOps||'INM'); }
+    else toast('No se pudo eliminar la operacion','e');
   });
 }
 
@@ -6825,51 +6845,60 @@ function cargarLayoutExcel(input) {
 function procesarExcel(data, fraccion) {
   try {
     var wb = XLSX.read(data, {type:'array', cellDates:true});
-    var sheetName = wb.SheetNames[0];
 
-    // Para el layout PLD: hoja según fracción
-    if (fraccion === 'INM' && wb.SheetNames.indexOf('Fr V - Compraventa') >= 0) {
-      sheetName = 'Fr V - Compraventa';
-    } else if (fraccion === 'ARI' && wb.SheetNames.indexOf('Fr XV - Arrendamiento') >= 0) {
-      sheetName = 'Fr XV - Arrendamiento';
+    // Elegir la hoja de DATOS (nunca las hojas de ayuda de la plantilla)
+    var HOJAS_AYUDA = ['Instrucciones','Catalogos','Catálogos','Instructivo'];
+    var preferidas = (fraccion === 'ARI')
+      ? ['Fr XV - Arrendamiento','Operaciones']
+      : ['Fr V - Compraventa','Operaciones'];
+    var sheetName = null;
+    for (var pi = 0; pi < preferidas.length; pi++) {
+      if (wb.SheetNames.indexOf(preferidas[pi]) >= 0) { sheetName = preferidas[pi]; break; }
     }
+    if (!sheetName) {
+      // primera hoja que no sea de ayuda
+      for (var si = 0; si < wb.SheetNames.length; si++) {
+        if (HOJAS_AYUDA.indexOf(wb.SheetNames[si]) < 0) { sheetName = wb.SheetNames[si]; break; }
+      }
+    }
+    if (!sheetName) sheetName = wb.SheetNames[0];
 
     var ws = wb.Sheets[sheetName];
     var allRows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
 
-    // Encontrar la fila de encabezados (buscar la que tenga NOMBRE o fecha_pago etc.)
+    // Encontrar la fila de encabezados de forma ESTRICTA: debe reconocer
+    // varias columnas y tener varias celdas no vacías. Así una línea de
+    // instrucción (una sola celda de texto) nunca se toma como encabezado.
     var headerRow = -1;
     var headerMap = {};
-    for (var r = 0; r < Math.min(allRows.length, 10); r++) {
-      var row = allRows[r];
-      var found = false;
+    for (var r = 0; r < Math.min(allRows.length, 15); r++) {
+      var row = allRows[r] || [];
+      var map = {};
+      var noVacias = 0;
       for (var c = 0; c < row.length; c++) {
-        var val = String(row[c]||'').toLowerCase();
-        // Limpiar saltos de línea del encabezado
-        val = val.replace(/\n/g,' ').trim();
-        if (val.indexOf('nombre') >= 0 || val.indexOf('fecha pago') >= 0 || val.indexOf('forma') >= 0) {
-          found = true;
-        }
-        // Mapear columna
-        if (val.indexOf('num') >= 0 && val.indexOf('cliente') >= 0) headerMap['num_cliente'] = c;
-        else if (val.indexOf('rfc') >= 0) headerMap['rfc'] = c;
-        else if (val.indexOf('nombre') >= 0 || val.indexOf('raz') >= 0 || val.indexOf('cliente') >= 0) headerMap['nombre'] = c;
-        else if (val.indexOf('fecha pago') >= 0 || val === 'fecha') headerMap['fecha'] = c;
-        else if (val.indexOf('forma') >= 0) headerMap['forma'] = c;
-        else if (val.indexOf('instrumento') >= 0) headerMap['instrumento'] = c;
-        else if (val.indexOf('moneda') >= 0) headerMap['moneda'] = c;
-        else if (val.indexOf('subtotal') >= 0) headerMap['subtotal'] = c;
-        else if (val.indexOf('iva') >= 0) headerMap['iva'] = c;
-        else if (val.indexOf('accesor') >= 0) headerMap['accesorios'] = c;
-        else if (val.indexOf('monto') >= 0) headerMap['monto'] = c;
-        else if (val.indexOf('referencia') >= 0 || val.indexOf('ref') >= 0) headerMap['ref'] = c;
-        else if (val.indexOf('observ') >= 0) headerMap['obs'] = c;
+        var val = String(row[c]||'').toLowerCase().replace(/\n/g,' ').trim();
+        if (!val) continue;
+        noVacias++;
+        if (val.indexOf('num') >= 0 && val.indexOf('cliente') >= 0) map['num_cliente'] = c;
+        else if (val === 'rfc' || val.indexOf('rfc') >= 0) map['rfc'] = c;
+        else if (val.indexOf('nombre') >= 0 || val.indexOf('raz') >= 0) map['nombre'] = c;
+        else if (val.indexOf('fecha') >= 0) map['fecha'] = c;
+        else if (val.indexOf('forma') >= 0) map['forma'] = c;
+        else if (val.indexOf('instrumento') >= 0) map['instrumento'] = c;
+        else if (val.indexOf('moneda') >= 0) map['moneda'] = c;
+        else if (val.indexOf('subtotal') >= 0) map['subtotal'] = c;
+        else if (val.indexOf('iva') >= 0) map['iva'] = c;
+        else if (val.indexOf('accesor') >= 0) map['accesorios'] = c;
+        else if (val.indexOf('monto') >= 0) map['monto'] = c;
+        else if (val.indexOf('referencia') >= 0) map['ref'] = c;
+        else if (val.indexOf('observ') >= 0) map['obs'] = c;
       }
-      if (found) { headerRow = r; break; }
+      // Encabezado válido: >=3 columnas reconocidas y >=3 celdas con texto
+      if (Object.keys(map).length >= 3 && noVacias >= 3) { headerRow = r; headerMap = map; break; }
     }
 
     if (headerRow < 0) {
-      toast('No se encontró la fila de encabezados en el archivo', 'e'); return;
+      toast('No se encontró una fila de encabezados válida. Usa la plantilla "Descargar layout" y captura los datos en la hoja "Operaciones".', 'e'); return;
     }
 
     // Leer datos desde la fila siguiente al encabezado
