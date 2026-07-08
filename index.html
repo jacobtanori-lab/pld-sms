@@ -4112,7 +4112,7 @@ function renderDatosGenerales(c) {
       +fcHtml('Fideicomisario',c.fideicomisario_nombre)+fcHtml('Tipo fideicomisario',c.fideicomisario_tipo)
       +fcHtml('Objeto del fideicomiso',c.objeto_fideicomiso)+fcHtml('Bien fideicomitido',c.bien_fideicomitido));
   }
-  return campos + (c.observaciones?'<div style="margin-top:12px;padding:10px;background:#fafaf8;border-radius:var(--r);font-size:13px"><div class="fc-l">Observaciones</div>'+c.observaciones+'</div>':'') + renapoBtnHtml(c);
+  return campos + (c.observaciones?'<div style="margin-top:12px;padding:10px;background:#fafaf8;border-radius:var(--r);font-size:13px"><div class="fc-l">Observaciones</div>'+c.observaciones+'</div>':'');
 }
 
 // ================================================================
@@ -4139,37 +4139,53 @@ function renapoBtnHtml(c){
 function renapoIniciar(){
   var c = App.clienteActual;
   if (!c) { toast('Cliente no cargado','e'); return; }
-  var curp = String(c.curp||'').trim();
-  if (!curp) { toast('Este cliente no tiene CURP capturada','e'); return; }
-  // Copiar CURP al portapapeles y abrir RENAPO (ambos dentro del gesto del clic)
-  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(curp).catch(function(){});
-  window.open('https://www.gob.mx/curp/','_blank','noopener');
-  renapoModal();
+  if (!String(c.curp||'').trim()) { toast('Este cliente no tiene CURP capturada','e'); return; }
+  // Primero se muestran las instrucciones; el usuario acepta y ENTONCES se abre RENAPO.
+  renapoModal('inicio');
 }
 
-function renapoModal(){
+// Al aceptar las instrucciones: copiar CURP y abrir RENAPO (ambos en el gesto del clic)
+function renapoAbrir(){
+  var c = App.clienteActual; if (!c) return;
+  var curp = String(c.curp||'').trim();
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(curp).catch(function(){});
+  window.open('https://www.gob.mx/curp/','_blank','noopener');
+  renapoModal('captura');   // pasa a la fase de captura
+}
+
+function renapoModal(fase){
   renapoCerrar();
+  fase = fase || 'inicio';
   var soporta = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
-  var ov = document.createElement('div'); ov.id = 'renapo-ov';
-  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
-  ov.onclick = function(e){ if (e.target===ov) renapoCerrar(); };
-  var alt = soporta ? '' : '<div class="alerta-banner" style="background:#fff4e5;border:1px solid #c98a12;color:#7a5200;margin-top:10px">Tu navegador no soporta captura de pantalla automatica. Puedes tomar una captura manual y subirla desde el boton de documentos del expediente.</div>';
-  ov.innerHTML = '<div class="card" style="max-width:540px;width:100%">'
-    +'<div class="card-h"><span class="card-t">Verificacion de CURP en RENAPO</span></div>'
-    +'<div class="card-b" style="padding:18px">'
-    +'<p style="font-size:13px;margin:0 0 10px">La CURP fue <strong>copiada al portapapeles</strong>. Pegala en la pestana de RENAPO que se acaba de abrir, realiza la busqueda y cuando veas el resultado regresa aqui y haz clic en "Capturar resultado".</p>'
-    +'<ol style="font-size:13px;color:var(--tx2);line-height:1.7;padding-left:20px;margin:8px 0">'
-    +'<li>Ve a la pestana de <strong>RENAPO</strong> (se abrio automaticamente).</li>'
+  var alt = soporta ? '' : '<div class="alerta-banner" style="background:#fff4e5;border:1px solid #c98a12;color:#7a5200;margin-top:10px">Tu navegador no soporta captura de pantalla automatica. Puedes tomar una captura manual y subirla desde el boton "Subir" de la Constancia CURP.</div>';
+  var pasos = '<ol style="font-size:13px;color:var(--tx2);line-height:1.7;padding-left:20px;margin:8px 0">'
+    +'<li>Al aceptar, se <strong>copiara la CURP</strong> al portapapeles y se abrira <strong>RENAPO</strong> en una pestana nueva.</li>'
     +'<li><strong>Pega</strong> la CURP con Ctrl+V y realiza la busqueda.</li>'
     +'<li>Cuando veas el resultado en pantalla, <strong>regresa a esta pestana</strong>.</li>'
     +'<li>Haz clic en <strong>Capturar resultado</strong> y elige la pestana de RENAPO en el selector del navegador.</li>'
-    +'</ol>'
-    + alt
-    +'<div id="renapo-msg"></div>'
-    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">'
-    +'<button class="btn" onclick="renapoCerrar()">Cancelar</button>'
-    + (soporta ? '<button class="btn btn-p" onclick="renapoCapturar()">Capturar resultado</button>' : '')
-    +'</div></div></div>';
+    +'<li>Al seleccionar la pantalla de RENAPO, la <strong>verificacion se guarda automaticamente</strong> como documento del expediente y regresaras a la pestana de Documentos.</li>'
+    +'</ol>';
+  var cuerpo, botones;
+  if (fase === 'captura') {
+    cuerpo = '<p style="font-size:13px;margin:0 0 10px">La CURP fue <strong>copiada al portapapeles</strong> y se abrio RENAPO en otra pestana.</p>'
+      +'<p style="font-size:13px;margin:0 0 6px">Pega la CURP (Ctrl+V), realiza la busqueda y cuando veas el resultado en pantalla haz clic en <strong>Capturar resultado</strong> y elige la pestana de RENAPO. La verificacion se guardara automaticamente.</p>'
+      + alt + '<div id="renapo-msg"></div>';
+    botones = '<button class="btn" onclick="renapoCerrar()">Cancelar</button>'
+      + (soporta ? '<button class="btn btn-p" onclick="renapoCapturar()">Capturar resultado</button>' : '');
+  } else {
+    cuerpo = '<p style="font-size:13px;margin:0 0 6px">Vas a verificar la CURP en RENAPO. Estos son los pasos:</p>' + pasos + alt;
+    botones = '<button class="btn" onclick="renapoCerrar()">Cancelar</button>'
+      + '<button class="btn btn-p" onclick="renapoAbrir()">Aceptar y abrir RENAPO</button>';
+  }
+  var ov = document.createElement('div'); ov.id = 'renapo-ov';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  ov.onclick = function(e){ if (e.target===ov) renapoCerrar(); };
+  ov.innerHTML = '<div class="card" style="max-width:540px;width:100%">'
+    +'<div class="card-h"><span class="card-t">Verificacion de CURP en RENAPO</span></div>'
+    +'<div class="card-b" style="padding:18px">'
+    + cuerpo
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">'+botones+'</div>'
+    +'</div></div>';
   document.body.appendChild(ov);
 }
 function renapoCerrar(){ var e = document.getElementById('renapo-ov'); if (e && e.parentNode) e.parentNode.removeChild(e); }
@@ -4221,6 +4237,10 @@ function renapoSubir(blob){
         toast('Constancia CURP guardada en el expediente','s');
         renapoCerrar();
         renderFicha(c);
+        // Regresar a la pestana de Documentos (la verificacion ya quedo guardada)
+        var docTab = null;
+        document.querySelectorAll('.ftab').forEach(function(t){ if (t.textContent.trim()==='Documentos') docTab = t; });
+        if (docTab) { fichaTab(docTab,'fd-docs'); renderDocs(); }
       });
     })
     .catch(function(e){ console.warn(e); toast('Error al subir la constancia','e'); });
@@ -4474,7 +4494,9 @@ function renderDocs() {
         +'<label class="btn btn-xs btn-p" style="cursor:pointer">Subir'
         +'<input type="file" multiple style="display:none" onchange="subirDoc(this,\''+td+'\',\''+carpeta+'\')">'
         +'</label>'
-        +'</div></div>';
+        +'</div></div>'
+        // Debajo de la Constancia CURP: verificacion RENAPO (solo PF Mexicana)
+        + ((td==='Constancia CURP' && c.tipo==='PF_MEX') ? renapoBtnHtml(c) : '');
     }
 
     if (oblDocs.length) {
