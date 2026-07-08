@@ -4112,7 +4112,118 @@ function renderDatosGenerales(c) {
       +fcHtml('Fideicomisario',c.fideicomisario_nombre)+fcHtml('Tipo fideicomisario',c.fideicomisario_tipo)
       +fcHtml('Objeto del fideicomiso',c.objeto_fideicomiso)+fcHtml('Bien fideicomitido',c.bien_fideicomitido));
   }
-  return campos + (c.observaciones?'<div style="margin-top:12px;padding:10px;background:#fafaf8;border-radius:var(--r);font-size:13px"><div class="fc-l">Observaciones</div>'+c.observaciones+'</div>':'');
+  return campos + (c.observaciones?'<div style="margin-top:12px;padding:10px;background:#fafaf8;border-radius:var(--r);font-size:13px"><div class="fc-l">Observaciones</div>'+c.observaciones+'</div>':'') + renapoBtnHtml(c);
+}
+
+// ================================================================
+//  VERIFICACION DE CURP EN RENAPO (solo PF Mexicana)
+// ================================================================
+function renapoBtnHtml(c){
+  if (!c || c.tipo!=='PF_MEX') return '';
+  var tieneCurp = !!(c.curp && String(c.curp).trim());
+  var contenido;
+  if (!tieneCurp) {
+    contenido = '<span style="font-size:12px;color:var(--tx3)">Captura la CURP en el expediente para poder verificarla en RENAPO.</span>';
+  } else {
+    contenido = '<button class="btn btn-sm" onclick="renapoIniciar()">&#128269; '+(c.curp_verificada?'Volver a verificar':'Verificar en RENAPO')+'</button>';
+    if (c.curp_verificada) {
+      contenido += '<span class="pill" style="background:#d8f0e8;color:#0F6E56">&#10003; Verificada RENAPO'
+        +(c.curp_fecha_verificacion?(' &middot; '+String(c.curp_fecha_verificacion).substring(0,10)):'')+'</span>';
+      if (c.curp_url_constancia) contenido += '<a href="'+capEsc(c.curp_url_constancia)+'" target="_blank" rel="noopener" style="font-size:12px">Ver constancia</a>';
+    }
+  }
+  return '<div style="margin-top:14px;padding:12px 14px;border:1px dashed var(--brd);border-radius:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
+    +'<span style="font-size:13px;font-weight:600">Verificacion CURP:</span>'+contenido+'</div>';
+}
+
+function renapoIniciar(){
+  var c = App.clienteActual;
+  if (!c) { toast('Cliente no cargado','e'); return; }
+  var curp = String(c.curp||'').trim();
+  if (!curp) { toast('Este cliente no tiene CURP capturada','e'); return; }
+  // Copiar CURP al portapapeles y abrir RENAPO (ambos dentro del gesto del clic)
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(curp).catch(function(){});
+  window.open('https://www.gob.mx/curp/','_blank','noopener');
+  renapoModal();
+}
+
+function renapoModal(){
+  renapoCerrar();
+  var soporta = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+  var ov = document.createElement('div'); ov.id = 'renapo-ov';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  ov.onclick = function(e){ if (e.target===ov) renapoCerrar(); };
+  var alt = soporta ? '' : '<div class="alerta-banner" style="background:#fff4e5;border:1px solid #c98a12;color:#7a5200;margin-top:10px">Tu navegador no soporta captura de pantalla automatica. Puedes tomar una captura manual y subirla desde el boton de documentos del expediente.</div>';
+  ov.innerHTML = '<div class="card" style="max-width:540px;width:100%">'
+    +'<div class="card-h"><span class="card-t">Verificacion de CURP en RENAPO</span></div>'
+    +'<div class="card-b" style="padding:18px">'
+    +'<p style="font-size:13px;margin:0 0 10px">La CURP fue <strong>copiada al portapapeles</strong>. Pegala en la pestana de RENAPO que se acaba de abrir, realiza la busqueda y cuando veas el resultado regresa aqui y haz clic en "Capturar resultado".</p>'
+    +'<ol style="font-size:13px;color:var(--tx2);line-height:1.7;padding-left:20px;margin:8px 0">'
+    +'<li>Ve a la pestana de <strong>RENAPO</strong> (se abrio automaticamente).</li>'
+    +'<li><strong>Pega</strong> la CURP con Ctrl+V y realiza la busqueda.</li>'
+    +'<li>Cuando veas el resultado en pantalla, <strong>regresa a esta pestana</strong>.</li>'
+    +'<li>Haz clic en <strong>Capturar resultado</strong> y elige la pestana de RENAPO en el selector del navegador.</li>'
+    +'</ol>'
+    + alt
+    +'<div id="renapo-msg"></div>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">'
+    +'<button class="btn" onclick="renapoCerrar()">Cancelar</button>'
+    + (soporta ? '<button class="btn btn-p" onclick="renapoCapturar()">Capturar resultado</button>' : '')
+    +'</div></div></div>';
+  document.body.appendChild(ov);
+}
+function renapoCerrar(){ var e = document.getElementById('renapo-ov'); if (e && e.parentNode) e.parentNode.removeChild(e); }
+
+// getDisplayMedia debe invocarse DIRECTO en el gesto del usuario (este onclick)
+function renapoCapturar(){
+  if (!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia)) {
+    var box = document.getElementById('renapo-msg');
+    var msg = 'Tu navegador no soporta captura de pantalla automatica. Puedes tomar una captura manual y subirla desde el boton de documentos del expediente.';
+    if (box) box.innerHTML = '<div class="alerta-banner" style="background:#fff4e5;border:1px solid #c98a12;color:#7a5200;margin-top:12px">'+msg+'</div>';
+    else toast(msg,'w');
+    return;
+  }
+  navigator.mediaDevices.getDisplayMedia({video:true, preferCurrentTab:false}).then(function(stream){
+    var video = document.createElement('video');
+    video.muted = true; video.playsInline = true; video.srcObject = stream;
+    function grab(){
+      var vw = video.videoWidth||1280, vh = video.videoHeight||720;
+      var canvas = document.createElement('canvas'); canvas.width = vw; canvas.height = vh;
+      try { canvas.getContext('2d').drawImage(video, 0, 0, vw, vh); } catch(e){ console.warn(e); }
+      stream.getTracks().forEach(function(t){ t.stop(); });   // detener el stream de inmediato
+      canvas.toBlob(function(blob){ if (blob) renapoSubir(blob); else toast('No se pudo capturar la imagen','e'); }, 'image/png');
+    }
+    video.onloadedmetadata = function(){
+      var p = video.play();
+      var run = function(){ if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(function(){ grab(); }); else setTimeout(grab, 300); };
+      if (p && p.then) p.then(run).catch(run); else run();
+    };
+  }).catch(function(e){ console.warn('getDisplayMedia:', e); toast('Captura cancelada o sin permiso','w'); });
+}
+
+function renapoSubir(blob){
+  var c = App.clienteActual; if (!c) { toast('Cliente no cargado','e'); return; }
+  toast('Subiendo constancia CURP...','i');
+  var fecha = hoy();
+  var curp = String(c.curp||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  var nom = (nombreClienteDatos(c)||'').replace(/[^a-zA-Z0-9_\-]/g,'_').substring(0,40);
+  var carpeta = 'PLD_Documentos/'+nStr(c.num_cliente)+'_'+nom;
+  var fname = 'Otros_documentos_soporte_Verificacion_CURP_'+curp+'_'+fecha+'.png';
+  var ruta = carpeta.split('/').map(encodeURIComponent).join('/') + '/' + encodeURIComponent(fname);
+  var url = GRAPH+'/sites/'+App.siteId+'/drive/root:/'+ruta+':/content';
+  fetch(url, {method:'PUT', headers:{'Authorization':'Bearer '+App.token,'Content-Type':'image/png'}, body:blob})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d || !d.id) { console.warn('renapo upload:', d); toast('Error al subir la constancia','e'); return; }
+      var campos = { curp_verificada:true, curp_fecha_verificacion:fecha, curp_url_constancia:(d.webUrl||'') };
+      spPatch('PLD_Clientes', c.id, campos, function(){
+        for (var k in campos) c[k] = campos[k];
+        toast('Constancia CURP guardada en el expediente','s');
+        renapoCerrar();
+        renderFicha(c);
+      });
+    })
+    .catch(function(e){ console.warn(e); toast('Error al subir la constancia','e'); });
 }
 
 function renderDomicilio(c, pref) {
