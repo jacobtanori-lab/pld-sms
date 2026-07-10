@@ -5580,7 +5580,29 @@ function generarXML(opId) {
     }
     xml += '      </persona_aviso>\n';
 
-    // Dueño beneficiario (si existe) — maneja PF, PM y fideicomiso
+    // Dueños beneficiarios / beneficiarios controladores.
+    // El XSD permite múltiples <dueno_beneficiario> (maxOccurs unbounded).
+    var dbNames = {};
+    var _dbKey = function(nom, ap){ return (String(nom||'')+'|'+String(ap||'')).toUpperCase().replace(/\s+/g,''); };
+
+    // 1) Beneficiarios controladores capturados en el expediente (array). Se reportan como persona física.
+    if (cli && cli.beneficiarios && cli.beneficiarios.length) {
+      cli.beneficiarios.forEach(function(bc){
+        if (!bc || (!bc.nombre && !bc.ap_pat)) return;
+        dbNames[_dbKey(bc.nombre, bc.ap_pat)] = 1;
+        xml += '      <dueno_beneficiario>\n        <tipo_persona>\n          <persona_fisica>\n';
+        xml += '            <nombre>'+limXML(bc.nombre||'X',200)+'</nombre>\n';
+        xml += '            <apellido_paterno>'+limXML(bc.ap_pat||'XXXX',200)+'</apellido_paterno>\n';
+        xml += '            <apellido_materno>'+limXML(bc.ap_mat||'XXXX',200)+'</apellido_materno>\n';
+        if (bc.fecha_nac) xml += '            <fecha_nacimiento>'+fechaXML(bc.fecha_nac)+'</fecha_nacimiento>\n';
+        if (bc.rfc) xml += '            <rfc>'+limXML(bc.rfc,13)+'</rfc>\n';
+        if (bc.curp) xml += '            <curp>'+limXML(bc.curp,18)+'</curp>\n';
+        if (bc.pais_nac2||bc.pais_nac) xml += '            <pais_nacionalidad>'+paisISO(bc.pais_nac2||bc.pais_nac||'Mexico')+'</pais_nacionalidad>\n';
+        xml += '          </persona_fisica>\n        </tipo_persona>\n      </dueno_beneficiario>\n';
+      });
+    }
+
+    // 2) Declaración de dueño beneficiario (db_*) — cubre PF/PM/fideicomiso; se omite si ya se reportó como BC del array.
     var dbTipoINM = cli && (cli.db_tipo || 'PF');
     if (cli && cli.tiene_dueno_ben==='SI') {
       if (dbTipoINM==='PM' && cli.db_razon_social) {
@@ -5594,7 +5616,7 @@ function generarXML(opId) {
         xml += '            <denominacion_razon>'+limXML(cli.db_razon_social,254)+'</denominacion_razon>\n';
         if (cli.db_rfc) xml += '            <rfc>'+limXML(cli.db_rfc,12)+'</rfc>\n';
         xml += '          </fideicomiso>\n        </tipo_persona>\n      </dueno_beneficiario>\n';
-      } else if (cli.db_nombre) {
+      } else if (cli.db_nombre && !dbNames[_dbKey(cli.db_nombre, cli.db_ap_pat)]) {
       xml += '      <dueno_beneficiario>\n';
       xml += '        <tipo_persona>\n';
       xml += '          <persona_fisica>\n';
