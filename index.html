@@ -5259,13 +5259,15 @@ function nuevaOpForm(datos, fraccion) {
 
     // Cliente (persona objeto del aviso)
     +'<div class="card"><div class="card-h"><span class="card-t">2. Persona objeto del aviso (cliente)</span></div><div class="fgrid">'
-    +fsFull('Seleccionar cliente del expediente','id_cliente_ref',
-      '<option value="">-- Buscar en expedientes --</option>'
-      +App.clientes.map(function(c){
+    +'<div class="fg full req-field"><label class="lbl">Cliente del expediente <span class="req">*</span></label>'
+    +'<select class="sel" name="id_cliente_ref">'
+    +'<option value="">-- Selecciona un cliente registrado --</option>'
+    +App.clientes.map(function(c){
         var nom = c.tipo==='PM_MEX'||c.tipo==='PM_SIMP'?c.razon_social:[c.nombre,c.ap_pat,c.ap_mat].filter(Boolean).join(' ');
         return '<option value="'+c.id+'"'+(c.id===d.id_cliente_ref?' selected':'')+'>'+nom+' ('+labelTipo(c.tipo)+')</option>';
-      }).join(''))
-    +'<div class="fg full"><label class="lbl">O capturar nombre manualmente</label><input class="inp" name="nombre_cliente" value="'+(d.nombre_cliente||'')+'"></div>'
+      }).join('')
+    +'</select>'
+    +'<span class="fhint">Los avisos solo aplican a clientes ya registrados y operando. Los datos de identificacion, domicilio y dueno beneficiario se toman del expediente al generar el XML.</span></div>'
     +(esARI ? '' : fg('Figura del cliente en la operacion',null,true)+'<select class="sel" name="figura_cliente">'+optsC(FIGURA_CLIENTE,d.figura_cliente||'')+'</select></div>')
     +(esARI ? '' : fg('Figura del sujeto obligado (SO)',null,true)+'<select class="sel" name="figura_so">'+optsC(FIGURA_SO,d.figura_so||'')+'</select></div>')
     +'</div></div>'
@@ -5435,17 +5437,18 @@ function submitOp(idEx, estatus) {
   FIGURA_SO.forEach(function(x){ if(x.codigo===d.figura_so) d.figura_so_desc=x.desc; });
   ENTIDADES_FED.forEach(function(x){ if(x.codigo===d.entidad_notario) d.entidad_notario_desc=x.desc; });
 
-  // Si seleccionó cliente del expediente, copiar datos relevantes
-  if (d.id_cliente_ref) {
-    var cli = null;
-    App.clientes.forEach(function(c){ if(c.id===d.id_cliente_ref) cli=c; });
-    if (cli) {
-      d.nombre_cliente = cli.tipo==='PM_MEX'||cli.tipo==='PM_SIMP' ? cli.razon_social
-        : [cli.nombre,cli.ap_pat,cli.ap_mat].filter(Boolean).join(' ');
-      d.cliente_tipo = cli.tipo;
-      d.cliente_ref = cli.id;
-    }
+  // Cliente obligatorio: los avisos solo aplican a clientes registrados en el expediente
+  if (!d.id_cliente_ref) {
+    toast('Selecciona el cliente del expediente. Los avisos solo aplican a clientes registrados y operando.','e');
+    return;
   }
+  var cli = null;
+  App.clientes.forEach(function(c){ if(c.id===d.id_cliente_ref) cli=c; });
+  if (!cli) { toast('El cliente seleccionado no se encontro en el expediente. Vuelve a seleccionarlo.','e'); return; }
+  d.nombre_cliente = (cli.tipo==='PM_MEX'||cli.tipo==='PM_SIMP') ? cli.razon_social
+    : [cli.nombre,cli.ap_pat,cli.ap_mat].filter(Boolean).join(' ');
+  d.cliente_tipo = cli.tipo;
+  d.cliente_ref = cli.id;
 
   d.entidad_id = App.entidadActual ? App.entidadActual.id : '';
   d.entidad_nombre = App.entidadActual ? App.entidadActual.nombre : '';
@@ -5491,8 +5494,13 @@ function generarXML(opId) {
       });
     }
 
-    // Obtener sujeto obligado activo
-    var ent = App.entidadActual || ENTIDADES[0];
+    // Sujeto obligado = la entidad DUENA de la operacion (no la vista activa).
+    var ent = null;
+    if (op.entidad_id && op.entidad_id !== 'TODAS') {
+      ENTIDADES.forEach(function(e){ if (e.id === op.entidad_id) ent = e; });
+    }
+    if (!ent && App.entidadActual && App.entidadActual.id !== 'TODAS') ent = App.entidadActual;
+    if (!ent) ent = ENTIDADES[0];
 
     // Derivar al generador ARI si la operación es Fracción XV
     if (op.fraccion === 'ARI') {
@@ -5524,7 +5532,9 @@ function generarXML(opId) {
 
     // Sujeto obligado
     xml += '    <sujeto_obligado>\n';
-    xml += '      <clave_sujeto_obligado>'+limXML(ent.rfc||'RFC000000XXX',13)+'</clave_sujeto_obligado>\n';
+    var rfcSO = String((ent && ent.rfc) || '').toUpperCase().replace(/[^A-ZÑ&0-9]/g,'').substring(0,13);
+    if (rfcSO.length < 12) toast('El RFC del sujeto obligado ('+((ent&&ent.nombre)||'entidad')+') no esta configurado o es invalido. Completalo en Configuracion → Entidades para que el aviso sea aceptado.','w');
+    xml += '      <clave_sujeto_obligado>'+(rfcSO||'RFC000000XXX')+'</clave_sujeto_obligado>\n';
     xml += '      <clave_actividad>INM</clave_actividad>\n';
     xml += '    </sujeto_obligado>\n';
 
