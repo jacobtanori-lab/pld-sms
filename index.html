@@ -1084,14 +1084,15 @@ function limXML(str, maxLen) {
   return s.substring(0, maxLen || 200);
 }
 
-// Helper: saneo ESTRICTO para nombre/apellido (patrón nombre_type del XSD:
-// solo A-Z, Ñ, espacio, punto y coma). Mayúsculas, sin acentos, y elimina
-// dígitos, guiones, paréntesis y demás caracteres especiales (los pasa a espacio).
+// Helper: saneo ESTRICTO para nombre/apellido. Válido para ambas fracciones:
+// el nombre_type de ARI solo admite A-Z, Ñ y espacio (el de INM es superconjunto),
+// así que se deja únicamente ese set. Mayúsculas, sin acentos, y elimina dígitos,
+// guiones, paréntesis, puntos, comas y demás caracteres especiales (los pasa a espacio).
 function limNombre(str, maxLen, fb) {
   var s = String(str==null?'':str).toUpperCase()
     .replace(/[ÁÀÂÄÃ]/g,'A').replace(/[ÉÈÊË]/g,'E').replace(/[ÍÌÎÏ]/g,'I')
     .replace(/[ÓÒÔÖÕ]/g,'O').replace(/[ÚÙÛÜ]/g,'U');
-  s = s.replace(/[^A-ZÑ .,]/g,' ').replace(/\s+/g,' ').trim();
+  s = s.replace(/[^A-ZÑ ]/g,' ').replace(/\s+/g,' ').trim();
   if (!s) s = fb || 'X';
   return s.substring(0, maxLen || 200);
 }
@@ -5291,8 +5292,8 @@ function nuevaOpForm(datos, fraccion) {
     +'<input type="hidden" name="fraccion" value="'+fraccion+'">'
     +'</div></div>'
 
-    // Contraparte
-    +'<div class="card"><div class="card-h"><span class="card-t">4. Contraparte (si el SO es intermediario)</span></div><div class="fgrid">'
+    // Contraparte (solo Fr. V — el aviso de arrendamiento no tiene contraparte)
+    +(esARI ? '' : '<div class="card"><div class="card-h"><span class="card-t">4. Contraparte (si el SO es intermediario)</span></div><div class="fgrid">'
     +fg('Tipo de contraparte',null,false)+'<select class="sel" name="tipo_contraparte"><option value=""'+(!(d.tipo_contraparte)?' selected':'')+'>Sin contraparte</option><option value="PF"'+(d.tipo_contraparte==='PF'?' selected':'')+'>Persona fisica</option><option value="PM"'+(d.tipo_contraparte==='PM'?' selected':'')+'>Persona moral</option><option value="FID"'+(d.tipo_contraparte==='FID'?' selected':'')+'>Fideicomiso</option></select></div>'
     +fg('Nombre / Razon social / Fiduciario de la contraparte',null,false)+fi('contraparte_nombre',d.contraparte_nombre||'','PF: nombre(s) · PM: razon social · FID: fiduciario')
     +fg('Apellido paterno (si PF)',null,false)+fi('contraparte_ap_pat',d.contraparte_ap_pat||'','')
@@ -5302,7 +5303,7 @@ function nuevaOpForm(datos, fraccion) {
     +fg('CURP de la contraparte (si PF)',null,false)+fi('contraparte_curp',d.contraparte_curp||'','')
     +fg('Identificador del fideicomiso (si FID)',null,false)+fi('contraparte_fid_id',d.contraparte_fid_id||'','No., referencia o identificador')
     +fg('Pais de nacionalidad (PF/PM)',null,false)+'<select class="sel" name="contraparte_pais">'+optsPais(d.contraparte_pais||'MEXICO')+'</select></div>'
-    +'</div></div>'
+    +'</div></div>')
 
     // Características del inmueble (campos comunes + específicos por fracción)
     +'<div class="card"><div class="card-h"><span class="card-t">5. Caracteristicas del inmueble</span>'
@@ -5462,7 +5463,8 @@ function submitOp(idEx, estatus) {
   d.cliente_tipo = cli.tipo;
   d.cliente_ref = cli.id;
 
-  // Validaciones de conformidad del aviso (Fr. V)
+  // Validaciones de conformidad del aviso
+  // (figura solo aplica a Fr. V; para ARI figura_cliente/figura_so no existen)
   if (d.figura_cliente && d.figura_so && d.figura_cliente === d.figura_so) {
     toast('La figura del cliente y la del sujeto obligado no pueden ser iguales.','e'); return;
   }
@@ -5470,10 +5472,16 @@ function submitOp(idEx, estatus) {
     if (d.tipo_alerta && d.tipo_alerta !== '100' && !(d.descripcion_alerta && d.descripcion_alerta.trim())) {
       toast('Captura la descripcion de la alerta (obligatoria cuando el tipo de alerta no es "100 - Sin alerta").','e'); return;
     }
-    if ((d.fraccion||'INM') !== 'ARI') {
-      if (!/^\d{5}$/.test(String(d.inm_cp||''))) {
-        toast('El codigo postal del inmueble debe tener 5 digitos.','e'); return;
+    // CP del inmueble: obligatorio de 5 dígitos en ambas fracciones
+    if (!/^\d{5}$/.test(String(d.inm_cp||''))) {
+      toast('El codigo postal del inmueble debe tener 5 digitos.','e'); return;
+    }
+    if ((d.fraccion||'INM') === 'ARI') {
+      var _fi = fechaXML(d.fecha_inicio||''), _ft = fechaXML(d.fecha_termino||'');
+      if (_fi && _ft && _ft < _fi) {
+        toast('La fecha de termino del arrendamiento no puede ser anterior a la fecha de inicio.','e'); return;
       }
+    } else {
       if (d.figura_so === '3' && !(d.tipo_contraparte && d.contraparte_nombre)) {
         toast('Cuando el sujeto obligado es Intermediario, debes capturar la contraparte (seccion 4).','e'); return;
       }
@@ -5534,6 +5542,23 @@ function generarXML(opId) {
 
     // Derivar al generador ARI si la operación es Fracción XV
     if (op.fraccion === 'ARI') {
+      // ── Validaciones de conformidad antes de generar (Fr. XV) ──
+      // #8 Código postal del inmueble y del domicilio nacional del cliente: 5 dígitos (SEPOMEX)
+      if (!/^\d{5}$/.test(String(op.inm_cp||''))) {
+        toast('El codigo postal del inmueble no es valido (debe ser 5 digitos). Corrigelo antes de generar el aviso.','e'); return;
+      }
+      if (cli && normPais(cli.pais_dom||'MEXICO')==='MEXICO' && !/^\d{5}$/.test(String(cli.cp||''))) {
+        toast('El codigo postal del domicilio del cliente no es valido (5 digitos). Corrigelo en el expediente.','e'); return;
+      }
+      // #10 Descripción de alerta obligatoria cuando el tipo de alerta no es 100 (Sin alerta)
+      if (op.tipo_alerta && op.tipo_alerta !== '100' && !(op.descripcion_alerta && String(op.descripcion_alerta).trim())) {
+        toast('Falta la descripcion de la alerta (obligatoria cuando el tipo de alerta no es "100 - Sin alerta").','e'); return;
+      }
+      // A6 fecha_termino >= fecha_inicio del arrendamiento (VC37132R1)
+      var _fiA = fechaXML(op.fecha_inicio||''), _ftA = fechaXML(op.fecha_termino||'');
+      if (_fiA && _ftA && _ftA < _fiA) {
+        toast('La fecha de termino del arrendamiento no puede ser anterior a la fecha de inicio.','e'); return;
+      }
       var xmlARI = generarXML_ARI(op, cli, ent);
       var mesRepARI = op.fecha_operacion ? op.fecha_operacion.replace(/-/g,'').substring(0,6)
         : new Date().getFullYear()+pad(new Date().getMonth()+1);
@@ -5814,7 +5839,9 @@ function generarXML_ARI(op, cli, ent) {
   xml += '  <informe>\n';
   xml += '    <mes_reportado>'+mesRep+'</mes_reportado>\n';
   xml += '    <sujeto_obligado>\n';
-  xml += '      <clave_sujeto_obligado>'+limXML(ent.rfc||'RFC000000XXX',13)+'</clave_sujeto_obligado>\n';
+  var rfcSO = String((ent && ent.rfc) || '').toUpperCase().replace(/[^A-ZÑ&0-9]/g,'').substring(0,13);
+  if (rfcSO.length < 12) toast('El RFC del sujeto obligado ('+((ent&&ent.nombre)||'entidad')+') no esta configurado o es invalido. Completalo en Configuracion → Entidades para que el aviso sea aceptado.','w');
+  xml += '      <clave_sujeto_obligado>'+(rfcSO||'RFC000000XXX')+'</clave_sujeto_obligado>\n';
   xml += '      <clave_actividad>ARI</clave_actividad>\n';
   xml += '    </sujeto_obligado>\n';
   xml += '    <aviso>\n';
@@ -5853,7 +5880,28 @@ function generarXML_ARI(op, cli, ent) {
   }
   xml += '      </persona_aviso>\n';
 
-  // Dueño beneficiario — puede ser PF, PM o fideicomiso
+  // Dueños beneficiarios / beneficiarios controladores — el XSD permite múltiples.
+  var dbNamesA = {};
+  var _dbKeyA = function(nom, ap){ return (String(nom||'')+'|'+String(ap||'')).toUpperCase().replace(/\s+/g,''); };
+
+  // 1) Beneficiarios controladores capturados en el expediente (array). Se reportan como persona física.
+  if (cli && cli.beneficiarios && cli.beneficiarios.length) {
+    cli.beneficiarios.forEach(function(bc){
+      if (!bc || (!bc.nombre && !bc.ap_pat)) return;
+      dbNamesA[_dbKeyA(bc.nombre, bc.ap_pat)] = 1;
+      xml += '      <dueno_beneficiario>\n        <tipo_persona>\n          <persona_fisica>\n';
+      xml += '            <nombre>'+limNombre(bc.nombre,200,'X')+'</nombre>\n';
+      xml += '            <apellido_paterno>'+limNombre(bc.ap_pat,200,'XXXX')+'</apellido_paterno>\n';
+      xml += '            <apellido_materno>'+limNombre(bc.ap_mat,200,'XXXX')+'</apellido_materno>\n';
+      if (bc.fecha_nac) xml += '            <fecha_nacimiento>'+fechaXML(bc.fecha_nac)+'</fecha_nacimiento>\n';
+      if (bc.rfc) xml += '            <rfc>'+limXML(bc.rfc,13)+'</rfc>\n';
+      if (bc.curp) xml += '            <curp>'+limXML(bc.curp,18)+'</curp>\n';
+      if (bc.pais_nac2||bc.pais_nac) xml += '            <pais_nacionalidad>'+paisISO(bc.pais_nac2||bc.pais_nac||'Mexico')+'</pais_nacionalidad>\n';
+      xml += '          </persona_fisica>\n        </tipo_persona>\n      </dueno_beneficiario>\n';
+    });
+  }
+
+  // 2) Declaración de dueño beneficiario (db_*) — PF/PM/fideicomiso; se omite el caso PF si ya se reportó como BC del array.
   if (cli&&cli.tiene_dueno_ben==='SI') {
     var dbTipo = cli.db_tipo || 'PF';
     if (dbTipo==='PM'&&cli.db_razon_social) {
@@ -5875,13 +5923,13 @@ function generarXML_ARI(op, cli, ent) {
       xml += '          </fideicomiso>\n';
       xml += '        </tipo_persona>\n';
       xml += '      </dueno_beneficiario>\n';
-    } else if (cli.db_nombre) {
+    } else if (cli.db_nombre && !dbNamesA[_dbKeyA(cli.db_nombre, cli.db_ap_pat)]) {
       xml += '      <dueno_beneficiario>\n';
       xml += '        <tipo_persona>\n';
       xml += '          <persona_fisica>\n';
-      xml += '            <nombre>'+limXML(cli.db_nombre,200)+'</nombre>\n';
-      xml += '            <apellido_paterno>'+limXML(cli.db_ap_pat||'XXXX',200)+'</apellido_paterno>\n';
-      xml += '            <apellido_materno>'+limXML(cli.db_ap_mat||'XXXX',200)+'</apellido_materno>\n';
+      xml += '            <nombre>'+limNombre(cli.db_nombre,200,'X')+'</nombre>\n';
+      xml += '            <apellido_paterno>'+limNombre(cli.db_ap_pat,200,'XXXX')+'</apellido_paterno>\n';
+      xml += '            <apellido_materno>'+limNombre(cli.db_ap_mat,200,'XXXX')+'</apellido_materno>\n';
       if (cli.db_fecha_nac) xml += '            <fecha_nacimiento>'+fechaXML(cli.db_fecha_nac)+'</fecha_nacimiento>\n';
       if (cli.db_rfc) xml += '            <rfc>'+limXML(cli.db_rfc,13)+'</rfc>\n';
       if (cli.db_curp) xml += '            <curp>'+limXML(cli.db_curp,18)+'</curp>\n';
