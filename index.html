@@ -2365,8 +2365,10 @@ function pgConfig(sec) {
   sec = sec || 'sistema';
   setSB('<div class="sb-sec">Configuracion</div>'
     +'<div class="sb-item'+(sec==='sistema'?' on':'')+'" onclick="pgConfig(\'sistema\')">Parametros del sistema</div>'
-    +'<div class="sb-item'+(sec==='ebr'?' on':'')+'" onclick="pgConfig(\'ebr\')">Nivel de Riesgo de clientes</div>');
-  if (sec === 'ebr') { pgConfigEBR(); return; }
+    +'<div class="sb-item'+(sec==='ebr'?' on':'')+'" onclick="pgConfig(\'ebr\')">Nivel de Riesgo de clientes</div>'
+    +'<div class="sb-item'+(sec==='perfil'?' on':'')+'" onclick="pgConfig(\'perfil\')">Perfil transaccional</div>');
+  if (sec === 'ebr')    { pgConfigEBR(); return; }
+  if (sec === 'perfil') { pgConfigPerfil(); return; }
 
   var uma = CFG_UMA.DIARIA;
   var umbral = (uma * CFG_UMA.UMBRAL_UMAS).toLocaleString('es-MX');
@@ -2809,9 +2811,77 @@ function guardarEBR() {
     (lista||[]).forEach(function(c){ if(c.Title==='CONFIG_SISTEMA'||c.uma_diaria) item=c; });
     var datos = { Title: 'CONFIG_SISTEMA', ebr_config: json, actualizado_por: App.cuenta.username };
     if (item && item.id) {
-      spUpdate('PLD_Config', item.id, datos, function() { toast('Configuracion de nivel de riesgo guardada','s'); pgConfig('ebr'); });
+      spPatch('PLD_Config', item.id, datos, function() { toast('Configuracion de nivel de riesgo guardada','s'); pgConfig('ebr'); });
     } else {
       spCreate('PLD_Config', datos, function() { toast('Configuracion de nivel de riesgo guardada','s'); pgConfig('ebr'); });
+    }
+  });
+}
+
+// ── Pantalla de configuración: PERFIL TRANSACCIONAL ───────────
+function pgConfigPerfil() {
+  var p = CFG_PERFIL;
+  function num(id, val, min, max, step) {
+    return '<input class="inp mono" id="pf-'+id+'" type="number" min="'+min+'" max="'+max+'" step="'+(step||1)+'" value="'+val+'" style="width:120px;text-align:center">';
+  }
+  function fila(label, hint, campo, sufijo) {
+    return '<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--brd);flex-wrap:wrap">'
+      +'<div style="flex:1;min-width:220px"><div style="font-size:13px;color:var(--tx1)">'+label+'</div>'
+      +'<div style="font-size:11px;color:var(--tx3)">'+hint+'</div></div>'
+      + campo
+      +'<span style="font-size:12px;color:var(--tx3);min-width:70px">'+sufijo+'</span></div>';
+  }
+
+  setMain('<div class="phdr"><div><div class="ptit">Perfil transaccional</div>'
+    +'<div class="psub">Parametros que definen cuando un cliente se sale de su perfil esperado</div></div>'
+    +'<button class="btn btn-p" onclick="guardarPerfil()">Guardar cambios</button></div>'
+
+    +'<div class="alerta-banner">La alerta se evalua sobre las operaciones del <strong>mes</strong> de cada cliente. '
+    +'Si se excede <strong>cualquiera</strong> de estos parametros, se genera una alerta de <strong>Perfil transaccional</strong>.</div>'
+
+    +'<div class="card"><div class="card-h"><span class="card-t">Aplica a todos los clientes</span></div>'
+    +'<div class="card-b">'
+    + fila('Numero maximo de operaciones', 'Operaciones registradas en el mes. 0 = sin limite.',
+           num('max_operaciones', p.max_operaciones, 0, 9999), 'operaciones')
+    + fila('Monto maximo en efectivo', 'Efectivo acumulado en el mes (instrumento monetario = Efectivo). 0 = sin limite.',
+           num('max_efectivo', p.max_efectivo, 0, 999999999), 'MXN')
+    +'</div></div>'
+
+    +'<div class="card"><div class="card-h"><span class="card-t">Aplica solo a clientes de arrendamiento</span>'
+    +'<span style="font-size:12px;color:var(--tx3)">Requiere que el cliente tenga una renta mensual definida</span></div>'
+    +'<div class="card-b">'
+    + fila('Desviacion permitida sobre la renta', 'Si el total del mes supera la renta esperada mas este porcentaje, se alerta.',
+           num('pct_desviacion', p.pct_desviacion, 0, 1000), '%')
+    +'</div></div>'
+
+    +'<div class="card"><div class="card-h"><span class="card-t">Conversion de moneda</span></div>'
+    +'<div class="card-b">'
+    + fila('Tipo de cambio USD &rarr; MXN', 'Se usa para comparar rentas y operaciones en dolares contra los limites en pesos.',
+           num('tipo_cambio_usd', p.tipo_cambio_usd, 0, 1000, 0.01), 'MXN / USD')
+    +'</div></div>');
+}
+
+function guardarPerfil() {
+  var g = function(id, fallback) {
+    var el = document.getElementById('pf-'+id);
+    var v = el ? parseFloat(el.value) : NaN;
+    return isNaN(v) ? fallback : v;
+  };
+  CFG_PERFIL.max_operaciones = g('max_operaciones', 10);
+  CFG_PERFIL.max_efectivo    = g('max_efectivo', 100000);
+  CFG_PERFIL.pct_desviacion  = g('pct_desviacion', 20);
+  CFG_PERFIL.tipo_cambio_usd = g('tipo_cambio_usd', 17);
+
+  var json = JSON.stringify(CFG_PERFIL);
+  localStorage.setItem('perfil_config', json);
+  spGet('PLD_Config', function(lista) {
+    var item = null;
+    (lista||[]).forEach(function(c){ if(c.Title==='CONFIG_SISTEMA'||c.uma_diaria) item=c; });
+    var datos = { Title: 'CONFIG_SISTEMA', perfil_config: json, actualizado_por: App.cuenta.username };
+    if (item && item.id) {
+      spPatch('PLD_Config', item.id, datos, function() { toast('Configuracion de perfil transaccional guardada','s'); pgConfig('perfil'); });
+    } else {
+      spCreate('PLD_Config', datos, function() { toast('Configuracion de perfil transaccional guardada','s'); pgConfig('perfil'); });
     }
   });
 }
@@ -3038,8 +3108,8 @@ function guardarUMA() {
       actualizado_por: App.cuenta.username
     };
     if (lista && lista.length && lista[0].id) {
-      // Actualizar registro existente
-      spUpdate('PLD_Config', lista[0].id, datos, function() {
+      // Actualizar registro existente (spPatch hace merge: no borra ebr_config ni perfil_config)
+      spPatch('PLD_Config', lista[0].id, datos, function() {
         toast('UMA actualizada a $'+val.toFixed(2)+' — guardada en SharePoint','s');
         pgConfig();
       });
@@ -3478,6 +3548,31 @@ function toggleDuenoBen(val) {
   if (el) el.style.display = (val === 'SI') ? 'block' : 'none';
 }
 
+// --- MARCADOR DE CLIENTE DE ARRENDAMIENTO (perfil transaccional) ---
+// Se inserta en "Datos generales del expediente" de todos los tipos de cliente.
+function htmlArrendamiento(d) {
+  var esArr = (d.es_arrendamiento === 'SI');
+  var vis = esArr ? '' : 'display:none';
+  return fg('Cliente de arrendamiento',null,false)
+    +'<select class="sel" name="es_arrendamiento" onchange="toggleArrendamiento(this.value)">'
+    +'<option value="NO"'+(!esArr?' selected':'')+'>NO</option>'
+    +'<option value="SI"'+(esArr?' selected':'')+'>SI - Cliente de arrendamiento</option>'
+    +'</select></div>'
+    +'<div class="fg full arr-campo" style="'+vis+'"><label class="lbl">Inmueble arrendado / nombre del establecimiento</label>'
+    +'<input class="inp" name="inmueble_arrendado" value="'+(d.inmueble_arrendado||'')+'" placeholder="Ej: LOCAL 4, PLAZA NORTE" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>'
+    +'<div class="fg arr-campo" style="'+vis+'"><label class="lbl">Monto mensual de la renta</label>'
+    +'<input class="inp" name="renta_monto" value="'+(d.renta_monto||'')+'" placeholder="0.00"></div>'
+    +'<div class="fg arr-campo" style="'+vis+'"><label class="lbl">Moneda de la renta</label>'
+    +'<select class="sel" name="renta_moneda">'
+    +'<option value="MXN"'+(d.renta_moneda!=='USD'?' selected':'')+'>MXN - Pesos</option>'
+    +'<option value="USD"'+(d.renta_moneda==='USD'?' selected':'')+'>USD - Dolares</option>'
+    +'</select></div>';
+}
+function toggleArrendamiento(val) {
+  var vis = (val === 'SI') ? '' : 'none';
+  document.querySelectorAll('.arr-campo').forEach(function(el){ el.style.display = vis; });
+}
+
 // ================================================================
 //  FORMULARIO PF MEXICANA (Anexo 3)
 // ================================================================
@@ -3494,6 +3589,7 @@ function htmlFormPF_MEX(d) {
     +fg('Fecha de alta',null,true)+fi('fecha_alta',d.fecha_alta||hoy(),'')
     +fg('Fecha de baja',null,false)+fi('fecha_baja',d.fecha_baja||'','Dejar vacio si no aplica')
     +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id"><option value="">-- Sin asignar --</option>'+ASESORES.map(function(a){ return '<option value="'+a.id+'"'+(a.id===d.asesor_id?' selected':'')+'>'+a.nombre+'</option>'; }).join('')+'</select></div>'
+    +htmlArrendamiento(d)
     +'</div></div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Identificacion - Persona fisica mexicana (Anexo 3)</span></div>'
     +htmlIdPF(d,'',true)
@@ -3531,6 +3627,7 @@ function htmlFormPF_EXT(d) {
     +fg('Fecha de alta',null,true)+fi('fecha_alta',d.fecha_alta||hoy(),'')
     +fg('Fecha de baja',null,false)+fi('fecha_baja',d.fecha_baja||'','')
     +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id">'+htmlSelectAsesores(d.asesor_id||'')+'</select></div>'
+    +htmlArrendamiento(d)
     +'</div></div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Identificacion - Persona fisica extranjera (Anexo 5)</span></div>'
     +htmlIdPF(d,'',false)
@@ -3576,6 +3673,7 @@ function htmlFormPM_MEX(d) {
     +fg('Fecha de alta',null,true)+fi('fecha_alta',d.fecha_alta||hoy(),'')
     +fg('Fecha de baja',null,false)+fi('fecha_baja',d.fecha_baja||'','')
     +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id">'+htmlSelectAsesores(d.asesor_id||'')+'</select></div>'
+    +htmlArrendamiento(d)
     +'</div></div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Identificacion - Persona moral (Anexo 4)</span></div>'
     +'<div class="fgrid">'
@@ -3638,6 +3736,7 @@ function htmlFormPM_SIMP(d) {
     +fg('Fecha de alta',null,true)+fi('fecha_alta',d.fecha_alta||hoy(),'')
     +fg('Fecha de baja',null,false)+fi('fecha_baja',d.fecha_baja||'','')
     +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id">'+htmlSelectAsesores(d.asesor_id||'')+'</select></div>'
+    +htmlArrendamiento(d)
     +'</div></div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Identificacion - Entidad regulada (Anexo 7)</span></div>'
     +'<div class="fgrid">'
@@ -3684,6 +3783,7 @@ function htmlFormFIDEICOMISO(d) {
     +fg('Fecha de alta',null,true)+fi('fecha_alta',d.fecha_alta||hoy(),'')
     +fg('Fecha de baja',null,false)+fi('fecha_baja',d.fecha_baja||'','')
     +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id">'+htmlSelectAsesores(d.asesor_id||'')+'</select></div>'
+    +htmlArrendamiento(d)
     +'</div></div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Datos del Fideicomiso (Anexo 8)</span></div>'
     +'<div class="fgrid">'
@@ -4625,6 +4725,7 @@ function pgAlertas() {
     +'<div class="sb-item" onclick="altVista(this,\'cat\',\'Screening\')">🔍 Screening</div>'
     +'<div class="sb-item" onclick="altVista(this,\'cat\',\'Riesgo\')">🔴 Riesgo alto</div>'
     +'<div class="sb-item" onclick="altVista(this,\'cat\',\'Umbral\')">⚠ Umbral operaciones</div>'
+    +'<div class="sb-item" onclick="altVista(this,\'cat\',\'Perfil\')">📊 Perfil transaccional</div>'
     +'<div class="sb-item" onclick="altVista(this,\'cat\',\'Manual\')">✎ Manuales</div>'
     +'<div class="sb-sec" style="margin-top:8px">Por estatus</div>'
     +'<div class="sb-item" onclick="altVista(this,\'est\',\'Pendiente\')">Pendientes</div>'
@@ -4663,6 +4764,7 @@ function cargarAlertas(modo, valor) {
       var scr  = todas.filter(function(a){ return altCategoria(a)==='Screening'; });
       var rsg  = todas.filter(function(a){ return altCategoria(a)==='Riesgo'; });
       var umb  = todas.filter(function(a){ return altCategoria(a)==='Umbral'; });
+      var prf  = todas.filter(function(a){ return altCategoria(a)==='Perfil'; });
       var man  = todas.filter(function(a){ return altCategoria(a)==='Manual'; });
       var apr  = todas.filter(function(a){ return a.requiere_aprobacion; });
       var pend = todas.filter(function(a){ return (a.estatus_atencion||'Pendiente')==='Pendiente'; });
@@ -4693,6 +4795,7 @@ function cargarAlertas(modo, valor) {
         + card('Screening', scr, 'var(--rj)', '🔍')
         + card('Riesgo alto', rsg, 'var(--rj)', '🔴')
         + card('Umbral', umb, 'var(--mo)', '⚠')
+        + card('Perfil transaccional', prf, 'var(--am)', '📊')
         + card('Manual', man, 'var(--az2)', '✎')
         +'</div>'
         +'<div class="card"><div class="card-h"><span class="card-t">Alertas recientes</span>'
@@ -4707,7 +4810,7 @@ function cargarAlertas(modo, valor) {
     var titulo = 'Todas las alertas';
     if (modo === 'cat') {
       lista = todas.filter(function(a){ return altCategoria(a) === valor; });
-      titulo = { Screening: '🔍 Alertas de Screening', Riesgo: '🔴 Alertas de Riesgo alto', Umbral: '⚠ Alertas de Umbral', Manual: '✎ Alertas manuales' }[valor] || valor;
+      titulo = { Screening: '🔍 Alertas de Screening', Riesgo: '🔴 Alertas de Riesgo alto', Umbral: '⚠ Alertas de Umbral', Perfil: '📊 Alertas de Perfil transaccional', Manual: '✎ Alertas manuales' }[valor] || valor;
     } else if (modo === 'est') {
       lista = todas.filter(function(a){ return (a.estatus_atencion||'Pendiente') === valor; });
       titulo = 'Alertas ' + valor.toLowerCase() + 's';
@@ -5109,6 +5212,21 @@ var CFG_EBR = {
   if (cached) { try { var obj = JSON.parse(cached); for (var k in obj) if (obj.hasOwnProperty(k)) CFG_EBR[k]=obj[k]; } catch(e){} }
 })();
 
+// ── PERFIL TRANSACCIONAL ──────────────────────────────────────
+// Parámetros que definen cuándo un cliente se sale de su perfil esperado.
+// num. de operaciones y efectivo aplican a TODOS los clientes;
+// el % de desviación aplica solo a clientes de arrendamiento (con renta definida).
+var CFG_PERFIL = {
+  max_operaciones: 10,       // operaciones en el mes
+  max_efectivo: 100000,      // MXN acumulados en efectivo en el mes
+  pct_desviacion: 20,        // % permitido por encima de la renta esperada
+  tipo_cambio_usd: 17.00     // para normalizar montos en USD a MXN
+};
+(function() {
+  var cached = localStorage.getItem('perfil_config');
+  if (cached) { try { var obj = JSON.parse(cached); for (var k in obj) if (obj.hasOwnProperty(k)) CFG_PERFIL[k]=obj[k]; } catch(e){} }
+})();
+
 // Al iniciar, cargar UMA desde localStorage primero (rápido)
 (function() {
   var cached = parseFloat(localStorage.getItem('uma_diaria'));
@@ -5141,6 +5259,13 @@ function cargarConfigUMA() {
         for (var k in ebr) if (ebr.hasOwnProperty(k)) CFG_EBR[k] = ebr[k];
         localStorage.setItem('ebr_config', cfg.ebr_config);
       } catch(e) { console.warn('EBR config parse error', e); }
+    }
+    if (cfg.perfil_config) {
+      try {
+        var pf = JSON.parse(cfg.perfil_config);
+        for (var kp in pf) if (pf.hasOwnProperty(kp)) CFG_PERFIL[kp] = pf[kp];
+        localStorage.setItem('perfil_config', cfg.perfil_config);
+      } catch(e) { console.warn('Perfil config parse error', e); }
     }
   });
 }
@@ -7025,6 +7150,144 @@ function crearAlertaUmbral(datos) {
   });
 }
 
+// ── MOTOR DE PERFIL TRANSACCIONAL ────────────────────────────
+// Evalúa las operaciones del cliente en el MES de la operación registrada.
+// Núm. de operaciones y efectivo aplican a todos los clientes; la desviación
+// sobre la renta solo a clientes marcados como de arrendamiento.
+function verificarPerfilTransaccional(idCli, nomCli, numCli, fechaOp, cb) {
+  var mes = String(fechaOp || hoy()).substring(0,7);       // AAAA-MM
+  if (!/^\d{4}-\d{2}$/.test(mes)) mes = hoy().substring(0,7);
+
+  var cli = null;
+  App.clientes.forEach(function(c){
+    if (idCli && c.id === idCli) cli = c;
+    else if (!cli && numCli && String(c.num_cliente) === String(numCli)) cli = c;
+  });
+
+  var tc = parseFloat(CFG_PERFIL.tipo_cambio_usd) || 1;
+  function aMXN(monto, monedaCod) {
+    var m = parseFloat(monto) || 0;
+    return String(monedaCod) === '2' ? m * tc : m;         // 2 = USD en el catálogo MONEDAS
+  }
+
+  spGet('PLD_Ops_Liq', function(todas) {
+    var ops = (todas||[]).filter(function(o){
+      var mismo = (idCli && o.id_cliente_ref === idCli) ||
+                  (numCli && String(o.num_cliente) === String(numCli));
+      return mismo && String(o.fecha_pago||'').substring(0,7) === mes;
+    });
+    if (!ops.length) { if (cb) cb(); return; }
+
+    var totalMes = 0, efectivoMes = 0;
+    ops.forEach(function(o){
+      var m = aMXN(o.total_operacion || o.monto || 0, o.moneda);
+      totalMes += m;
+      if (String(o.instrumento_monetario) === '1') efectivoMes += m;   // 1 = Efectivo
+    });
+    var numOps = ops.length;
+    var motivos = [];
+
+    // (a) Número de operaciones — todos los clientes
+    var maxOps = parseFloat(CFG_PERFIL.max_operaciones) || 0;
+    if (maxOps > 0 && numOps > maxOps)
+      motivos.push(numOps + ' operaciones en el mes (maximo esperado: ' + maxOps + ')');
+
+    // (b) Efectivo acumulado — todos los clientes
+    var maxEf = parseFloat(CFG_PERFIL.max_efectivo) || 0;
+    if (maxEf > 0 && efectivoMes > maxEf)
+      motivos.push('Efectivo acumulado $' + Math.round(efectivoMes).toLocaleString('es-MX')
+        + ' supera el maximo de $' + maxEf.toLocaleString('es-MX'));
+
+    // (c) Desviación sobre la renta — solo clientes de arrendamiento con renta definida
+    var rentaMXN = 0, limite = 0;
+    if (cli && cli.es_arrendamiento === 'SI' && parseFloat(cli.renta_monto) > 0) {
+      rentaMXN = parseFloat(cli.renta_monto);
+      if (cli.renta_moneda === 'USD') rentaMXN *= tc;
+      var pct = parseFloat(CFG_PERFIL.pct_desviacion) || 0;
+      limite = rentaMXN * (1 + pct/100);
+      if (totalMes > limite)
+        motivos.push('Total del mes $' + Math.round(totalMes).toLocaleString('es-MX')
+          + ' supera la renta esperada de $' + Math.round(rentaMXN).toLocaleString('es-MX')
+          + ' +' + pct + '% (limite $' + Math.round(limite).toLocaleString('es-MX') + ')');
+    }
+
+    if (!motivos.length) { if (cb) cb(); return; }
+
+    crearAlertaPerfil({
+      nombre_cliente: nomCli || (cli ? nombreCliente(cli) : 'Sin nombre'),
+      num_cliente:    numCli || (cli ? cli.num_cliente : ''),
+      id_cliente_ref: idCli  || (cli ? cli.id : ''),
+      periodo: mes,
+      descripcion: 'Perfil transaccional excedido en ' + mes + ': ' + motivos.join(' | '),
+      monto_acumulado: Math.round(totalMes),
+      monto_efectivo:  Math.round(efectivoMes),
+      renta_esperada:  Math.round(rentaMXN),
+      limite_renta:    Math.round(limite),
+      num_operaciones: numOps
+    });
+    toast('ALERTA PERFIL TRANSACCIONAL: ' + (nomCli||'cliente') + ' — ' + motivos.length + ' parametro(s) excedido(s)', 'w');
+    if (cb) cb();
+  });
+}
+
+function crearAlertaPerfil(datos) {
+  // Una sola alerta abierta por cliente + periodo (mes)
+  spGet('PLD_Alertas', function(listaAlt) {
+    var existente = null;
+    (listaAlt||[]).forEach(function(a){
+      if (existente) return;
+      if (altCategoria(a) !== 'Perfil') return;
+      var mismoCliente = (datos.id_cliente_ref && a.id_cliente_ref === datos.id_cliente_ref)
+                      || (datos.num_cliente && String(a.num_cliente) === String(datos.num_cliente));
+      var mismoPeriodo = (a.periodo || '') === datos.periodo;
+      var abierta = (a.estatus_atencion || 'Pendiente') !== 'Reportada'
+                 && (a.estatus_atencion || 'Pendiente') !== 'Cerrada';
+      if (mismoCliente && mismoPeriodo && abierta) existente = a;
+    });
+
+    if (existente) {
+      existente.descripcion         = datos.descripcion;
+      existente.monto_acumulado     = datos.monto_acumulado;
+      existente.monto_efectivo      = datos.monto_efectivo;
+      existente.renta_esperada      = datos.renta_esperada;
+      existente.limite_renta        = datos.limite_renta;
+      existente.num_operaciones     = datos.num_operaciones;
+      existente.fecha_actualizacion = hoy();
+      spUpdate('PLD_Alertas', existente.id, existente, function(){
+        console.log('[PERFIL] Alerta actualizada, id:', existente.id);
+      });
+      return;
+    }
+
+    var alerta = {
+      Title: 'ALT-PERFIL-' + Date.now(),
+      nombre_cliente: datos.nombre_cliente,
+      num_cliente:    datos.num_cliente || '',
+      id_cliente_ref: datos.id_cliente_ref || '',
+      categoria: 'Perfil',
+      tipo:  'Perfil transaccional',
+      nivel: 'Alto',
+      periodo: datos.periodo,
+      descripcion: datos.descripcion,
+      monto_acumulado: datos.monto_acumulado,
+      monto_efectivo:  datos.monto_efectivo,
+      renta_esperada:  datos.renta_esperada,
+      limite_renta:    datos.limite_renta,
+      num_operaciones: datos.num_operaciones,
+      estatus: 'Abierta',
+      estatus_atencion: 'Pendiente',
+      folio_acuse: '',
+      url_acuse: '',
+      registrado_por: App.cuenta.username,
+      fecha_registro: hoy(),
+      entidad_id:     App.entidadActual ? App.entidadActual.id : '',
+      entidad_nombre: App.entidadActual ? App.entidadActual.nombre : ''
+    };
+    spCreate('PLD_Alertas', alerta, null);
+    console.log('[PERFIL] Nueva alerta creada para', datos.nombre_cliente, '| periodo:', datos.periodo);
+  });
+}
+
 function calcTotalOp() {
   var frm = document.getElementById('main');
   if (!frm) return;
@@ -7082,8 +7345,10 @@ function guardarLiq(idEx) {
         if (item) {
           // Pasar el id del item recién creado para excluirlo del acumulado
           verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, subtotal, datos.fecha_pago, item.id, function(){
-            toast('Operacion guardada','s');
-            pgOps();
+            verificarPerfilTransaccional(idCli, nomCli, numCli, datos.fecha_pago, function(){
+              toast('Operacion guardada','s');
+              pgOps();
+            });
           });
         }
       });
@@ -7324,6 +7589,10 @@ function procesarExcel(data, fraccion) {
         verificarUmbralesCliente(
           datos.id_cliente_ref, datos.nombre_cliente, datos.num_cliente,
           datos.fraccion, datos.monto, datos.fecha_pago, null
+        );
+        // Verificar perfil transaccional (operaciones fuera de lo esperado)
+        verificarPerfilTransaccional(
+          datos.id_cliente_ref, datos.nombre_cliente, datos.num_cliente, datos.fecha_pago, null
         );
         if (guardados === registros.length) {
           toast(guardados + ' registros importados de "' + sheetName + '"', 's');
