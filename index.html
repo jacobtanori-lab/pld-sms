@@ -2859,7 +2859,8 @@ function pgConfigPerfil() {
     +'<div class="card-b">'
     + (TC_META.total > 0
         ? '<div class="alerta-banner" style="background:var(--vd3);color:var(--vd);border-color:rgba(15,110,86,.15)">'
-          +'<strong>'+TC_META.total.toLocaleString('es-MX')+'</strong> tipos de cambio cargados (Banxico FIX/DOF). '
+          +'<strong>'+TC_META.total.toLocaleString('es-MX')+'</strong> tipos de cambio cargados. '
+          +'Banxico, serie <strong>SF60653</strong> — Tipo de Cambio para solventar obligaciones denominadas en Dólares. '
           +'Ultima fecha disponible: <strong>'+TC_META.ultima+'</strong>.</div>'
         : '<div class="alerta-banner" style="background:#fff4e5;border:1px solid #c98a12;color:#7a5200">'
           +'<strong>Aun no hay tipos de cambio cargados.</strong> Falta configurar el proceso diario que consulta a Banxico '
