@@ -1,0 +1,87 @@
+name: Tipo de cambio (Banxico FIX)
+
+on:
+  schedule:
+    - cron: '0 14 * * 1-5'          # 08:00 CDMX, lunes a viernes
+  workflow_dispatch:
+    inputs:
+      desde:
+        description: 'Fecha inicial AAAA-MM-DD (vacío = últimos 15 días)'
+        required: false
+        default: ''
+      hasta:
+        description: 'Fecha final AAAA-MM-DD (vacío = hoy)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clonar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Definir el rango de fechas
+        id: rango
+        run: |
+          DESDE="${{ github.event.inputs.desde }}"
+          HASTA="${{ github.event.inputs.hasta }}"
+          [ -z "$DESDE" ] && DESDE=$(date -u -d '15 days ago' +%Y-%m-%d)
+          [ -z "$HASTA" ] && HASTA=$(date -u +%Y-%m-%d)
+          echo "desde=$DESDE" >> "$GITHUB_OUTPUT"
+          echo "hasta=$HASTA" >> "$GITHUB_OUTPUT"
+          echo "Consultando Banxico del $DESDE al $HASTA"
+
+      - name: Consultar la API del SIE de Banxico
+        env:
+          BANXICO_TOKEN: ${{ secrets.BANXICO_TOKEN }}
+        run: |
+          if [ -z "$BANXICO_TOKEN" ]; then
+            echo "::error::Falta el secret BANXICO_TOKEN."
+            exit 1
+          fi
+          URL="https://www.banxico.org.mx/SieAPIRest/service/v1/series/SF43718/datos/${{ steps.rango.outputs.desde }}/${{ steps.rango.outputs.hasta }}"
+          CODIGO=$(curl -sS -w '%{http_code}' -o crudo.json \
+            -H "Bmx-Token: $BANXICO_TOKEN" -H 'Accept: application/json' "$URL")
+          echo "HTTP $CODIGO"
+          if [ "$CODIGO" != "200" ]; then
+            echo "::error::Banxico respondió $CODIGO"
+            head -c 500 crudo.json || true
+            exit 1
+          fi
+
+      - name: Transformar y acumular el histórico
+        run: |
+          mkdir -p data
+          jq '[ .bmx.series[0].datos[]
+                | select(.dato != "N/E")
+                | { key:   (.fecha[6:10] + "-" + .fecha[3:5] + "-" + .fecha[0:2]),
+                    value: (.dato | gsub(","; "") | tonumber) } ]
+              | from_entries' crudo.json > nuevas.json
+          echo "Fechas obtenidas: $(jq 'length' nuevas.json)"
+          if [ -f data/tipo_cambio.json ]; then
+            jq -s '(.[0].tasas // {}) + .[1]' data/tipo_cambio.json nuevas.json > tasas.json
+          else
+            cp nuevas.json tasas.json
+          fi
+          jq -n --slurpfile t tasas.json \
+            '{ fuente: "BANXICO_FIX_SF43718",
+               actualizado: (now | todate),
+               total: ($t[0] | length),
+               tasas: $t[0] }' > data/tipo_cambio.json
+          echo "Total acumulado: $(jq '.total' data/tipo_cambio.json)"
+
+      - name: Publicar si hubo cambios
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add data/tipo_cambio.json
+          if git diff --staged --quiet; then
+            echo "Sin cambios."
+          else
+            git commit -m "Tipo de cambio Banxico FIX actualizado ($(date -u +%Y-%m-%d))"
+            git push
+          fi
