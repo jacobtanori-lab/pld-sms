@@ -2854,11 +2854,63 @@ function pgConfigPerfil() {
            num('pct_desviacion', p.pct_desviacion, 0, 1000), '%')
     +'</div></div>'
 
-    +'<div class="card"><div class="card-h"><span class="card-t">Conversion de moneda</span></div>'
+    +'<div class="card"><div class="card-h"><span class="card-t">Tipo de cambio (USD &rarr; MXN)</span>'
+    +'<span style="font-size:12px;color:var(--tx3)">Cada operacion se convierte con el tipo de cambio de SU fecha</span></div>'
     +'<div class="card-b">'
-    + fila('Tipo de cambio USD &rarr; MXN', 'Se usa para comparar rentas y operaciones en dolares contra los limites en pesos.',
+    + (TC_META.total > 0
+        ? '<div class="alerta-banner" style="background:var(--vd3);color:var(--vd);border-color:rgba(15,110,86,.15)">'
+          +'<strong>'+TC_META.total.toLocaleString('es-MX')+'</strong> tipos de cambio cargados (Banxico FIX/DOF). '
+          +'Ultima fecha disponible: <strong>'+TC_META.ultima+'</strong>.</div>'
+        : '<div class="alerta-banner" style="background:#fff4e5;border:1px solid #c98a12;color:#7a5200">'
+          +'<strong>Aun no hay tipos de cambio cargados.</strong> Falta crear la lista <strong>PLD_TipoCambio</strong> en SharePoint '
+          +'y el flujo diario de Power Automate que la alimenta. Mientras tanto se usa el tipo de cambio manual de abajo.</div>')
+    + fila('Tipo de cambio manual (respaldo)', 'Solo se usa cuando no hay tipo de cambio publicado para la fecha de la operacion.',
            num('tipo_cambio_usd', p.tipo_cambio_usd, 0, 1000, 0.01), 'MXN / USD')
+    +'<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">'
+    +'<button class="btn" onclick="recargarTipoCambio()">&#8635; Recargar tipos de cambio</button>'
+    +'<button class="btn" onclick="recalcularMontosMXN()">&#128260; Recalcular equivalentes en MXN</button>'
+    +'</div>'
+    +'<div style="font-size:11px;color:var(--tx3);margin-top:8px">El recalculo recorre las operaciones ya registradas y les asigna el equivalente en pesos '
+    +'usando el tipo de cambio de la fecha de cada una. Si ese dia no hubo publicacion (fin de semana o festivo), se usa el ultimo dia habil anterior.</div>'
     +'</div></div>');
+}
+
+function recargarTipoCambio() {
+  toast('Consultando tipos de cambio...','i');
+  cargarTipoCambio(function(ok){
+    if (ok) toast('Tipos de cambio actualizados: '+TC_META.total+' fechas (ultima: '+TC_META.ultima+')','s');
+    else toast('No se encontraron tipos de cambio. Verifica que exista la lista PLD_TipoCambio y que el flujo la este alimentando.','w');
+    pgConfig('perfil');
+  });
+}
+
+// Recalcula el equivalente en MXN de las operaciones ya registradas,
+// usando el tipo de cambio de la fecha de cada operacion.
+function recalcularMontosMXN() {
+  if (!confirm('Se recalculara el equivalente en MXN de TODAS las operaciones registradas, usando el tipo de cambio de la fecha de cada una.\n\n¿Continuar?')) return;
+  toast('Recalculando equivalentes...','i');
+  cargarTipoCambio(function(){
+    spGet('PLD_Ops_Liq', function(lista) {
+      var ops = lista || [];
+      if (!ops.length) { toast('No hay operaciones que recalcular','w'); return; }
+      var pend = ops.length, hechas = 0, estimadas = 0;
+      ops.forEach(function(o){
+        var cv = montoAMXN(o.total_operacion || o.monto || 0, o.moneda, o.fecha_pago);
+        if (cv.estimado) estimadas++;
+        spPatch('PLD_Ops_Liq', o.id, {
+          monto_mxn: Math.round(cv.mxn * 100) / 100,
+          tipo_cambio_aplicado: cv.tc,
+          tc_fecha: cv.fecha_tc,
+          tc_estimado: cv.estimado
+        }, function(){
+          hechas++; pend--;
+          if (pend === 0) {
+            toast('Recalculadas '+hechas+' operaciones'+(estimadas ? (' — '+estimadas+' con tipo de cambio estimado') : ''), 's');
+          }
+        });
+      });
+    });
+  });
 }
 
 function guardarPerfil() {
@@ -5227,6 +5279,65 @@ var CFG_PERFIL = {
   if (cached) { try { var obj = JSON.parse(cached); for (var k in obj) if (obj.hasOwnProperty(k)) CFG_PERFIL[k]=obj[k]; } catch(e){} }
 })();
 
+// ── TIPO DE CAMBIO (Banxico FIX / DOF) ────────────────────────
+// La lista PLD_TipoCambio la alimenta un flujo diario de Power Automate.
+// Cada item: { fecha:'AAAA-MM-DD', valor: 17.05, fuente:'BANXICO_FIX' }
+var TC_MAP  = {};                      // { 'AAAA-MM-DD': valor }
+var TC_META = { total: 0, ultima: '' };
+(function(){
+  try {
+    var m = localStorage.getItem('tc_map');   if (m) TC_MAP  = JSON.parse(m) || {};
+    var t = localStorage.getItem('tc_meta');  if (t) TC_META = JSON.parse(t) || TC_META;
+  } catch(e) { TC_MAP = {}; }
+})();
+
+function cargarTipoCambio(cb) {
+  if (!App.listas || !App.listas['PLD_TipoCambio']) { if (cb) cb(false); return; }
+  spGet('PLD_TipoCambio', function(lista) {
+    var map = {}, n = 0, ultima = '';
+    (lista||[]).forEach(function(t){
+      var f = String(t.fecha || t.Title || '').substring(0,10);
+      var v = parseFloat(t.valor);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(f) && v > 0) {
+        map[f] = v; n++;
+        if (f > ultima) ultima = f;
+      }
+    });
+    if (n > 0) {
+      TC_MAP  = map;
+      TC_META = { total: n, ultima: ultima };
+      try {
+        localStorage.setItem('tc_map',  JSON.stringify(TC_MAP));
+        localStorage.setItem('tc_meta', JSON.stringify(TC_META));
+      } catch(e){}
+    }
+    if (cb) cb(n > 0);
+  });
+}
+
+// Tipo de cambio aplicable a una fecha. Si ese dia no hubo publicacion
+// (fin de semana o festivo), toma el ultimo dia habil anterior — regla del DOF.
+function tcParaFecha(fecha) {
+  var f = String(fecha || hoy()).substring(0,10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f)) f = hoy().substring(0,10);
+  var d = new Date(f + 'T12:00:00');
+  for (var i = 0; i < 15; i++) {
+    var k = d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+    if (TC_MAP[k] > 0) return { valor: TC_MAP[k], fecha_tc: k, estimado: false };
+    d.setDate(d.getDate() - 1);
+  }
+  // Respaldo: el tipo de cambio manual de la configuracion
+  return { valor: parseFloat(CFG_PERFIL.tipo_cambio_usd) || 1, fecha_tc: '', estimado: true };
+}
+
+// Convierte un monto a MXN usando el tipo de cambio de la FECHA de la operacion
+function montoAMXN(monto, monedaCod, fecha) {
+  var m = parseFloat(monto) || 0;
+  if (String(monedaCod) !== '2') return { mxn: m, tc: 1, fecha_tc: '', estimado: false };  // 2 = USD
+  var tc = tcParaFecha(fecha);
+  return { mxn: m * tc.valor, tc: tc.valor, fecha_tc: tc.fecha_tc, estimado: tc.estimado };
+}
+
 // Al iniciar, cargar UMA desde localStorage primero (rápido)
 (function() {
   var cached = parseFloat(localStorage.getItem('uma_diaria'));
@@ -5244,6 +5355,8 @@ function umbralPesos(fraccion) {
 
 // Cargar UMA y EBR desde SharePoint (fuente de verdad)
 function cargarConfigUMA() {
+  // Tipos de cambio (lista alimentada por Power Automate). Silencioso si aun no existe.
+  cargarTipoCambio(function(){});
   spGet('PLD_Config', function(lista) {
     if (!lista || !lista.length) return;
     var cfg = lista[0];
@@ -7164,12 +7277,6 @@ function verificarPerfilTransaccional(idCli, nomCli, numCli, fechaOp, cb) {
     else if (!cli && numCli && String(c.num_cliente) === String(numCli)) cli = c;
   });
 
-  var tc = parseFloat(CFG_PERFIL.tipo_cambio_usd) || 1;
-  function aMXN(monto, monedaCod) {
-    var m = parseFloat(monto) || 0;
-    return String(monedaCod) === '2' ? m * tc : m;         // 2 = USD en el catálogo MONEDAS
-  }
-
   spGet('PLD_Ops_Liq', function(todas) {
     var ops = (todas||[]).filter(function(o){
       var mismo = (idCli && o.id_cliente_ref === idCli) ||
@@ -7178,9 +7285,18 @@ function verificarPerfilTransaccional(idCli, nomCli, numCli, fechaOp, cb) {
     });
     if (!ops.length) { if (cb) cb(); return; }
 
-    var totalMes = 0, efectivoMes = 0;
+    var totalMes = 0, efectivoMes = 0, hayEstimado = false;
     ops.forEach(function(o){
-      var m = aMXN(o.total_operacion || o.monto || 0, o.moneda);
+      var m;
+      if (o.monto_mxn !== undefined && o.monto_mxn !== null && o.monto_mxn !== '') {
+        m = parseFloat(o.monto_mxn) || 0;        // equivalente congelado al guardarse
+        if (o.tc_estimado) hayEstimado = true;
+      } else {
+        // Operacion antigua (sin equivalente): convertir con el TC de SU fecha
+        var cv = montoAMXN(o.total_operacion || o.monto || 0, o.moneda, o.fecha_pago);
+        m = cv.mxn;
+        if (cv.estimado) hayEstimado = true;
+      }
       totalMes += m;
       if (String(o.instrumento_monetario) === '1') efectivoMes += m;   // 1 = Efectivo
     });
@@ -7201,8 +7317,9 @@ function verificarPerfilTransaccional(idCli, nomCli, numCli, fechaOp, cb) {
     // (c) Desviación sobre la renta — solo clientes de arrendamiento con renta definida
     var rentaMXN = 0, limite = 0;
     if (cli && cli.es_arrendamiento === 'SI' && parseFloat(cli.renta_monto) > 0) {
-      rentaMXN = parseFloat(cli.renta_monto);
-      if (cli.renta_moneda === 'USD') rentaMXN *= tc;
+      var convRenta = montoAMXN(cli.renta_monto, (cli.renta_moneda === 'USD' ? '2' : '1'), fechaOp);
+      rentaMXN = convRenta.mxn;
+      if (convRenta.estimado) hayEstimado = true;
       var pct = parseFloat(CFG_PERFIL.pct_desviacion) || 0;
       limite = rentaMXN * (1 + pct/100);
       if (totalMes > limite)
@@ -7218,12 +7335,14 @@ function verificarPerfilTransaccional(idCli, nomCli, numCli, fechaOp, cb) {
       num_cliente:    numCli || (cli ? cli.num_cliente : ''),
       id_cliente_ref: idCli  || (cli ? cli.id : ''),
       periodo: mes,
-      descripcion: 'Perfil transaccional excedido en ' + mes + ': ' + motivos.join(' | '),
+      descripcion: 'Perfil transaccional excedido en ' + mes + ': ' + motivos.join(' | ')
+        + (hayEstimado ? ' [Nota: algun tipo de cambio fue estimado por falta de publicacion en la fecha]' : ''),
       monto_acumulado: Math.round(totalMes),
       monto_efectivo:  Math.round(efectivoMes),
       renta_esperada:  Math.round(rentaMXN),
       limite_renta:    Math.round(limite),
-      num_operaciones: numOps
+      num_operaciones: numOps,
+      tc_estimado:     hayEstimado
     });
     toast('ALERTA PERFIL TRANSACCIONAL: ' + (nomCli||'cliente') + ' — ' + motivos.length + ' parametro(s) excedido(s)', 'w');
     if (cb) cb();
@@ -7274,6 +7393,7 @@ function crearAlertaPerfil(datos) {
       renta_esperada:  datos.renta_esperada,
       limite_renta:    datos.limite_renta,
       num_operaciones: datos.num_operaciones,
+      tc_estimado:     !!datos.tc_estimado,
       estatus: 'Abierta',
       estatus_atencion: 'Pendiente',
       folio_acuse: '',
@@ -7336,6 +7456,14 @@ function guardarLiq(idEx) {
     fecha_registro: hoy()
   };
   datos.Title = 'LIQ-'+Date.now();
+
+  // Congelar el tipo de cambio de la FECHA de la operacion: el equivalente en MXN
+  // queda como evidencia y no cambia si el tipo de cambio se mueve despues.
+  var conv = montoAMXN(total_operacion, datos.moneda, datos.fecha_pago);
+  datos.monto_mxn            = Math.round(conv.mxn * 100) / 100;
+  datos.tipo_cambio_aplicado = conv.tc;
+  datos.tc_fecha             = conv.fecha_tc;
+  datos.tc_estimado          = conv.estimado;
 
   var guardar = function() {
     if (idEx) {
@@ -7551,6 +7679,10 @@ function procesarExcel(data, fraccion) {
         });
       }
 
+      var monedaOp = String(row[headerMap['moneda'] !== undefined ? headerMap['moneda'] : 4] || '1').trim() || '1';
+      // Congelar el tipo de cambio de la fecha de cada operacion importada
+      var convOp = montoAMXN(total_operacion, monedaOp, fechaStr);
+
       registros.push({
         nombre_cliente: nombre,
         num_cliente: numCli,
@@ -7559,10 +7691,14 @@ function procesarExcel(data, fraccion) {
         fecha_pago: fechaStr,
         forma_pago: String(row[headerMap['forma'] !== undefined ? headerMap['forma'] : 2] || '').trim(),
         instrumento_monetario: String(row[headerMap['instrumento'] !== undefined ? headerMap['instrumento'] : 3] || '').trim(),
-        moneda: String(row[headerMap['moneda'] !== undefined ? headerMap['moneda'] : 4] || '1').trim() || '1',
+        moneda: monedaOp,
         subtotal: subtotal, iva: iva, accesorios: accesorios,
         total_operacion: total_operacion,
         monto: subtotal, // compat: umbrales usan el subtotal
+        monto_mxn: Math.round(convOp.mxn * 100) / 100,
+        tipo_cambio_aplicado: convOp.tc,
+        tc_fecha: convOp.fecha_tc,
+        tc_estimado: convOp.estimado,
         ref_aviso: String(row[headerMap['ref'] !== undefined ? headerMap['ref'] : 6] || '').trim(),
         observaciones: String(row[headerMap['obs'] !== undefined ? headerMap['obs'] : 7] || '').trim(),
         entidad_id: App.entidadActual ? App.entidadActual.id : '',
