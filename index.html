@@ -2547,7 +2547,7 @@ function pgConfigEBR() {
   }
 
   setMain('<div class="phdr"><div><div class="ptit">Nivel de Riesgo de clientes</div>'
-    +'<div class="psub">Parametros del modelo EBR — Enfoque Basado en Riesgo</div></div>'
+    +'<div class="psub">Parametros del calculo de nivel de riesgo de clientes</div></div>'
     +'<button class="btn btn-p" onclick="guardarEBR()">Guardar cambios</button></div>'
 
     // — Umbrales —
@@ -2581,6 +2581,10 @@ function pgConfigEBR() {
     +'<div style="margin-bottom:4px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Declaracion de Dueño Beneficiario</div>'
     +rowIndicador('Declara dueño beneficiario (SI)','db_SI',e.dueno_beneficiario['SI']||0)
     +rowIndicador('No declara dueño beneficiario (NO)','db_NO',e.dueno_beneficiario['NO']||0)+'</div>'
+    +'<div style="margin-bottom:4px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Edad del cliente (solo persona fisica)</div>'
+    +'<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--brd);flex-wrap:wrap"><span style="font-size:13px;color:var(--tx2)">Menor a</span>'+fldNum('edad_min',e.edad_min||0,0,130)+'<span style="font-size:13px;color:var(--tx2)">a&ntilde;os &rarr; suma</span>'+fldNum('puntaje_edad_menor',e.puntaje_edad_menor||0,0,200)+'<span style="font-size:12px;color:var(--tx3)">puntos</span></div>'
+    +'<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--brd);flex-wrap:wrap"><span style="font-size:13px;color:var(--tx2)">Mayor a</span>'+fldNum('edad_max',e.edad_max||0,0,130)+'<span style="font-size:13px;color:var(--tx2)">a&ntilde;os &rarr; suma</span>'+fldNum('puntaje_edad_mayor',e.puntaje_edad_mayor||0,0,200)+'<span style="font-size:12px;color:var(--tx3)">puntos</span></div>'
+    +'<div style="font-size:11px;color:var(--tx3);margin-top:4px">La edad se calcula de la fecha de nacimiento; aplica solo a personas fisicas.</div></div>'
     +'</div></div>'
 
     // — Actividades económicas de alto riesgo —
@@ -2610,7 +2614,7 @@ function pgConfigEBR() {
     +'</div></div>'
 
     // — Simulador —
-    +'<div class="card"><div class="card-h"><span class="card-t">Simulador EBR</span>'
+    +'<div class="card"><div class="card-h"><span class="card-t">Simulador de nivel de riesgo</span>'
     +'<span style="font-size:12px;color:var(--tx3)">Prueba el calculo con un perfil hipotetico</span></div>'
     +'<div class="card-b"><div class="fgrid">'
     +'<div class="fg"><label class="lbl">Tipo de cliente</label><select class="sel" id="sim-tipo">'
@@ -2631,6 +2635,7 @@ function pgConfigEBR() {
     +'<option value="OTRO">Otro pais (resto del mundo)</option></select></div>'
     +'<div class="fg"><label class="lbl">Dueño Beneficiario</label><select class="sel" id="sim-db">'
     +'<option value="NO">No declarado (NO)</option><option value="SI">Declarado (SI)</option></select></div>'
+    +'<div class="fg"><label class="lbl">Edad (si persona fisica)</label><input class="inp mono" id="sim-edad" type="number" min="0" max="130" value="35" style="width:90px"></div>'
     +'</div>'
     +'<div style="margin-top:16px;text-align:center">'
     +'<button class="btn btn-p" onclick="ebrSimular()">Calcular nivel de riesgo</button>'
@@ -2738,8 +2743,11 @@ function ebrSimular() {
   var estVal = (est === '__alto__' && CFG_EBR.estados_alto_riesgo.length)      ? CFG_EBR.estados_alto_riesgo[0]      : '';
   // Mapear selección de país a nombre de país que paisISO() reconoce
   var paisDomNombre = pdom === 'MEXICO' ? 'MEXICO' : pdom === 'US' ? 'ESTADOS UNIDOS' : 'CANADA';
+  var edadSim = parseInt(v('sim-edad'), 10);
+  var fechaNacSim = isNaN(edadSim) ? '' : ((new Date().getFullYear() - edadSim) + '-06-15');
   var mock = { tipo: tipo, estatus_pep: pep, pais_nac: nac === 'MEXICO' ? 'MEXICO' : 'EXTRANJERO',
-    actividad_scian: actCod, actividad_pf: actCod, tiene_dueno_ben: db, estado: estVal, pais_dom: paisDomNombre };
+    actividad_scian: actCod, actividad_pf: actCod, tiene_dueno_ben: db, estado: estVal, pais_dom: paisDomNombre,
+    fecha_nac: fechaNacSim };
   var res = calcEBR(mock);
   var color = res.nivel === 'Alto' ? 'var(--rj)' : res.nivel === 'Medio' ? 'var(--am)' : 'var(--vd,#16a34a)';
   var ct = document.getElementById('ebr-sim-result');
@@ -2767,6 +2775,10 @@ function guardarEBR() {
   CFG_EBR.dueno_beneficiario['NO'] = g('db_NO', 10);
   CFG_EBR.puntaje_actividad        = g('puntaje_actividad', 25);
   CFG_EBR.puntaje_estado           = g('puntaje_estado', 10);
+  CFG_EBR.edad_min                 = g('edad_min', 25);
+  CFG_EBR.edad_max                 = g('edad_max', 65);
+  CFG_EBR.puntaje_edad_menor       = g('puntaje_edad_menor', 0);
+  CFG_EBR.puntaje_edad_mayor       = g('puntaje_edad_mayor', 0);
   // actividades_alto_riesgo ya se mantiene actualizado en memoria por ebrAgregarActividad/ebrQuitarActividad
   // estados: leer chips
   var ct = document.getElementById('est-chips');
@@ -2782,9 +2794,9 @@ function guardarEBR() {
     (lista||[]).forEach(function(c){ if(c.Title==='CONFIG_SISTEMA'||c.uma_diaria) item=c; });
     var datos = { Title: 'CONFIG_SISTEMA', ebr_config: json, actualizado_por: App.cuenta.username };
     if (item && item.id) {
-      spUpdate('PLD_Config', item.id, datos, function() { toast('Configuracion EBR guardada','s'); pgConfig('ebr'); });
+      spUpdate('PLD_Config', item.id, datos, function() { toast('Configuracion de nivel de riesgo guardada','s'); pgConfig('ebr'); });
     } else {
-      spCreate('PLD_Config', datos, function() { toast('Configuracion EBR guardada','s'); pgConfig('ebr'); });
+      spCreate('PLD_Config', datos, function() { toast('Configuracion de nivel de riesgo guardada','s'); pgConfig('ebr'); });
     }
   });
 }
@@ -3233,6 +3245,23 @@ function iniciarForm(tipo, datos) {
 }
 
 // --- EBR ---
+// Calcula la edad (años cumplidos) a partir de una fecha (DD-MM-AAAA o AAAA-MM-DD)
+function edadDesde(fechaStr) {
+  if (!fechaStr) return null;
+  var s = String(fechaStr).trim(), y, m, dd;
+  var iso = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+  var dmy = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/);
+  if (iso) { y=+iso[1]; m=+iso[2]; dd=+iso[3]; }
+  else if (dmy) { dd=+dmy[1]; m=+dmy[2]; y=+dmy[3]; }
+  else return null;
+  if (!y || !m || !dd) return null;
+  var h = new Date();
+  var edad = h.getFullYear() - y;
+  if (h.getMonth()+1 < m || (h.getMonth()+1 === m && h.getDate() < dd)) edad--;
+  if (edad < 0 || edad > 130) return null;
+  return edad;
+}
+
 function calcEBR(d) {
   var p = 0;
   // Tipo de cliente
@@ -3261,6 +3290,14 @@ function calcEBR(d) {
     p += CFG_EBR.puntaje_pais_dom_us || 0;
   } else {
     p += CFG_EBR.puntaje_pais_dom_ext || 0;
+  }
+  // Edad del cliente (solo persona física, a partir de la fecha de nacimiento)
+  if (d.tipo === 'PF_MEX' || d.tipo === 'PF_EXT') {
+    var edad = edadDesde(d.fecha_nac);
+    if (edad !== null) {
+      if (CFG_EBR.edad_min && edad < CFG_EBR.edad_min) p += CFG_EBR.puntaje_edad_menor || 0;
+      else if (CFG_EBR.edad_max && edad > CFG_EBR.edad_max) p += CFG_EBR.puntaje_edad_mayor || 0;
+    }
   }
   var uA = CFG_EBR.umbral_alto  || 70;
   var uM = CFG_EBR.umbral_medio || 40;
@@ -5040,6 +5077,10 @@ var CFG_EBR = {
   puntaje_pais_dom_mx: 0,
   puntaje_pais_dom_us: 0,
   puntaje_pais_dom_ext: 10,
+  edad_min: 25,
+  edad_max: 65,
+  puntaje_edad_menor: 0,
+  puntaje_edad_mayor: 0,
   umbral_alto: 70,
   umbral_medio: 40
 };
