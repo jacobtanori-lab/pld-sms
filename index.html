@@ -1503,7 +1503,12 @@ function verTodasEntidades() {
 
 var TEMA_DEFAULT = {az:'#1a4080',az2:'#1e56b0',az3:'#dce8f8',font:"'DM Sans',sans-serif"};
 function aplicarTema(ent) {
-  var t = (ent && ent.tema) ? ent.tema : TEMA_DEFAULT;
+  // El tema se resuelve por ID desde TEMAS_ENTIDAD (fuente única en código).
+  // No dependemos de que la propiedad .tema sobreviva en ENTIDADES: la config
+  // que se persiste en SharePoint no la incluye y la sobrescribe al cargarse.
+  var t = (ent && ent.id && TEMAS_ENTIDAD[ent.id]) ? TEMAS_ENTIDAD[ent.id]
+        : (ent && ent.tema) ? ent.tema
+        : TEMA_DEFAULT;
   var r = document.documentElement.style;
   r.setProperty('--az',  t.az);
   r.setProperty('--az2', t.az2);
