@@ -2862,8 +2862,8 @@ function pgConfigPerfil() {
           +'<strong>'+TC_META.total.toLocaleString('es-MX')+'</strong> tipos de cambio cargados (Banxico FIX/DOF). '
           +'Ultima fecha disponible: <strong>'+TC_META.ultima+'</strong>.</div>'
         : '<div class="alerta-banner" style="background:#fff4e5;border:1px solid #c98a12;color:#7a5200">'
-          +'<strong>Aun no hay tipos de cambio cargados.</strong> Falta crear la lista <strong>PLD_TipoCambio</strong> en SharePoint '
-          +'y el flujo diario de Power Automate que la alimenta. Mientras tanto se usa el tipo de cambio manual de abajo.</div>')
+          +'<strong>Aun no hay tipos de cambio cargados.</strong> Falta configurar el proceso diario que consulta a Banxico '
+          +'(GitHub Action + el secret BANXICO_TOKEN). Mientras tanto se usa el tipo de cambio manual de abajo.</div>')
     + fila('Tipo de cambio manual (respaldo)', 'Solo se usa cuando no hay tipo de cambio publicado para la fecha de la operacion.',
            num('tipo_cambio_usd', p.tipo_cambio_usd, 0, 1000, 0.01), 'MXN / USD')
     +'<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">'
@@ -5291,27 +5291,50 @@ var TC_META = { total: 0, ultima: '' };
   } catch(e) { TC_MAP = {}; }
 })();
 
+function _tcGuardar(map, fuente, cb) {
+  var n = 0, ultima = '';
+  for (var f in map) { if (map[f] > 0) { n++; if (f > ultima) ultima = f; } }
+  if (n > 0) {
+    TC_MAP  = map;
+    TC_META = { total: n, ultima: ultima, fuente: fuente || 'BANXICO_FIX' };
+    try {
+      localStorage.setItem('tc_map',  JSON.stringify(TC_MAP));
+      localStorage.setItem('tc_meta', JSON.stringify(TC_META));
+    } catch(e){}
+  }
+  if (cb) cb(n > 0);
+}
+
+// Fuente principal: data/tipo_cambio.json, publicado por el GitHub Action que
+// consulta a Banxico. Al servirse desde el MISMO ORIGEN (GitHub Pages) no hay CORS.
+// Respaldo: la lista PLD_TipoCambio de SharePoint, si existe.
 function cargarTipoCambio(cb) {
+  fetch('data/tipo_cambio.json?cb=' + Date.now(), {cache:'no-store'})
+    .then(function(r){ if (!r.ok) throw new Error('sin archivo'); return r.json(); })
+    .then(function(j){
+      var tasas = (j && j.tasas) ? j.tasas : null;
+      if (!tasas) throw new Error('formato inesperado');
+      var map = {};
+      for (var f in tasas) {
+        var v = parseFloat(tasas[f]);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(f) && v > 0) map[f] = v;
+      }
+      if (!Object.keys(map).length) throw new Error('archivo vacio');
+      _tcGuardar(map, j.fuente, cb);
+    })
+    .catch(function(){ _tcDesdeSharePoint(cb); });
+}
+
+function _tcDesdeSharePoint(cb) {
   if (!App.listas || !App.listas['PLD_TipoCambio']) { if (cb) cb(false); return; }
   spGet('PLD_TipoCambio', function(lista) {
-    var map = {}, n = 0, ultima = '';
+    var map = {};
     (lista||[]).forEach(function(t){
       var f = String(t.fecha || t.Title || '').substring(0,10);
       var v = parseFloat(t.valor);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(f) && v > 0) {
-        map[f] = v; n++;
-        if (f > ultima) ultima = f;
-      }
+      if (/^\d{4}-\d{2}-\d{2}$/.test(f) && v > 0) map[f] = v;
     });
-    if (n > 0) {
-      TC_MAP  = map;
-      TC_META = { total: n, ultima: ultima };
-      try {
-        localStorage.setItem('tc_map',  JSON.stringify(TC_MAP));
-        localStorage.setItem('tc_meta', JSON.stringify(TC_META));
-      } catch(e){}
-    }
-    if (cb) cb(n > 0);
+    _tcGuardar(map, 'SHAREPOINT', cb);
   });
 }
 
