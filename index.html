@@ -1478,13 +1478,14 @@ function seleccionarEntidad(id) {
 }
 
 function verTodasEntidades() {
-  App.entidadActual = {id:'TODAS', nombre:'Todas las entidades', rfc:'', actividad_vulnerable:''};
+  // La vista consolidada usa el tema corporativo; cada entidad conserva su paleta.
+  App.entidadActual = {id:'TODAS', nombre:'Todas las entidades', rfc:'', actividad_vulnerable:'', tema: temaConsolidada()};
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('topbar').style.display = 'flex';
   document.getElementById('layout').style.display = 'flex';
   var be = document.getElementById('brand-entidad');
   if (be) be.textContent = 'Vista consolidada';
-  aplicarTema(null);
+  aplicarTema(App.entidadActual);
   actualizarBrandLogo(null);
   renderNav();
   cargarConfigUMA();
@@ -1492,6 +1493,15 @@ function verTodasEntidades() {
 }
 
 var TEMA_DEFAULT = {az:'#1a4080',az2:'#1e56b0',az3:'#dce8f8',font:"'DM Sans',sans-serif"};
+
+// Tema de la vista consolidada = el corporativo (matriz Nexxus / CIN).
+// Se lee dinámicamente, así que si CIN cambia de paleta, la consolidada la sigue.
+function temaConsolidada() {
+  var corp = null;
+  ENTIDADES.forEach(function(e){ if (e.id === 'CIN' && e.tema) corp = e.tema; });
+  return corp || TEMA_DEFAULT;
+}
+
 function aplicarTema(ent) {
   var t = (ent && ent.tema) ? ent.tema : TEMA_DEFAULT;
   var r = document.documentElement.style;
