@@ -43,7 +43,7 @@ jobs:
             echo "::error::Falta el secret BANXICO_TOKEN."
             exit 1
           fi
-          URL="https://www.banxico.org.mx/SieAPIRest/service/v1/series/SF43718/datos/${{ steps.rango.outputs.desde }}/${{ steps.rango.outputs.hasta }}"
+          URL="https://www.banxico.org.mx/SieAPIRest/service/v1/series/SF60653/datos/${{ steps.rango.outputs.desde }}/${{ steps.rango.outputs.hasta }}"
           CODIGO=$(curl -sS -w '%{http_code}' -o crudo.json \
             -H "Bmx-Token: $BANXICO_TOKEN" -H 'Accept: application/json' "$URL")
           echo "HTTP $CODIGO"
@@ -68,7 +68,7 @@ jobs:
             cp nuevas.json tasas.json
           fi
           jq -n --slurpfile t tasas.json \
-            '{ fuente: "BANXICO_FIX_SF43718",
+            '{ fuente: "BANXICO_DOF_SF60653",
                actualizado: (now | todate),
                total: ($t[0] | length),
                tasas: $t[0] }' > data/tipo_cambio.json
