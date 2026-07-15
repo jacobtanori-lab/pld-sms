@@ -5172,10 +5172,23 @@ function marcarOpsReportadasDeAlerta(alerta, folio) {
 
 function subirAcuseSAT(input, alertaId, nomCliente) {
   var file = input.files[0]; if(!file) return;
-  toast('Subiendo acuse SAT...');
+  toast('Procesando acuse...','i');
+  // Leer el folio del acuse (texto o OCR) y prellenar el campo antes de subir
+  extraerFolioAcuse(file, function(folio){
+    if (folio) {
+      var campo = document.querySelector('[name="alt-folio-acuse"]');
+      if (campo && !campo.value.trim()) campo.value = folio;
+      toast('Folio detectado en el acuse: '+folio,'s');
+    }
+    _subirAcusePDF(file, alertaId, nomCliente, folio);
+  });
+}
+
+function _subirAcusePDF(file, alertaId, nomCliente, folioDetectado) {
+  toast('Subiendo acuse SAT...','i');
   var reader = new FileReader();
   reader.onload = function(e) {
-    var carpeta = 'PLD_Acuses/'+nomCliente.replace(/[^a-zA-Z0-9_]/g,'_').substring(0,30);
+    var carpeta = 'PLD_Acuses/'+String(nomCliente||'cliente').replace(/[^a-zA-Z0-9_]/g,'_').substring(0,30);
     var nombre = 'AcuseSAT_'+alertaId+'_'+file.name;
     var url = GRAPH+'/sites/'+App.siteId+'/drive/root:/'+carpeta+'/'+nombre+':/content';
     fetch(url, {
@@ -5190,15 +5203,19 @@ function subirAcuseSAT(input, alertaId, nomCliente) {
           lista.forEach(function(x){ if(String(x.id)===String(alertaId)) a=x; });
           if (!a) return;
           var estatusAnterior = a.estatus_atencion || 'Pendiente';
+          // Folio: lo que el usuario tenga en el campo, o el detectado, o el ya guardado
+          var campo = document.querySelector('[name="alt-folio-acuse"]');
+          var folioFinal = (campo && campo.value.trim()) || folioDetectado || a.folio_acuse || '';
           a.url_acuse = d.webUrl;
           a.estatus_atencion = 'Reportada';
           a.fecha_acuse = hoy();
+          if (folioFinal) a.folio_acuse = folioFinal;
           spUpdate('PLD_Alertas', alertaId, a, function(){
             toast('Acuse SAT cargado — estatus cambiado a Reportada','s');
             renderFichaAlerta(a);
             // Marcar ops del cliente como reportadas si el estatus cambia a Reportada
             if (estatusAnterior !== 'Reportada') {
-              marcarOpsReportadasDeAlerta(a, a.folio_acuse || ('ALT-'+alertaId));
+              marcarOpsReportadasDeAlerta(a, folioFinal || ('ALT-'+alertaId));
             }
           });
         });
@@ -5206,6 +5223,55 @@ function subirAcuseSAT(input, alertaId, nomCliente) {
     }).catch(function(){ toast('Error al subir acuse','e'); });
   };
   reader.readAsArrayBuffer(file);
+}
+
+// Extrae el folio del acuse SAT ("FOLIO: 19007053", arriba a la izquierda).
+// Intenta texto (acuse digital); si no hay, renderiza la pagina 1 y aplica OCR.
+function _folioDeTexto(txt) {
+  if (!txt) return '';
+  var s = String(txt);
+  var m = s.match(/FOL[I1L]O\s*[:\-]?\s*([0-9]{4,})/i);   // tolera OCR (I/1/L)
+  if (m) return m[1];
+  return '';
+}
+function extraerFolioAcuse(file, cb) {
+  var isPDF = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+  cargarOCRLibs(function(){
+    if (isPDF && window.pdfjsLib) {
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        pdfjsLib.getDocument({data: e.target.result}).promise.then(function(pdf){
+          pdf.getPage(1).then(function(page){
+            page.getTextContent().then(function(tc){
+              var texto = tc.items.map(function(it){ return it.str; }).join(' ');
+              var folio = _folioDeTexto(texto);
+              if (folio) { cb(folio); return; }             // acuse digital
+              // acuse escaneado (sin texto) -> OCR de la pagina
+              toast('Acuse escaneado: leyendo folio con OCR...','i');
+              var vp = page.getViewport({scale:2.5});
+              var canvas = document.createElement('canvas');
+              canvas.width = vp.width; canvas.height = vp.height;
+              page.render({canvasContext:canvas.getContext('2d'), viewport:vp}).promise.then(function(){
+                _preprocesarImagen(canvas, function(cvs){
+                  Tesseract.recognize(cvs, 'spa', {logger:function(mm){ if(mm.status==='recognizing text') toast('OCR folio: '+Math.round((mm.progress||0)*100)+'%...','i'); }})
+                    .then(function(r){ cb(_folioDeTexto(r.data.text)); })
+                    .catch(function(){ cb(''); });
+                });
+              }).catch(function(){ cb(''); });
+            });
+          });
+        }).catch(function(){ cb(''); });
+      };
+      reader.readAsArrayBuffer(file);
+    } else if (window.Tesseract) {
+      // Imagen suelta (jpg/png)
+      _preprocesarImagen(URL.createObjectURL(file), function(canvas){
+        Tesseract.recognize(canvas, 'spa', {logger:function(mm){ if(mm.status==='recognizing text') toast('OCR folio: '+Math.round((mm.progress||0)*100)+'%...','i'); }})
+          .then(function(r){ cb(_folioDeTexto(r.data.text)); })
+          .catch(function(){ cb(''); });
+      });
+    } else { cb(''); }
+  });
 }
 
 // Sube un XML de aviso generado FUERA del sistema, desde la seccion de atencion
