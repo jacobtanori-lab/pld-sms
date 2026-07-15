@@ -5068,6 +5068,7 @@ function seccionAtencionAlerta(a) {
     +'<option value="Cerrada"'+(a.estatus_atencion==='Cerrada'?' selected':'')+'>Cerrada</option>'
     +'</select></div>'
     +fg('Folio / num. de confirmacion SAT',null,false)+fi('alt-folio-acuse',a.folio_acuse||'','')
+    +fg('Fecha de envio del aviso (del acuse)',null,false)+fi('alt-fecha-envio',a.fecha_envio_aviso||'','DD-MM-AAAA')
     +'<div class="fg full"><label class="lbl">Cargar acuse de recepcion SAT (PDF)</label>'
     +'<label class="btn" style="cursor:pointer">Seleccionar PDF'
     +'<input type="file" accept=".pdf" style="display:none" class="acuse-file-input" data-altid="'+a.id+'">'
@@ -5098,6 +5099,8 @@ function cambiarEstatusAlerta(id, estatus) {
 function guardarAtencionAlerta(id) {
   var folioEl  = document.querySelector('[name="alt-folio-acuse"]');
   var folio    = folioEl ? folioEl.value.trim() : '';
+  var fechaEl  = document.querySelector('[name="alt-fecha-envio"]');
+  var fechaEnvio = fechaEl ? fechaEl.value.trim() : '';
   var statusEl = document.querySelector('[name="alt-estatus-at"]');
   var nuevoEstatus = statusEl ? statusEl.value : null;
 
@@ -5108,6 +5111,7 @@ function guardarAtencionAlerta(id) {
 
     var estatusAnterior = a.estatus_atencion || 'Pendiente';
     if (folio) a.folio_acuse = folio;
+    if (fechaEnvio) a.fecha_envio_aviso = fechaEnvio;
     if (nuevoEstatus) a.estatus_atencion = nuevoEstatus;
 
     spUpdate('PLD_Alertas', id, a, function(){
@@ -5173,18 +5177,25 @@ function marcarOpsReportadasDeAlerta(alerta, folio) {
 function subirAcuseSAT(input, alertaId, nomCliente) {
   var file = input.files[0]; if(!file) return;
   toast('Procesando acuse...','i');
-  // Leer el folio del acuse (texto o OCR) y prellenar el campo antes de subir
-  extraerFolioAcuse(file, function(folio){
-    if (folio) {
-      var campo = document.querySelector('[name="alt-folio-acuse"]');
-      if (campo && !campo.value.trim()) campo.value = folio;
-      toast('Folio detectado en el acuse: '+folio,'s');
+  // Leer folio y fecha de envio del acuse (texto o OCR) y prellenar los campos antes de subir
+  extraerFolioAcuse(file, function(datos){
+    datos = datos || {};
+    if (datos.folio) {
+      var cf = document.querySelector('[name="alt-folio-acuse"]');
+      if (cf && !cf.value.trim()) cf.value = datos.folio;
     }
-    _subirAcusePDF(file, alertaId, nomCliente, folio);
+    if (datos.fecha) {
+      var cff = document.querySelector('[name="alt-fecha-envio"]');
+      if (cff && !cff.value.trim()) cff.value = datos.fecha;
+    }
+    if (datos.folio || datos.fecha) {
+      toast('Detectado — '+(datos.folio?('folio '+datos.folio):'')+(datos.folio&&datos.fecha?' · ':'')+(datos.fecha?('envio '+datos.fecha):''),'s');
+    }
+    _subirAcusePDF(file, alertaId, nomCliente, datos.folio, datos.fecha);
   });
 }
 
-function _subirAcusePDF(file, alertaId, nomCliente, folioDetectado) {
+function _subirAcusePDF(file, alertaId, nomCliente, folioDetectado, fechaDetectada) {
   toast('Subiendo acuse SAT...','i');
   var reader = new FileReader();
   reader.onload = function(e) {
@@ -5203,13 +5214,16 @@ function _subirAcusePDF(file, alertaId, nomCliente, folioDetectado) {
           lista.forEach(function(x){ if(String(x.id)===String(alertaId)) a=x; });
           if (!a) return;
           var estatusAnterior = a.estatus_atencion || 'Pendiente';
-          // Folio: lo que el usuario tenga en el campo, o el detectado, o el ya guardado
-          var campo = document.querySelector('[name="alt-folio-acuse"]');
+          // Folio y fecha de envio: lo que el usuario tenga en el campo, o lo detectado, o lo ya guardado
+          var campo   = document.querySelector('[name="alt-folio-acuse"]');
+          var campoF  = document.querySelector('[name="alt-fecha-envio"]');
           var folioFinal = (campo && campo.value.trim()) || folioDetectado || a.folio_acuse || '';
+          var fechaFinal = (campoF && campoF.value.trim()) || fechaDetectada || a.fecha_envio_aviso || '';
           a.url_acuse = d.webUrl;
           a.estatus_atencion = 'Reportada';
-          a.fecha_acuse = hoy();
+          a.fecha_acuse = hoy();   // fecha en que se cargo el acuse (auditoria)
           if (folioFinal) a.folio_acuse = folioFinal;
+          if (fechaFinal) a.fecha_envio_aviso = fechaFinal;
           spUpdate('PLD_Alertas', alertaId, a, function(){
             toast('Acuse SAT cargado — estatus cambiado a Reportada','s');
             renderFichaAlerta(a);
@@ -5225,14 +5239,26 @@ function _subirAcusePDF(file, alertaId, nomCliente, folioDetectado) {
   reader.readAsArrayBuffer(file);
 }
 
-// Extrae el folio del acuse SAT ("FOLIO: 19007053", arriba a la izquierda).
+// Extrae del acuse SAT el folio ("FOLIO: 19007053", arriba a la izquierda) y la
+// fecha de envio (DD/MM/AAAA, en el encabezado, arriba a la derecha).
 // Intenta texto (acuse digital); si no hay, renderiza la pagina 1 y aplica OCR.
 function _folioDeTexto(txt) {
   if (!txt) return '';
-  var s = String(txt);
-  var m = s.match(/FOL[I1L]O\s*[:\-]?\s*([0-9]{4,})/i);   // tolera OCR (I/1/L)
-  if (m) return m[1];
-  return '';
+  var m = String(txt).match(/FOL[I1L]O\s*[:\-]?\s*([0-9]{4,})/i);   // tolera OCR (I/1/L)
+  return m ? m[1] : '';
+}
+function _fechaEnvioDeTexto(txt) {
+  if (!txt) return '';
+  // La fecha de envio esta en el encabezado: la PRIMERA fecha DD/MM/AAAA del acuse
+  // (las fechas de operacion van despues, en el cuerpo).
+  var m = String(txt).match(/\b(\d{2})[\/\-.](\d{2})[\/\-.](\d{4})\b/);
+  if (!m) return '';
+  var dd = +m[1], mm = +m[2];
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return '';
+  return m[1] + '-' + m[2] + '-' + m[3];   // DD-MM-AAAA
+}
+function _datosAcuse(txt) {
+  return { folio: _folioDeTexto(txt), fecha: _fechaEnvioDeTexto(txt) };
 }
 function extraerFolioAcuse(file, cb) {
   var isPDF = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
@@ -5244,33 +5270,33 @@ function extraerFolioAcuse(file, cb) {
           pdf.getPage(1).then(function(page){
             page.getTextContent().then(function(tc){
               var texto = tc.items.map(function(it){ return it.str; }).join(' ');
-              var folio = _folioDeTexto(texto);
-              if (folio) { cb(folio); return; }             // acuse digital
+              var datos = _datosAcuse(texto);
+              if (datos.folio || datos.fecha) { cb(datos); return; }   // acuse digital
               // acuse escaneado (sin texto) -> OCR de la pagina
-              toast('Acuse escaneado: leyendo folio con OCR...','i');
+              toast('Acuse escaneado: leyendo con OCR...','i');
               var vp = page.getViewport({scale:2.5});
               var canvas = document.createElement('canvas');
               canvas.width = vp.width; canvas.height = vp.height;
               page.render({canvasContext:canvas.getContext('2d'), viewport:vp}).promise.then(function(){
                 _preprocesarImagen(canvas, function(cvs){
-                  Tesseract.recognize(cvs, 'spa', {logger:function(mm){ if(mm.status==='recognizing text') toast('OCR folio: '+Math.round((mm.progress||0)*100)+'%...','i'); }})
-                    .then(function(r){ cb(_folioDeTexto(r.data.text)); })
-                    .catch(function(){ cb(''); });
+                  Tesseract.recognize(cvs, 'spa', {logger:function(mm){ if(mm.status==='recognizing text') toast('OCR acuse: '+Math.round((mm.progress||0)*100)+'%...','i'); }})
+                    .then(function(r){ cb(_datosAcuse(r.data.text)); })
+                    .catch(function(){ cb({}); });
                 });
-              }).catch(function(){ cb(''); });
+              }).catch(function(){ cb({}); });
             });
           });
-        }).catch(function(){ cb(''); });
+        }).catch(function(){ cb({}); });
       };
       reader.readAsArrayBuffer(file);
     } else if (window.Tesseract) {
       // Imagen suelta (jpg/png)
       _preprocesarImagen(URL.createObjectURL(file), function(canvas){
-        Tesseract.recognize(canvas, 'spa', {logger:function(mm){ if(mm.status==='recognizing text') toast('OCR folio: '+Math.round((mm.progress||0)*100)+'%...','i'); }})
-          .then(function(r){ cb(_folioDeTexto(r.data.text)); })
-          .catch(function(){ cb(''); });
+        Tesseract.recognize(canvas, 'spa', {logger:function(mm){ if(mm.status==='recognizing text') toast('OCR acuse: '+Math.round((mm.progress||0)*100)+'%...','i'); }})
+          .then(function(r){ cb(_datosAcuse(r.data.text)); })
+          .catch(function(){ cb({}); });
       });
-    } else { cb(''); }
+    } else { cb({}); }
   });
 }
 
