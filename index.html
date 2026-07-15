@@ -8411,69 +8411,27 @@ function capSeguimiento(){
 // ================================================================
 function pgReportes() {
   setSB('<div class="sb-sec">Reportes</div>'
-    +'<div class="sb-item on">Avisos regulatorios</div>'
+    +'<div class="sb-item on" onclick="pgReportes()">Centro de reportes</div>'
     +'<div class="sb-sec">Exportar</div>'
-    +'<div class="sb-item" onclick="exportarClientesXLS()">&#x2193; Clientes 360 (XLS)</div>'
-    +'<div class="sb-item" onclick="exportarOpsLiqXLS()">&#x2193; Operaciones de liquidacion (XLS)</div>');
-  setMain('<div class="phdr"><div><div class="ptit">Reportes regulatorios</div><div class="psub">LFPIORPI - Avisos SPPLD/SAT/UIF</div></div>'
-    +'<button class="btn btn-p" onclick="nuevoRepForm()">+ Generar reporte</button></div>'
-    +'<div id="reps-ct"><div class="empty"><div class="spin" style="margin:0 auto"></div></div></div>');
-  spGet('PLD_Reportes',function(lista){
-    if (App.entidadActual && App.entidadActual.id !== 'TODAS') {
-      lista = (lista||[]).filter(function(r){ return r.entidad_id===App.entidadActual.id||!r.entidad_id; });
-    } else {
-      lista = filtrarPermitidas(lista||[]);
-    }
-    if(!lista.length){document.getElementById('reps-ct').innerHTML='<div class="empty">Sin reportes generados.</div>';return;}
-    var rows=lista.map(function(r){
-      return '<tr><td style="font-family:monospace;font-weight:600">'+(r.folio||'-')+'</td>'
-        +'<td>'+(r.tipo||'-')+'</td><td>'+(r.periodo||'-')+'</td>'
-        +'<td>'+(r.nombre_cliente||'-')+'</td>'
-        +'<td style="font-weight:500">$'+(parseFloat(r.monto||0)).toLocaleString('es-MX')+'</td>'
-        +'<td><span class="pill '+(r.estatus==='Enviado'?'p-vd':'p-gr')+'">'+(r.estatus||'-')+'</span></td>'
-        +'<td style="font-size:11px;color:var(--tx3)">'+String(r.fecha_registro||'-').substring(0,10)+'</td></tr>';
-    }).join('');
-    document.getElementById('reps-ct').innerHTML='<div class="card"><div class="twrap"><table>'
-      +'<thead><tr><th>Folio</th><th>Tipo</th><th>Periodo</th><th>Cliente</th><th>Monto</th><th>Estatus</th><th>Fecha</th></tr></thead>'
-      +'<tbody>'+rows+'</tbody></table></div></div>';
-  });
-}
+    +'<div class="sb-item" onclick="exportarClientesXLS()">&#x2193; Clientes 360</div>'
+    +'<div class="sb-item" onclick="exportarOpsLiqXLS()">&#x2193; Operaciones de liquidacion</div>'
+    +'<div class="sb-item" onclick="exportarAlertasXLS()">&#x2193; Alertas</div>'
+    +'<div class="sb-item" onclick="exportarExpedientesXLS()">&#x2193; Expedientes</div>');
 
-function nuevoRepForm(){
-  setMain('<div class="phdr"><div><div class="ptit">Nuevo reporte</div></div><button class="btn" onclick="pgReportes()">Volver</button></div>'
-    +'<div class="card"><div class="card-h"><span class="card-t">Generar reporte regulatorio</span></div>'
-    +'<div class="fgrid">'
-    +fg('Tipo de reporte / aviso',null,true)+'<select class="sel" name="rp_tipo">'+opts(['Aviso de actividad vulnerable','Reporte de operacion sospechosa (ROS)','Aviso en efectivo','Informe mensual sin operaciones'],'')+'</select></div>'
-    +fg('Periodo que reporta',null,true)+fi('rp_periodo','','Ej: ENERO-2026')
-    +fg('Cliente relacionado (opcional)',null,false)+fi('rp_cli','','Nombre del cliente')
-    +fg('Monto total reportado (MXN)',null,false)+fi('rp_monto','','0.00')
-    +fg('Numero de confirmacion SPPLD (si ya fue enviado)',null,false)+fi('rp_confirm','','')
-    +ftxt('Descripcion / observaciones','rp_desc','')
-    +'</div>'
-    +'<div style="padding:12px 16px;border-top:1px solid var(--brd);display:flex;justify-content:flex-end">'
-    +'<button class="btn btn-p" onclick="guardarRep()">Generar borrador</button></div></div>');
-}
-
-function guardarRep(){
-  var tipo=(document.querySelector('[name="rp_tipo"]')||{value:''}).value;
-  var pref={'Aviso de actividad vulnerable':'AV','Reporte de operacion sospechosa (ROS)':'ROS','Aviso en efectivo':'EF','Informe mensual sin operaciones':'INF'}[tipo]||'RPT';
-  var d=new Date();
-  var folio=pref+'-'+d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate())+'-'+String(Math.floor(Math.random()*1000)).padStart(3,'0');
-  var datos={
-    folio:folio, tipo:tipo,
-    periodo:(document.querySelector('[name="rp_periodo"]')||{value:''}).value,
-    nombre_cliente:(document.querySelector('[name="rp_cli"]')||{value:''}).value,
-    monto:parseFloat((document.querySelector('[name="rp_monto"]')||{value:0}).value||0),
-    num_confirmacion:(document.querySelector('[name="rp_confirm"]')||{value:''}).value,
-    descripcion:(document.querySelector('[name="rp_desc"]')||{value:''}).value,
-    estatus:'Borrador',
-    elaborado_por:App.cuenta.username,
-    fecha_registro:hoy()
-  };
-  datos.Title=folio;
-  datos.entidad_id = App.entidadActual ? App.entidadActual.id : '';
-  datos.entidad_nombre = App.entidadActual ? App.entidadActual.nombre : '';
-  spCreate('PLD_Reportes',datos,function(item){if(item){toast('Reporte '+folio+' generado','s');pgReportes();}});
+  function card(icono, titulo, desc, fn) {
+    return '<div class="card" style="margin-bottom:12px"><div class="card-b" style="padding:16px;display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap">'
+      +'<div style="flex:1;min-width:240px"><div style="font-weight:600;font-size:15px">'+icono+' '+titulo+'</div>'
+      +'<div style="font-size:13px;color:var(--tx2);margin-top:4px">'+desc+'</div></div>'
+      +'<button class="btn btn-p" onclick="'+fn+'">&#x2193; Descargar (XLS)</button>'
+      +'</div></div>';
+  }
+  setMain('<div class="phdr"><div><div class="ptit">Reportes</div>'
+    +'<div class="psub">Exportacion de reporteria PLD</div></div></div>'
+    + card('&#128101;','Clientes 360','Expediente completo por cliente: identificacion, domicilio, representantes, duenos beneficiarios, beneficiarios controladores, fideicomisos y alertas (multi-hoja).','exportarClientesXLS()')
+    + card('&#128181;','Operaciones de liquidacion','Todas las operaciones registradas con su cliente, RFC y detalle de liquidacion.','exportarOpsLiqXLS()')
+    + card('&#128276;','Alertas','Todas las alertas con todos sus campos: categoria, tipo, cliente, montos, atencion y evidencia de reporte (folio, fecha y estatus del envio, acuse y XML).','exportarAlertasXLS()')
+    + card('&#128193;','Expedientes','Avance de integracion documental por cliente: asesor comercial y % de documentos obligatorios cargados.','exportarExpedientesXLS()')
+    +'<div style="font-size:12px;color:var(--tx3);margin-top:4px">Los reportes respetan la entidad seleccionada (o consolidan en "Todas las entidades").</div>');
 }
 
 // ================================================================
@@ -8755,6 +8713,140 @@ function _generarOpsLiqXLSX() {
 
   spGet('PLD_Ops_Liq',  function(r){ datos.liq=r;      intentarGenerar(); });
   spGet('PLD_Clientes', function(r){ datos.clientes=r; intentarGenerar(); });
+}
+
+// Hoja XLSX con encabezado estilizado y anchos automaticos (reutilizable)
+function _xlsxHoja(cols, filas) {
+  var ws = XLSX.utils.aoa_to_sheet([cols].concat(filas));
+  ws['!cols'] = cols.map(function(c){ return {wch: Math.max(12, String(c).length+2)}; });
+  try {
+    var rg = XLSX.utils.decode_range(ws['!ref']);
+    for (var col=rg.s.c; col<=rg.e.c; col++){
+      var ad = XLSX.utils.encode_cell({r:0,c:col});
+      if (ws[ad]) ws[ad].s = {font:{bold:true,color:{rgb:'FFFFFF'}},fill:{fgColor:{rgb:'1E3A5F'}},alignment:{horizontal:'center'}};
+    }
+  } catch(e){}
+  return ws;
+}
+
+// ================================================================
+//  EXPORTACIÓN XLSX — REPORTE DE ALERTAS
+// ================================================================
+function exportarAlertasXLS() {
+  toast('Cargando libreria de exportacion...', 'i');
+  cargarSheetJS(function(){ _generarAlertasXLSX(); });
+}
+function _generarAlertasXLSX() {
+  toast('Generando reporte de alertas...', 'i');
+  var entId = App.entidadActual ? App.entidadActual.id : null;
+  var esConsolidada = entId === 'TODAS' || !entId;
+  spGet('PLD_Alertas', function(lista) {
+    lista = lista || [];
+    if (!esConsolidada) lista = lista.filter(function(a){ return a.entidad_id===entId || !a.entidad_id; });
+    else lista = filtrarPermitidas(lista);
+
+    var cols = ['Folio interno','Categoria','Tipo','Nivel','Num. Cliente','Cliente','Entidad','Fraccion','Periodo','Descripcion',
+      'Monto acumulado','Monto umbral','Monto efectivo','Renta esperada','Limite renta','# operaciones',
+      'Estatus','Estatus atencion','Requiere aprobacion',
+      'Folio acuse','Fecha de envio','Estatus del envio','TC estimado','Fecha carga acuse','URL acuse','URL XML aviso',
+      'Registrado por','Fecha registro','Fecha actualizacion'];
+    var filas = lista.map(function(a){
+      return [
+        a.Title||a.id||'', altCategoria(a), a.tipo||'', a.nivel||'', nStr(a.num_cliente), a.nombre_cliente||'',
+        a.entidad_nombre||a.entidad_id||'', a.fraccion||'', a.periodo||'', a.descripcion||'',
+        parseFloat(a.monto_acumulado)||0, parseFloat(a.monto_umbral)||0, parseFloat(a.monto_efectivo)||0,
+        parseFloat(a.renta_esperada)||0, parseFloat(a.limite_renta)||0, a.num_operaciones||0,
+        a.estatus||'', a.estatus_atencion||'Pendiente', a.requiere_aprobacion?'SI':'NO',
+        a.folio_acuse||'', a.fecha_envio_aviso||'', a.estatus_envio_aviso||'', a.tc_estimado?'SI':'NO',
+        String(a.fecha_acuse||'').substring(0,10), a.url_acuse||'', a.url_xml_aviso||'',
+        a.registrado_por||'', String(a.fecha_registro||'').substring(0,10), String(a.fecha_actualizacion||'').substring(0,10)
+      ];
+    });
+    var fecha = hoy();
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, _xlsxHoja(cols, filas), 'Alertas');
+    var wsInfo = XLSX.utils.aoa_to_sheet([
+      ['Reporte de Alertas - PLD Corporativo SMS'],
+      ['Entidad', esConsolidada ? 'Todas las entidades' : (App.entidadActual.nombre||entId)],
+      ['Fecha de exportacion', fecha],
+      ['Total de alertas', filas.length]
+    ]);
+    wsInfo['!cols'] = [{wch:34},{wch:30}];
+    XLSX.utils.book_append_sheet(wb, wsInfo, 'Info');
+    XLSX.writeFile(wb, 'Alertas_PLD_'+(esConsolidada?'TODAS':entId)+'_'+fecha.replace(/-/g,'')+'.xlsx');
+    toast('Reporte de alertas exportado: '+filas.length+' alertas', 's');
+  });
+}
+
+// ================================================================
+//  EXPORTACIÓN XLSX — REPORTE DE EXPEDIENTES (% de avance documental)
+// ================================================================
+function exportarExpedientesXLS() {
+  toast('Cargando libreria de exportacion...', 'i');
+  cargarSheetJS(function(){ _generarExpedientesXLSX(); });
+}
+function _generarExpedientesXLSX() {
+  var entId = App.entidadActual ? App.entidadActual.id : null;
+  var esConsolidada = entId === 'TODAS' || !entId;
+  spGet('PLD_Clientes', function(todos) {
+    var clientes = todos || [];
+    if (!esConsolidada) clientes = clientes.filter(function(c){ return c.entidad_id===entId; });
+    else clientes = filtrarPermitidas(clientes);
+    if (!clientes.length) { toast('No hay clientes para el reporte','w'); return; }
+
+    function asesorNom(c){
+      if (c.asesor_nombre) return c.asesor_nombre;
+      var a = (typeof ASESORES!=='undefined'?ASESORES:[]).find(function(x){ return x.id===c.asesor_id; });
+      return a ? a.nombre : '';
+    }
+    function obligatoriosDe(c){
+      var arr = (DOCS_OBL[c.tipo]||[]).slice();
+      Object.keys(DOCS_OBL_COND).forEach(function(d){ if (DOCS_OBL_COND[d](c) && arr.indexOf(d)<0) arr.push(d); });
+      return arr;
+    }
+
+    var filas = [], i = 0;
+    function siguiente() {
+      if (i >= clientes.length) { _finExpedientes(filas, esConsolidada, entId); return; }
+      var c = clientes[i];
+      toast('Revisando expediente '+(i+1)+' de '+clientes.length+'...','i');
+      var nom = nombreCliente(c).replace(/[^a-zA-Z0-9_\-]/g,'_').substring(0,40);
+      var carpeta = 'PLD_Documentos/'+nStr(c.num_cliente)+'_'+nom;
+      var obligatorios = obligatoriosDe(c);
+      graph('GET','/sites/'+App.siteId+'/drive/root:/'+carpeta+':/children', null, function(data){
+        var archivos = (data && data.value) ? data.value : [];
+        function tiene(td){ var pref = td.replace(/\s/g,'_').substring(0,20); return archivos.some(function(a){ return a.name.indexOf(pref)>=0; }); }
+        var total = obligatorios.length;
+        var cargados = obligatorios.filter(tiene).length;
+        var pct = total ? Math.round(cargados/total*100) : 100;
+        filas.push([
+          nStr(c.num_cliente), c.Title||nombreCliente(c), labelTipo(c.tipo),
+          c.entidad_nombre||c.entidad_id||'', asesorNom(c), c.estatus||'',
+          total, cargados, pct
+        ]);
+        i++; siguiente();
+      });
+    }
+    toast('Generando reporte de expedientes ('+clientes.length+' clientes)...','i');
+    siguiente();
+  });
+}
+function _finExpedientes(filas, esConsolidada, entId) {
+  var cols = ['Num. Cliente','Nombre / Razon social','Tipo','Entidad','Asesor comercial','Estatus',
+    'Docs obligatorios','Cargados','% avance'];
+  var fecha = hoy();
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, _xlsxHoja(cols, filas), 'Expedientes');
+  var wsInfo = XLSX.utils.aoa_to_sheet([
+    ['Reporte de Expedientes - PLD Corporativo SMS'],
+    ['Entidad', esConsolidada ? 'Todas las entidades' : (App.entidadActual.nombre||entId)],
+    ['Fecha de exportacion', fecha],
+    ['Total de clientes', filas.length]
+  ]);
+  wsInfo['!cols'] = [{wch:34},{wch:30}];
+  XLSX.utils.book_append_sheet(wb, wsInfo, 'Info');
+  XLSX.writeFile(wb, 'Expedientes_PLD_'+(esConsolidada?'TODAS':entId)+'_'+fecha.replace(/-/g,'')+'.xlsx');
+  toast('Reporte de expedientes exportado: '+filas.length+' clientes', 's');
 }
 
 // ================================================================
