@@ -7844,6 +7844,26 @@ function capRender(){
 }
 
 // ── BIBLIOTECA DE DOCUMENTOS ─────────────────────────────────
+// Secciones/categorias de la biblioteca de capacitacion (orden de despliegue)
+var CAP_CATEGORIAS = ['Material de Capacitacion','Formatos','Manuales','Normatividad','Politicas internas','Boletines','Otros'];
+
+function capDocCard(d, esAdmin){
+  return '<div class="card" style="margin-bottom:10px"><div class="card-b" style="padding:14px 16px">'
+    +'<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">'
+    +'<div style="flex:1">'
+    +'<div style="font-weight:600;font-size:14px">'+capEsc(d.titulo||d.Title||d.archivo_nombre)+'</div>'
+    +'<div style="font-size:12px;color:var(--tx3);margin-top:2px">'
+    +(d.obligatorio?'<span style="color:#A32D2D;font-weight:600">Lectura obligatoria</span>  &middot;  ':'')
+    +String(d.fecha_registro||'').substring(0,10)+'</div>'
+    +(d.descripcion?'<div style="font-size:13px;color:var(--tx2);margin-top:6px">'+capEsc(d.descripcion)+'</div>':'')
+    +'<div style="font-size:11px;color:var(--tx3);margin-top:4px">&#128206; '+capEsc(d.archivo_nombre||'')+'</div>'
+    +'</div>'
+    +'<div style="display:flex;flex-direction:column;gap:6px">'
+    +'<button class="btn btn-sm" onclick="capDescargar(\''+(d.archivo_item_id||'')+'\',\''+capEsc(String(d.archivo_nombre||'documento').replace(/[\\\'"]/g,''))+'\')">&#8595; Descargar</button>'
+    +(esAdmin?'<button class="btn btn-sm btn-r" onclick="capEliminarDoc(\''+d.id+'\')">Eliminar</button>':'')
+    +'</div></div></div></div>';
+}
+
 function capBiblioteca(){
   var esAdmin = App.rol==='admin';
   spGet('PLD_Capacitacion', function(lista){
@@ -7853,28 +7873,28 @@ function capBiblioteca(){
     lista = (lista||[]);
     if (!lista.length) { el.innerHTML = html + '<div class="empty">Sin material de capacitacion cargado.</div>'; return; }
     lista.sort(function(a,b){ return String(b.fecha_registro||'').localeCompare(String(a.fecha_registro||'')); });
-    html += lista.map(function(d){
-      return '<div class="card" style="margin-bottom:10px"><div class="card-b" style="padding:14px 16px">'
-        +'<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">'
-        +'<div style="flex:1">'
-        +'<div style="font-weight:600;font-size:14px">'+capEsc(d.titulo||d.Title||d.archivo_nombre)+'</div>'
-        +'<div style="font-size:12px;color:var(--tx3);margin-top:2px">'+capEsc(d.categoria||'Otros')
-        +(d.obligatorio?'  &middot;  <span style="color:#A32D2D;font-weight:600">Lectura obligatoria</span>':'')
-        +'  &middot;  '+String(d.fecha_registro||'').substring(0,10)+'</div>'
-        +(d.descripcion?'<div style="font-size:13px;color:var(--tx2);margin-top:6px">'+capEsc(d.descripcion)+'</div>':'')
-        +'<div style="font-size:11px;color:var(--tx3);margin-top:4px">&#128206; '+capEsc(d.archivo_nombre||'')+'</div>'
-        +'</div>'
-        +'<div style="display:flex;flex-direction:column;gap:6px">'
-        +'<button class="btn btn-sm" onclick="capDescargar(\''+(d.archivo_item_id||'')+'\',\''+capEsc(String(d.archivo_nombre||'documento').replace(/[\\\'"]/g,''))+'\')">&#8595; Descargar</button>'
-        +(esAdmin?'<button class="btn btn-sm btn-r" onclick="capEliminarDoc(\''+d.id+'\')">Eliminar</button>':'')
-        +'</div></div></div></div>';
-    }).join('');
+
+    // Agrupar por categoria/seccion
+    var grupos = {};
+    lista.forEach(function(d){ var c = d.categoria || 'Otros'; (grupos[c] = grupos[c] || []).push(d); });
+
+    // Orden: primero las secciones definidas, luego cualquier otra (docs antiguos)
+    var orden = CAP_CATEGORIAS.slice();
+    Object.keys(grupos).forEach(function(c){ if (orden.indexOf(c) < 0) orden.push(c); });
+
+    orden.forEach(function(cat){
+      var docs = grupos[cat];
+      if (!docs || !docs.length) return;
+      html += '<div style="font-size:12px;font-weight:600;color:var(--tx3);text-transform:uppercase;letter-spacing:.05em;margin:18px 0 8px">'
+        + capEsc(cat) + ' <span style="font-weight:400">('+docs.length+')</span></div>';
+      html += docs.map(function(d){ return capDocCard(d, esAdmin); }).join('');
+    });
     el.innerHTML = html;
   });
 }
 function capFormDoc(){
   var el = document.getElementById('cap-ct'); if(!el) return;
-  var cats = ['Normatividad','Politicas internas','Guias y manuales','Boletines','Otros'];
+  var cats = CAP_CATEGORIAS;
   el.innerHTML = '<div class="card"><div class="card-h"><span class="card-t">Subir documento de capacitacion</span>'
     +'<button class="btn" onclick="capVista(\'biblioteca\')">Volver</button></div>'
     +'<div class="fgrid">'
