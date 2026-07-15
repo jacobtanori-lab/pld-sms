@@ -5068,7 +5068,12 @@ function seccionAtencionAlerta(a) {
     +'<option value="Cerrada"'+(a.estatus_atencion==='Cerrada'?' selected':'')+'>Cerrada</option>'
     +'</select></div>'
     +fg('Folio / num. de confirmacion SAT',null,false)+fi('alt-folio-acuse',a.folio_acuse||'','')
-    +fg('Fecha de envio del aviso (del acuse)',null,false)+fi('alt-fecha-envio',a.fecha_envio_aviso||'','DD-MM-AAAA')
+    +fg('Fecha de envio del aviso (del acuse)',null,false)+fi('alt-fecha-envio',a.fecha_envio_aviso||'','DD-MM-AAAA HH:MM:SS')
+    +fg('Estatus del envio (del acuse)',null,false)+'<select class="sel" name="alt-estatus-envio">'
+    +'<option value=""'+(!a.estatus_envio_aviso?' selected':'')+'>-- No especificado --</option>'
+    +'<option value="ACEPTADO"'+(a.estatus_envio_aviso==='ACEPTADO'?' selected':'')+'>ACEPTADO</option>'
+    +'<option value="RECHAZADO"'+(a.estatus_envio_aviso==='RECHAZADO'?' selected':'')+'>RECHAZADO</option>'
+    +'</select></div>'
     +'<div class="fg full"><label class="lbl">Cargar acuse de recepcion SAT (PDF)</label>'
     +'<label class="btn" style="cursor:pointer">Seleccionar PDF'
     +'<input type="file" accept=".pdf" style="display:none" class="acuse-file-input" data-altid="'+a.id+'">'
@@ -5101,6 +5106,8 @@ function guardarAtencionAlerta(id) {
   var folio    = folioEl ? folioEl.value.trim() : '';
   var fechaEl  = document.querySelector('[name="alt-fecha-envio"]');
   var fechaEnvio = fechaEl ? fechaEl.value.trim() : '';
+  var estEnvEl = document.querySelector('[name="alt-estatus-envio"]');
+  var estatusEnvio = estEnvEl ? estEnvEl.value : '';
   var statusEl = document.querySelector('[name="alt-estatus-at"]');
   var nuevoEstatus = statusEl ? statusEl.value : null;
 
@@ -5112,6 +5119,7 @@ function guardarAtencionAlerta(id) {
     var estatusAnterior = a.estatus_atencion || 'Pendiente';
     if (folio) a.folio_acuse = folio;
     if (fechaEnvio) a.fecha_envio_aviso = fechaEnvio;
+    if (estatusEnvio) a.estatus_envio_aviso = estatusEnvio;
     if (nuevoEstatus) a.estatus_atencion = nuevoEstatus;
 
     spUpdate('PLD_Alertas', id, a, function(){
@@ -5188,14 +5196,22 @@ function subirAcuseSAT(input, alertaId, nomCliente) {
       var cff = document.querySelector('[name="alt-fecha-envio"]');
       if (cff && !cff.value.trim()) cff.value = datos.fecha;
     }
-    if (datos.folio || datos.fecha) {
-      toast('Detectado — '+(datos.folio?('folio '+datos.folio):'')+(datos.folio&&datos.fecha?' · ':'')+(datos.fecha?('envio '+datos.fecha):''),'s');
+    if (datos.estatus) {
+      var ce = document.querySelector('[name="alt-estatus-envio"]');
+      if (ce && !ce.value) ce.value = datos.estatus;
     }
-    _subirAcusePDF(file, alertaId, nomCliente, datos.folio, datos.fecha);
+    if (datos.folio || datos.fecha || datos.estatus) {
+      var partes = [];
+      if (datos.folio) partes.push('folio '+datos.folio);
+      if (datos.fecha) partes.push('envio '+datos.fecha);
+      if (datos.estatus) partes.push(datos.estatus);
+      toast('Detectado — '+partes.join(' · '),'s');
+    }
+    _subirAcusePDF(file, alertaId, nomCliente, datos.folio, datos.fecha, datos.estatus);
   });
 }
 
-function _subirAcusePDF(file, alertaId, nomCliente, folioDetectado, fechaDetectada) {
+function _subirAcusePDF(file, alertaId, nomCliente, folioDetectado, fechaDetectada, estatusDetectado) {
   toast('Subiendo acuse SAT...','i');
   var reader = new FileReader();
   reader.onload = function(e) {
@@ -5217,13 +5233,16 @@ function _subirAcusePDF(file, alertaId, nomCliente, folioDetectado, fechaDetecta
           // Folio y fecha de envio: lo que el usuario tenga en el campo, o lo detectado, o lo ya guardado
           var campo   = document.querySelector('[name="alt-folio-acuse"]');
           var campoF  = document.querySelector('[name="alt-fecha-envio"]');
-          var folioFinal = (campo && campo.value.trim()) || folioDetectado || a.folio_acuse || '';
-          var fechaFinal = (campoF && campoF.value.trim()) || fechaDetectada || a.fecha_envio_aviso || '';
+          var campoE  = document.querySelector('[name="alt-estatus-envio"]');
+          var folioFinal   = (campo && campo.value.trim()) || folioDetectado || a.folio_acuse || '';
+          var fechaFinal   = (campoF && campoF.value.trim()) || fechaDetectada || a.fecha_envio_aviso || '';
+          var estatusFinal = (campoE && campoE.value) || estatusDetectado || a.estatus_envio_aviso || '';
           a.url_acuse = d.webUrl;
           a.estatus_atencion = 'Reportada';
           a.fecha_acuse = hoy();   // fecha en que se cargo el acuse (auditoria)
           if (folioFinal) a.folio_acuse = folioFinal;
           if (fechaFinal) a.fecha_envio_aviso = fechaFinal;
+          if (estatusFinal) a.estatus_envio_aviso = estatusFinal;
           spUpdate('PLD_Alertas', alertaId, a, function(){
             toast('Acuse SAT cargado — estatus cambiado a Reportada','s');
             renderFichaAlerta(a);
@@ -5249,16 +5268,26 @@ function _folioDeTexto(txt) {
 }
 function _fechaEnvioDeTexto(txt) {
   if (!txt) return '';
-  // La fecha de envio esta en el encabezado: la PRIMERA fecha DD/MM/AAAA del acuse
-  // (las fechas de operacion van despues, en el cuerpo).
-  var m = String(txt).match(/\b(\d{2})[\/\-.](\d{2})[\/\-.](\d{4})\b/);
-  if (!m) return '';
-  var dd = +m[1], mm = +m[2];
-  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return '';
-  return m[1] + '-' + m[2] + '-' + m[3];   // DD-MM-AAAA
+  var s = String(txt);
+  // Preferir la fecha CON hora (tabla "Avisos Reportados": 16/06/2026 10:37:17)
+  var mh = s.match(/\b(\d{2})[\/\-.](\d{2})[\/\-.](\d{4})\s+(\d{1,2}:\d{2}(?::\d{2})?)/);
+  if (mh && +mh[2] >= 1 && +mh[2] <= 12 && +mh[1] >= 1 && +mh[1] <= 31)
+    return mh[1] + '-' + mh[2] + '-' + mh[3] + ' ' + mh[4];
+  // Si no hay hora, la PRIMERA fecha del encabezado (las de operacion van despues)
+  var m = s.match(/\b(\d{2})[\/\-.](\d{2})[\/\-.](\d{4})\b/);
+  if (m && +m[2] >= 1 && +m[2] <= 12 && +m[1] >= 1 && +m[1] <= 31)
+    return m[1] + '-' + m[2] + '-' + m[3];
+  return '';
+}
+function _estatusEnvioDeTexto(txt) {
+  if (!txt) return '';
+  var s = String(txt);
+  if (/RECHAZAD[O0]/i.test(s)) return 'RECHAZADO';
+  if (/ACEPTAD[O0]/i.test(s)) return 'ACEPTADO';
+  return '';
 }
 function _datosAcuse(txt) {
-  return { folio: _folioDeTexto(txt), fecha: _fechaEnvioDeTexto(txt) };
+  return { folio: _folioDeTexto(txt), fecha: _fechaEnvioDeTexto(txt), estatus: _estatusEnvioDeTexto(txt) };
 }
 function extraerFolioAcuse(file, cb) {
   var isPDF = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
@@ -5271,7 +5300,7 @@ function extraerFolioAcuse(file, cb) {
             page.getTextContent().then(function(tc){
               var texto = tc.items.map(function(it){ return it.str; }).join(' ');
               var datos = _datosAcuse(texto);
-              if (datos.folio || datos.fecha) { cb(datos); return; }   // acuse digital
+              if (datos.folio || datos.fecha || datos.estatus) { cb(datos); return; }   // acuse digital
               // acuse escaneado (sin texto) -> OCR de la pagina
               toast('Acuse escaneado: leyendo con OCR...','i');
               var vp = page.getViewport({scale:2.5});
