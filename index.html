@@ -2917,7 +2917,8 @@ function pgConfigPerfil() {
     +'<div class="alerta-banner">La alerta se evalua sobre las operaciones del <strong>mes</strong> de cada cliente. '
     +'Si se excede <strong>cualquiera</strong> de estos parametros, se genera una alerta de <strong>Perfil transaccional</strong>.</div>'
 
-    +'<div class="card"><div class="card-h"><span class="card-t">Aplica a todos los clientes</span></div>'
+    +'<div class="card"><div class="card-h"><span class="card-t">Aplica solo a clientes con marcador PEP</span>'
+    +'<span style="font-size:12px;color:var(--tx3)">Cualquier estatus PEP distinto de "NO APLICA"</span></div>'
     +'<div class="card-b">'
     + fila('Numero maximo de operaciones', 'Operaciones registradas en el mes. 0 = sin limite.',
            num('max_operaciones', p.max_operaciones, 0, 9999), 'operaciones')
@@ -7564,17 +7565,21 @@ function verificarPerfilTransaccional(idCli, nomCli, numCli, fechaOp, cb) {
     });
     var numOps = ops.length;
     var motivos = [];
+    // Marcador PEP: cualquier estatus PEP distinto de "NO APLICA"
+    var esPEP = !!(cli && cli.estatus_pep && cli.estatus_pep !== 'NO APLICA');
 
-    // (a) Número de operaciones — todos los clientes
-    var maxOps = parseFloat(CFG_PERFIL.max_operaciones) || 0;
-    if (maxOps > 0 && numOps > maxOps)
-      motivos.push(numOps + ' operaciones en el mes (maximo esperado: ' + maxOps + ')');
+    if (esPEP) {
+      // (a) Número de operaciones — SOLO clientes con marcador PEP
+      var maxOps = parseFloat(CFG_PERFIL.max_operaciones) || 0;
+      if (maxOps > 0 && numOps > maxOps)
+        motivos.push(numOps + ' operaciones en el mes (maximo esperado: ' + maxOps + ')');
 
-    // (b) Efectivo acumulado — todos los clientes
-    var maxEf = parseFloat(CFG_PERFIL.max_efectivo) || 0;
-    if (maxEf > 0 && efectivoMes > maxEf)
-      motivos.push('Efectivo acumulado $' + Math.round(efectivoMes).toLocaleString('es-MX')
-        + ' supera el maximo de $' + maxEf.toLocaleString('es-MX'));
+      // (b) Efectivo acumulado — SOLO clientes con marcador PEP
+      var maxEf = parseFloat(CFG_PERFIL.max_efectivo) || 0;
+      if (maxEf > 0 && efectivoMes > maxEf)
+        motivos.push('Efectivo acumulado $' + Math.round(efectivoMes).toLocaleString('es-MX')
+          + ' supera el maximo de $' + maxEf.toLocaleString('es-MX'));
+    }
 
     // (c) Desviación sobre la renta — solo clientes de arrendamiento con renta definida
     var rentaMXN = 0, limite = 0;
