@@ -1839,8 +1839,15 @@ function leerCSF(file, pref) {
           }));
         }
         Promise.all(promesas).then(function(paginas) {
-          var datos = _extraerDatosCSF(paginas.join('\n'));
-          _preRellenarDesdeCSF(datos, pref);
+          var texto = paginas.join('\n');
+          // Constancia DIGITAL: trae capa de texto → extraccion directa (perfecta y rapida)
+          if (texto.replace(/\s/g,'').length >= 40) {
+            _preRellenarDesdeCSF(_extraerDatosCSF(texto), pref);
+          } else {
+            // Constancia ESCANEADA (PDF-imagen sin texto) → renderizar y aplicar OCR
+            toast('Constancia escaneada: aplicando OCR...','i');
+            _ocrCSFdesdePDF(pdf, pref);
+          }
         });
       }).catch(function(){ toast('No se pudo leer el PDF del SAT','e'); });
     };
@@ -1859,6 +1866,32 @@ function leerCSF(file, pref) {
       }).catch(function(e){ toast('Error OCR: '+(e.message||e),'e'); });
     });
   }
+}
+
+// Constancia SAT escaneada (PDF sin texto): renderiza cada pagina a imagen,
+// aplica OCR y usa el mismo parser que la version digital.
+function _ocrCSFdesdePDF(pdf, pref) {
+  var maxP = Math.min(pdf.numPages, 2);
+  var textos = [];
+  function pagina(idx) {
+    if (idx > maxP) { _preRellenarDesdeCSF(_extraerDatosCSF(textos.join('\n')), pref); return; }
+    pdf.getPage(idx).then(function(page) {
+      var vp = page.getViewport({scale:2.5});
+      var canvas = document.createElement('canvas');
+      canvas.width = vp.width; canvas.height = vp.height;
+      page.render({canvasContext:canvas.getContext('2d'), viewport:vp}).promise.then(function() {
+        _preprocesarImagen(canvas, function(cvs) {
+          Tesseract.recognize(cvs, 'spa', {
+            logger: function(m){ if (m.status==='recognizing text') toast('OCR pag. '+idx+': '+Math.round((m.progress||0)*100)+'%...','i'); }
+          }).then(function(r) {
+            textos.push((r.data && r.data.text) || '');
+            pagina(idx + 1);
+          }).catch(function(e){ toast('Error OCR: '+(e.message||e),'e'); });
+        });
+      });
+    }).catch(function(){ toast('No se pudo renderizar la constancia','e'); });
+  }
+  pagina(1);
 }
 
 function _extraerDatosCSF(txt) {
