@@ -5462,6 +5462,8 @@ function pgAvisos() {
     +'<div style="display:flex;gap:8px">'
     +'<button class="btn btn-p av-btn-inm">+ Aviso Fr. V</button>'
     +'<button class="btn btn-g av-btn-ari">+ Aviso Fr. XV</button>'
+    +'<label class="btn" style="cursor:pointer" title="Subir un XML de aviso generado fuera del sistema">&#8593; Subir XML externo'
+    +'<input type="file" accept=".xml,text/xml,application/xml" style="display:none" onchange="subirXMLExterno(this)"></label>'
     +'</div></div>'
     +'<div class="tabs">'
     +'<div class="tab'+(fraccion==='INM'?' on':'')+' av-tab" data-frac="INM">Fraccion V - Compraventa / Desarrollo</div>'
@@ -6347,6 +6349,48 @@ function generarXML_ARI(op, cli, ent) {
 }
 
 // ── GUARDAR XML EN SHAREPOINT Y VINCULAR A ALERTA ───────────
+// Sube un XML de aviso generado FUERA del sistema a la misma carpeta donde el
+// sistema guarda los suyos: PLD_XML_Avisos/{entidad}. Disponible para admin y supervisor.
+function subirXMLExterno(input) {
+  var file = input.files && input.files[0];
+  input.value = '';
+  if (!file) return;
+  if (!/\.xml$/i.test(file.name) && file.type !== 'text/xml' && file.type !== 'application/xml') {
+    toast('Selecciona un archivo .xml','e'); return;
+  }
+  var ent = (App.entidadActual && App.entidadActual.id !== 'TODAS') ? App.entidadActual.id : 'GEN';
+  toast('Subiendo XML externo...','i');
+  var reader = new FileReader();
+  reader.onload = function(e){
+    var contenido = e.target.result;
+    // Aviso suave si no parece un aviso de la UIF (no bloquea la subida)
+    if (String(contenido).indexOf('<archivo') < 0) {
+      console.warn('[XML EXTERNO] el archivo no contiene <archivo> — se sube de todas formas');
+    }
+    var safe = String(file.name).replace(/\.xml$/i,'').replace(/[^a-zA-Z0-9_\-]/g,'_').substring(0,50) || 'aviso';
+    var ts = new Date().toISOString().replace(/[:.]/g,'-').substring(0,19);
+    var fname = 'EXTERNO_' + ts + '_' + safe + '.xml';
+    var ruta = ('PLD_XML_Avisos/' + ent + '/' + fname).split('/').map(encodeURIComponent).join('/');
+    var url = GRAPH + '/sites/' + App.siteId + '/drive/root:/' + ruta + ':/content';
+    fetch(url, {
+      method: 'PUT',
+      headers: { 'Authorization': 'Bearer ' + App.token, 'Content-Type': 'application/xml' },
+      body: contenido
+    }).then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d && d.id) {
+          toast('XML externo guardado en PLD_XML_Avisos/' + ent, 's');
+          if (d.webUrl) console.log('[XML EXTERNO] guardado:', d.webUrl);
+        } else {
+          console.warn('[XML EXTERNO] respuesta:', d);
+          toast('No se pudo guardar el XML','e');
+        }
+      })
+      .catch(function(err){ console.warn('[XML EXTERNO] error:', err); toast('Error al subir el XML','e'); });
+  };
+  reader.readAsText(file);
+}
+
 function guardarXMLEnSharePoint(xmlContent, nombreArchivo, op) {
   // Subir XML a OneDrive
   var carpeta = 'PLD_XML_Avisos/' + (op.entidad_id||'GEN');
