@@ -3548,6 +3548,38 @@ function htmlDomicilio(d, pref) {
     +'</div>';
 }
 
+// Domicilio en país extranjero: sin SEPOMEX, sin catálogo de estados (campo libre)
+function htmlDomicilioExt(d, pref) {
+  pref = pref || '';
+  return '<div class="fgrid">'
+    +secHdr('Domicilio '+(pref?'('+pref+')':''))
+    +fg('Pais',pref+'pais_dom',true)+'<select class="sel" name="'+pref+'pais_dom">'+optsPais(d[pref+'pais_dom']||'')+'</select></div>'
+    +'<div class="fg"><label class="lbl">Codigo postal</label>'
+    +'<input class="inp mono" name="'+pref+'cp" value="'+(d[pref+'cp']||'')+'" placeholder="Codigo postal del pais" maxlength="20"></div>'
+    +fiFull('Calle o vialidad',pref+'calle',d[pref+'calle']||'','Nombre de la calle, avenida o via',true)
+    +fg('Numero exterior',pref+'num_ext',true)+fi(pref+'num_ext',d[pref+'num_ext']||'','')
+    +fg('Numero interior',pref+'num_int',false)+fi(pref+'num_int',d[pref+'num_int']||'','Opcional')
+    +fg('Colonia o urbanizacion',pref+'colonia',false)+fi(pref+'colonia',d[pref+'colonia']||'','')
+    +fg('Demarcacion territorial o municipio',pref+'municipio',true)+fi(pref+'municipio',d[pref+'municipio']||'','')
+    +fg('Ciudad o poblacion',pref+'ciudad',false)+fi(pref+'ciudad',d[pref+'ciudad']||'','')
+    +fg('Estado / provincia / region',pref+'estado_ext',false)+fi(pref+'estado_ext',d[pref+'estado_ext']||'','')
+    +'</div>';
+}
+
+// Muestra/oculta el bloque de domicilio en México en PF Extranjera
+function toggleDomMx(val) {
+  var wrap = document.getElementById('dom-mx-datos');
+  if (wrap) wrap.style.display = (val === 'SI') ? 'block' : 'none';
+}
+
+// Validación de país de nacionalidad en PF Extranjera: bloquea selección de México
+function onPaisNacExtChange(sel) {
+  if (normPais(sel.value) === 'MEXICO') {
+    alert('No es posible seleccionar MÉXICO como país de nacionalidad en este formulario.\n\nLas personas de nacionalidad mexicana o extranjeros con residencia en México deben capturarse en:\n• Persona Física Mexicana (Anexo 3)\n• Persona Física Extranjera Residente (Anexo 3)');
+    sel.value = '';
+  }
+}
+
 // País del domicilio cambió: si es extranjero, fija Estado en "Otro" y muestra el campo de texto libre
 function onPaisDomChange(sel, pref) {
   var esExt = normPais(sel.value) !== 'MEXICO';
@@ -3617,12 +3649,20 @@ function htmlIdPF(d, pref, esMexicana) {
     +fiFull('Nombre(s)',pref+'nombre',d[pref+'nombre']||'','Sin abreviaturas',true)
     +fg('Fecha de nacimiento',pref+'fecha_nac',true)+fi(pref+'fecha_nac',d[pref+'fecha_nac']||'','DD-MM-AAAA')
     +fg('Pais de nacimiento',pref+'pais_nac',true)+fs(pref+'pais_nac',optsPais(d[pref+'pais_nac']||'Mexico'))
-    +fg('Pais de nacionalidad',pref+'pais_nac2',true)+fs(pref+'pais_nac2',optsPais(d[pref+'pais_nac2']||'Mexico'))
+    +fg('Pais de nacionalidad',pref+'pais_nac2',true)
+    +(esMexicana
+      ? fs(pref+'pais_nac2',optsPais(d[pref+'pais_nac2']||'Mexico'))
+      : '<select class="sel" name="'+pref+'pais_nac2" onchange="onPaisNacExtChange(this)">'
+        +optsPais(d[pref+'pais_nac2']||'')+'</select></div>')
     +(esMexicana?fg('RFC',pref+'rfc',false)+fi(pref+'rfc',d[pref+'rfc']||'','XXXX000000XX0','mono'):'')
     +(esMexicana?fg('CURP',pref+'curp',false)+fi(pref+'curp',d[pref+'curp']||'','18 caracteres','mono'):'')
-    +fg(tipoIdLabel,pref+'tipo_id',true)+fs(pref+'tipo_id',opts(LISTAS.tiposId,d[pref+'tipo_id']||''))
+    +(esMexicana
+      ? fg(tipoIdLabel,pref+'tipo_id',true)+fs(pref+'tipo_id',opts(LISTAS.tiposId,d[pref+'tipo_id']||''))
+      : fg(tipoIdLabel,pref+'tipo_id',true)+fi(pref+'tipo_id',d[pref+'tipo_id']||'','Ej: Pasaporte, Visa, Documento migratorio'))
     +fg('Numero de identificacion',pref+'num_id',true)+fi(pref+'num_id',d[pref+'num_id']||'','')
-    +fg('Autoridad que la emite',pref+'autoridad_id',true)+fs(pref+'autoridad_id',opts(LISTAS.autoridades,d[pref+'autoridad_id']||''))
+    +(esMexicana
+      ? fg('Autoridad que la emite',pref+'autoridad_id',true)+fs(pref+'autoridad_id',opts(LISTAS.autoridades,d[pref+'autoridad_id']||''))
+      : fg('Autoridad que la emite',pref+'autoridad_id',true)+fi(pref+'autoridad_id',d[pref+'autoridad_id']||'','Ej: Gobierno de Estados Unidos, Autoridad migratoria'))
     +fg('Numero(s) de telefono',pref+'telefono',true)+fi(pref+'telefono',d[pref+'telefono']||'','10 digitos')
     +fg('Correo electronico',pref+'email',false)+fi(pref+'email',d[pref+'email']||'','correo@dominio.com')
     +fg('Actividad economica (catalogo SAT - persona fisica)',pref+'actividad_pf',true)+fs(pref+'actividad_pf',optsActPF(d[pref+'actividad_pf']||'1000000'))
@@ -3765,15 +3805,21 @@ function htmlFormPF_EXT(d) {
     +fg('Fecha de vencimiento de estancia',null,false)+fi('fecha_venc_estancia',d.fecha_venc_estancia||'','DD-MM-AAAA')
     +'</div></div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Domicilio en pais de residencia</span></div>'
-    +htmlDomicilio(d,'res_')
+    +htmlDomicilioExt(d,'res_')
     +'</div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Domicilio en Mexico (si aplica)</span></div>'
     +'<div class="fgrid">'
     +secHdr('Domicilio nacional para recibir correspondencia')
     +'<div class="fg full"><label class="lbl">Cuenta con domicilio en Mexico</label>'
-    +'<select class="sel" name="tiene_dom_mx"><option value="NO"'+(d.tiene_dom_mx!=='SI'?' selected':'')+'>NO</option><option value="SI"'+(d.tiene_dom_mx==='SI'?' selected':'')+'>SI</option></select></div>'
-    +fiFull('Domicilio completo en Mexico (si aplica)','dom_mexico',d.dom_mexico||'','Calle, numero, colonia, ciudad, estado, CP')
-    +'</div></div>'
+    +'<select class="sel" name="tiene_dom_mx" onchange="toggleDomMx(this.value)">'
+    +'<option value="NO"'+(d.tiene_dom_mx!=='SI'?' selected':'')+'>NO</option>'
+    +'<option value="SI"'+(d.tiene_dom_mx==='SI'?' selected':'')+'>SI</option>'
+    +'</select></div>'
+    +'</div>'
+    +'<div id="dom-mx-datos" style="display:'+(d.tiene_dom_mx==='SI'?'block':'none')+';padding:0 0 4px">'
+    +htmlDomicilio(d,'mx_')
+    +'</div>'
+    +'</div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Declaracion de Dueno Beneficiario</span></div>'
     +htmlDuenoBen(d)
     +'</div>'
@@ -4053,6 +4099,11 @@ function validarCliente(frm, datos, tipo) {
   var bloq = [], faltan = [];
   var esPF = (tipo === 'PF_MEX' || tipo === 'PF_EXT');
   var lenRFC = esPF ? 13 : 12;
+
+  // PF Extranjera no puede tener nacionalidad MEXICO
+  if (tipo === 'PF_EXT' && normPais(datos.pais_nac2 || '') === 'MEXICO') {
+    bloq.push('El país de nacionalidad no puede ser MÉXICO en Persona Física Extranjera (Anexo 5). Capture al cliente en Persona Física Mexicana o Extranjera Residente (Anexo 3)');
+  }
 
   // RFC principal: 13 chars PF, 12 chars PM/fideicomiso
   var rfcV = (datos.rfc || '').trim();
