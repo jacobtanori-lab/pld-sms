@@ -165,6 +165,13 @@ tbody tr:hover td{background:#f4f3ef}
 .bc-hdr{background:#fafaf8;padding:10px 14px;font-size:12px;font-weight:600;color:var(--tx2);display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--brd)}
 .spin{width:28px;height:28px;border:2.5px solid var(--brd2);border-top-color:var(--az);border-radius:50%;animation:sp .7s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
+#pensador{display:none;position:fixed;inset:0;background:rgba(20,22,26,.5);backdrop-filter:blur(3px);z-index:10000;align-items:center;justify-content:center}
+#pensador.open{display:flex;animation:pensFade .18s ease-out}
+@keyframes pensFade{from{opacity:0}to{opacity:1}}
+.pens-box{background:#fff;border-radius:14px;padding:34px 44px;box-shadow:0 18px 60px rgba(0,0,0,.32);text-align:center;min-width:300px;max-width:min(90vw,440px)}
+.pens-spin{width:58px;height:58px;margin:0 auto 20px;border:5px solid var(--brd2);border-top-color:var(--az);border-radius:50%;animation:sp .8s linear infinite}
+.pens-msg{font-size:15px;font-weight:600;color:var(--tx);line-height:1.4}
+.pens-sub{font-size:12px;color:var(--tx3);line-height:1.5;margin-top:8px}
 #toast{position:fixed;bottom:20px;right:20px;z-index:9999;background:#1a1a18;color:#fff;padding:9px 16px;border-radius:var(--r);font-size:13px;opacity:0;transform:translateY(6px);transition:all .22s;pointer-events:none;max-width:380px}
 #toast.show{opacity:1;transform:translateY(0)}
 .mo-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:600;align-items:center;justify-content:center}
@@ -1705,6 +1712,43 @@ function toast(msg,tipo){
   el.textContent=msg;
   el.style.background=tipo==='e'?'#A32D2D':tipo==='s'?'#0F6E56':tipo==='w'?'#854F0B':'#1a1a18';
   el.classList.add('show'); setTimeout(function(){el.classList.remove('show');},4000);
+}
+
+// ── Pensador: indicador de proceso en curso ────────────────────────────────
+// Cubre la pantalla mientras corre un proceso, para que nadie dude si el
+// boton respondio (y para que no se pueda volver a pulsar).
+var _pensTimer = null;
+var PENS_SUB = 'Espera un momento. No cierres ni recargues esta pantalla.';
+function pensador(msg, sub) {
+  var ov = document.getElementById('pensador');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'pensador';
+    ov.innerHTML = '<div class="pens-box"><div class="pens-spin"></div>'
+      + '<div class="pens-msg" id="pens-msg"></div>'
+      + '<div class="pens-sub" id="pens-sub"></div></div>';
+    document.body.appendChild(ov);
+  }
+  pensadorPaso(msg);
+  var s = document.getElementById('pens-sub');
+  if (s) s.textContent = sub || PENS_SUB;
+  ov.classList.add('open');
+  // Red de seguridad: si un proceso nunca llama a pensadorOff (error de red,
+  // callback que no regresa), la pantalla no se queda bloqueada para siempre.
+  if (_pensTimer) clearTimeout(_pensTimer);
+  _pensTimer = setTimeout(function(){
+    pensadorOff();
+    toast('El proceso esta tardando mas de lo normal. Verifica el resultado antes de reintentar.', 'w');
+  }, 120000);
+}
+function pensadorPaso(msg) {
+  var m = document.getElementById('pens-msg');
+  if (m) m.textContent = msg || 'Procesando...';
+}
+function pensadorOff() {
+  if (_pensTimer) { clearTimeout(_pensTimer); _pensTimer = null; }
+  var ov = document.getElementById('pensador');
+  if (ov) ov.classList.remove('open');
 }
 function opts(arr,sel){var h='';(arr||[]).forEach(function(v){h+='<option value="'+v+'"'+(v===sel?' selected':'')+'>'+v+'</option>';});return h;}
 function hoy(){var d=new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());}
@@ -4145,6 +4189,34 @@ function validarCliente(frm, datos, tipo) {
   return { bloqueantes: bloq, faltantes: faltan };
 }
 
+// ── RFC unico por entidad ─────────────────────────────────────────────────
+// La LFPIORPI exige un solo expediente por cliente, pero el mismo cliente si
+// puede tener expediente en varias entidades (p.ej. cliente de CIN y de VAI),
+// asi que el cotejo es por entidad, no global.
+function _rfcNorm(v){ return String(v || '').replace(/[\s\-]/g, '').toUpperCase(); }
+// Solo un RFC bien formado dispara el cotejo: el campo "rfc" de PM simplificada
+// y de fideicomiso admite otros valores (fecha de creacion, o vacio).
+function _esRFC(v){ return /^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/.test(_rfcNorm(v)); }
+function clientePorRFC(rfc, entId, idExcluir, lista) {
+  if (!_esRFC(rfc)) return null;
+  var r = _rfcNorm(rfc), dup = null;
+  (lista || []).forEach(function(c){
+    if (dup) return;
+    if (idExcluir && String(c.id) === String(idExcluir)) return;   // el mismo expediente, al editar
+    if (String(c.entidad_id || '') !== String(entId || '')) return; // otra entidad: permitido
+    if (_rfcNorm(c.rfc) === r) dup = c;
+  });
+  return dup;
+}
+function _msgDupRFC(rfc, c) {
+  return 'Ya existe un expediente con el RFC ' + _rfcNorm(rfc) + ' en esta entidad:\n\n'
+    + '    ' + nStr(c.num_cliente) + ' — ' + nombreCliente(c) + '\n'
+    + '    Estatus: ' + (c.estatus || 'N/D') + '\n\n'
+    + 'La LFPIORPI exige un solo expediente por cliente: abre el expediente existente y actualizalo '
+    + 'en lugar de crear uno nuevo.\n\n'
+    + 'Si el cliente va a operar con otra entidad, cambia a esa entidad para crear ahi su expediente.';
+}
+
 function submitCliente(tipo, idEx) {
   // Bloquear creación en vista consolidada
   if (!idEx && App.entidadActual && App.entidadActual.id === 'TODAS') {
@@ -4183,6 +4255,15 @@ function submitCliente(tipo, idEx) {
     alert('No se puede guardar el expediente:\n\n• ' + val.bloqueantes.join('\n• '));
     return;
   }
+
+  // RFC duplicado en la misma entidad: cotejo rapido contra lo que ya esta en
+  // memoria, para avisar antes de entrar al screening (el cotejo definitivo,
+  // contra SharePoint, va mas abajo).
+  var entIdRfc = (idEx && App.entidadActual && App.entidadActual.id === 'TODAS' && App.clienteActual)
+    ? (App.clienteActual.entidad_id || '')
+    : (App.entidadActual ? App.entidadActual.id : '');
+  var dupRfc = clientePorRFC(datos.rfc, entIdRfc, idEx, App.clientes);
+  if (dupRfc) { alert(_msgDupRFC(datos.rfc, dupRfc)); return; }
   if (datos.estatus === 'Activo' && val.faltantes.length) {
     var msg = 'Para guardar en estatus ACTIVO faltan ' + val.faltantes.length + ' campo(s) obligatorio(s):\n\n• '
       + val.faltantes.slice(0, 12).join('\n• ')
@@ -4204,6 +4285,7 @@ function submitCliente(tipo, idEx) {
 
   // Asegurar que las listas de screening estén cargadas (última versión en SharePoint)
   // antes de cotejar — sin importar quién ni cuándo las cargó ese día.
+  pensador('Cotejando contra listas de sanciones y PEP...');
   cargarListasScreening(function(){
 
   // ── Rutina de aprobación: solo si los datos están completos ──
@@ -4234,6 +4316,7 @@ function submitCliente(tipo, idEx) {
   }
 
   // Obtener siguiente numero de cliente por entidad
+  pensadorPaso('Guardando el expediente...');
   spGet('PLD_Clientes', function(lista) {
     var entId = App.entidadActual ? App.entidadActual.id : '';
     var maxNum = 0;
@@ -4242,6 +4325,11 @@ function submitCliente(tipo, idEx) {
     });
 
     if (!idEx) {
+      // Cotejo definitivo contra la lista recien leida de SharePoint: atrapa el
+      // duplicado que otro usuario (u otra pestaña) acaba de crear.
+      var dup2 = clientePorRFC(datos.rfc, entId, null, lista);
+      if (dup2) { pensadorOff(); alert(_msgDupRFC(datos.rfc, dup2)); return; }
+
       datos.num_cliente = entId + '-' + String(maxNum + 1).padStart(4, '0');
       datos.fecha_registro = hoy();
     } else {
@@ -4263,6 +4351,7 @@ function submitCliente(tipo, idEx) {
 
     if (idEx) {
       spUpdate('PLD_Clientes', idEx, datos, function(r) {
+        pensadorOff();
         if (r) {
           subirConstanciaScreening(datos);   // re-cotejo: nueva constancia de busqueda
           if (evalAprob.dispara) {
@@ -4278,6 +4367,7 @@ function submitCliente(tipo, idEx) {
       });
     } else {
       spCreate('PLD_Clientes', datos, function(item) {
+        pensadorOff();
         if (item) {
           datos.num_cliente = item.num_cliente;
           _subirDocsPendientes(item.num_cliente, datos.Title || nombreClienteDatos(datos));
