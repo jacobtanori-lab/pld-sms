@@ -1151,21 +1151,21 @@ var _asesoresConfigId = null;
 var DOCS = {
   PF_MEX:    ['Identificacion oficial vigente','Constancia CURP','Constancia de Situacion Fiscal (RFC)',
                'Comprobante de domicilio (max 3 meses)','Formato de Conocimiento del Cliente',
-               'Constancia declaracion de Dueno Beneficiario','Cuestionario Ampliado PLD','Otros documentos soporte'],
+               'Constancia declaracion de Dueno Beneficiario','Cuestionario Ampliado PLD','Avisos y acuses','Otros documentos soporte'],
   PF_EXT:    ['Pasaporte vigente o documento migratorio INM','Documento migratorio (forma migratoria)',
                'Comprobante de domicilio','Formato de Conocimiento del Cliente',
-               'Constancia declaracion de Dueno Beneficiario','Cuestionario Ampliado PLD','Otros documentos soporte'],
+               'Constancia declaracion de Dueno Beneficiario','Cuestionario Ampliado PLD','Avisos y acuses','Otros documentos soporte'],
   PM_MEX:    ['Acta constitutiva (testimonio o copia certificada)','Cedula de Identificacion Fiscal (SAT)',
                'Comprobante de domicilio (max 3 meses)','Poder notarial del representante legal',
                'Identificacion del representante legal','Constancia declaracion de Dueno Beneficiario',
                'Constancia de Beneficiario Controlador','Formato de Conocimiento del Cliente',
-               'Cuestionario Ampliado PLD','Otros documentos soporte'],
+               'Cuestionario Ampliado PLD','Avisos y acuses','Otros documentos soporte'],
   PM_SIMP:   ['Documento que acredite existencia legal','Cedula de Identificacion Fiscal (SAT)',
                'Comprobante de domicilio','Identificacion del representante / funcionario',
-               'Formato de Conocimiento del Cliente','Otros documentos soporte'],
+               'Formato de Conocimiento del Cliente','Avisos y acuses','Otros documentos soporte'],
   FIDEICOMISO:['Testimonio o acta constitutiva del fideicomiso','Cedula de Identificacion Fiscal del fideicomiso',
                'Poder del delegado fiduciario (si no esta en acta)','Identificacion del delegado fiduciario',
-               'Formato de Conocimiento del Cliente','Cuestionario Ampliado PLD','Otros documentos soporte']
+               'Formato de Conocimiento del Cliente','Cuestionario Ampliado PLD','Avisos y acuses','Otros documentos soporte']
 };
 
 // ================================================================
@@ -5128,13 +5128,13 @@ function seccionAtencionAlerta(a) {
     +'</select></div>'
     +'<div class="fg full"><label class="lbl">Cargar acuse de recepcion SAT (PDF)</label>'
     +'<label class="btn" style="cursor:pointer">Seleccionar PDF'
-    +'<input type="file" accept=".pdf" style="display:none" class="acuse-file-input" data-altid="'+a.id+'">'
+    +'<input type="file" accept=".pdf" style="display:none" class="acuse-file-input" data-altid="'+a.id+'" data-cliid="'+(a.id_cliente_ref||'')+'" data-num="'+(a.num_cliente||'')+'">'
     +'</label>'
     +(a.url_acuse?'<a href="'+a.url_acuse+'" target="_blank" class="btn btn-g btn-sm" style="margin-top:6px">Ver acuse SAT</a>':'')
     +'<span class="fhint">El estatus cambia a "Reportada" solo al cargar el acuse de recepcion.</span></div>'
     +'<div class="fg full"><label class="lbl">Cargar XML del aviso (si se genero fuera del sistema)</label>'
     +'<label class="btn" style="cursor:pointer">Seleccionar XML'
-    +'<input type="file" accept=".xml,text/xml,application/xml" style="display:none" onchange="subirXMLAlerta(this,\''+a.id+'\',\''+(a.entidad_id||'')+'\')"></label>'
+    +'<input type="file" accept=".xml,text/xml,application/xml" style="display:none" onchange="subirXMLAlerta(this,\''+a.id+'\',\''+(a.entidad_id||'')+'\',\''+(a.id_cliente_ref||'')+'\',\''+(a.num_cliente||'')+'\')"></label>'
     +(a.url_xml_aviso?' <a href="'+a.url_xml_aviso+'" target="_blank" class="btn btn-g btn-sm" style="margin-top:6px">Ver XML del aviso</a>':'')
     +'<span class="fhint">Opcional. No cambia el estatus; se guarda junto a los XML del sistema.</span></div>'
     +'<div class="fg full" style="display:flex;justify-content:flex-end;gap:8px">'
@@ -5236,6 +5236,8 @@ function marcarOpsReportadasDeAlerta(alerta, folio) {
 
 function subirAcuseSAT(input, alertaId, nomCliente) {
   var file = input.files[0]; if(!file) return;
+  // Cliente de la alerta: el acuse se guarda en la carpeta de su expediente
+  var cliAlerta = _clientePorRef(input.getAttribute('data-cliid'), input.getAttribute('data-num'));
   toast('Procesando acuse...','i');
   // Leer folio y fecha de envio del acuse (texto o OCR) y prellenar los campos antes de subir
   extraerFolioAcuse(file, function(datos){
@@ -5259,17 +5261,19 @@ function subirAcuseSAT(input, alertaId, nomCliente) {
       if (datos.estatus) partes.push(datos.estatus);
       toast('Detectado — '+partes.join(' · '),'s');
     }
-    _subirAcusePDF(file, alertaId, nomCliente, datos.folio, datos.fecha, datos.estatus);
+    _subirAcusePDF(file, alertaId, nomCliente, datos.folio, datos.fecha, datos.estatus, cliAlerta);
   });
 }
 
-function _subirAcusePDF(file, alertaId, nomCliente, folioDetectado, fechaDetectada, estatusDetectado) {
+function _subirAcusePDF(file, alertaId, nomCliente, folioDetectado, fechaDetectada, estatusDetectado, cliAlerta) {
   toast('Subiendo acuse SAT...','i');
   var reader = new FileReader();
   reader.onload = function(e) {
-    var carpeta = 'PLD_Acuses/'+String(nomCliente||'cliente').replace(/[^a-zA-Z0-9_]/g,'_').substring(0,30);
-    var nombre = 'AcuseSAT_'+alertaId+'_'+file.name;
-    var url = GRAPH+'/sites/'+App.siteId+'/drive/root:/'+carpeta+'/'+nombre+':/content';
+    // Carpeta del expediente del cliente; si la alerta no tiene cliente ligado, carpeta generica
+    var carpetaCli = carpetaExpediente(cliAlerta);
+    var carpeta = carpetaCli || ('PLD_Acuses/'+String(nomCliente||'cliente').replace(/[^a-zA-Z0-9_]/g,'_').substring(0,30));
+    var nombre  = (carpetaCli ? 'Avisos_y_acuses_Acuse_' : 'AcuseSAT_') + alertaId + '_' + file.name;
+    var url = GRAPH+'/sites/'+App.siteId+'/drive/root:/'+_rutaDrive(carpeta, nombre)+':/content';
     fetch(url, {
       method:'PUT',
       headers:{'Authorization':'Bearer '+App.token,'Content-Type':'application/pdf'},
@@ -5384,7 +5388,7 @@ function extraerFolioAcuse(file, cb) {
 // Sube un XML de aviso generado FUERA del sistema, desde la seccion de atencion
 // de la alerta. Se guarda en la misma carpeta que los del sistema (PLD_XML_Avisos/{entidad})
 // y se adjunta a la alerta. NO cambia el estatus: solo el acuse marca "Reportada".
-function subirXMLAlerta(input, alertaId, entidadId) {
+function subirXMLAlerta(input, alertaId, entidadId, idCliRef, numCliRef) {
   var file = input.files && input.files[0];
   input.value = '';
   if (!file) return;
@@ -5392,13 +5396,16 @@ function subirXMLAlerta(input, alertaId, entidadId) {
     toast('Selecciona un archivo .xml','e'); return;
   }
   var ent = entidadId || (App.entidadActual && App.entidadActual.id !== 'TODAS' ? App.entidadActual.id : 'GEN');
+  // Preferir la carpeta del expediente del cliente de la alerta
+  var carpetaCli = carpetaExpediente(_clientePorRef(idCliRef, numCliRef));
   toast('Subiendo XML del aviso...','i');
   var reader = new FileReader();
   reader.onload = function(e) {
     var safe = String(file.name).replace(/\.xml$/i,'').replace(/[^a-zA-Z0-9_\-]/g,'_').substring(0,50) || 'aviso';
     var ts = new Date().toISOString().replace(/[:.]/g,'-').substring(0,19);
-    var fname = 'EXTERNO_' + ts + '_' + safe + '.xml';
-    var ruta = ('PLD_XML_Avisos/' + ent + '/' + fname).split('/').map(encodeURIComponent).join('/');
+    var carpeta = carpetaCli || ('PLD_XML_Avisos/' + ent);
+    var fname = (carpetaCli ? 'Avisos_y_acuses_XML_EXTERNO_' : 'EXTERNO_') + ts + '_' + safe + '.xml';
+    var ruta = _rutaDrive(carpeta, fname);
     var url = GRAPH + '/sites/' + App.siteId + '/drive/root:/' + ruta + ':/content';
     fetch(url, { method:'PUT', headers:{'Authorization':'Bearer '+App.token,'Content-Type':'application/xml'}, body:e.target.result })
       .then(function(r){ return r.json(); })
@@ -6598,11 +6605,34 @@ function generarXML_ARI(op, cli, ent) {
   return xml;
 }
 
+// ── CARPETA DEL EXPEDIENTE ──────────────────────────────────
+// Resuelve el cliente por id o num, y arma la MISMA carpeta que usa el tab Documentos.
+function _clientePorRef(idCli, numCli) {
+  var cli = null;
+  (App.clientes||[]).forEach(function(c){
+    if (idCli && String(c.id) === String(idCli)) cli = c;
+    else if (!cli && numCli && String(c.num_cliente) === String(numCli)) cli = c;
+  });
+  return cli;
+}
+function carpetaExpediente(cli) {
+  if (!cli || (!cli.num_cliente && cli.num_cliente !== 0)) return '';
+  var nom = nombreCliente(cli).replace(/[^a-zA-Z0-9_\-]/g,'_').substring(0,40);
+  return 'PLD_Documentos/' + nStr(cli.num_cliente) + '_' + nom;
+}
+function _rutaDrive(carpeta, nombre) {
+  return (carpeta + '/' + nombre).split('/').map(encodeURIComponent).join('/');
+}
+
 // ── GUARDAR XML EN SHAREPOINT Y VINCULAR A ALERTA ───────────
 function guardarXMLEnSharePoint(xmlContent, nombreArchivo, op) {
-  // Subir XML a OneDrive
-  var carpeta = 'PLD_XML_Avisos/' + (op.entidad_id||'GEN');
-  var url = GRAPH + '/sites/' + App.siteId + '/drive/root:/' + carpeta + '/' + nombreArchivo + ':/content';
+  // El XML del aviso se guarda en la carpeta del EXPEDIENTE del cliente.
+  // Si el aviso no tiene cliente ligado (registros antiguos), cae a la carpeta por entidad.
+  var cliOp = _clientePorRef(op.id_cliente_ref || op.cliente_ref, op.num_cliente);
+  var carpetaCli = carpetaExpediente(cliOp);
+  var carpeta = carpetaCli || ('PLD_XML_Avisos/' + (op.entidad_id||'GEN'));
+  var nombre  = carpetaCli ? ('Avisos_y_acuses_' + nombreArchivo) : nombreArchivo;
+  var url = GRAPH + '/sites/' + App.siteId + '/drive/root:/' + _rutaDrive(carpeta, nombre) + ':/content';
 
   fetch(url, {
     method: 'PUT',
