@@ -1733,8 +1733,14 @@ function pensador(msg, sub) {
   var s = document.getElementById('pens-sub');
   if (s) s.textContent = sub || PENS_SUB;
   ov.classList.add('open');
-  // Red de seguridad: si un proceso nunca llama a pensadorOff (error de red,
-  // callback que no regresa), la pantalla no se queda bloqueada para siempre.
+  _pensArma();
+}
+// Red de seguridad: si un proceso nunca llama a pensadorOff (error de red,
+// callback que no regresa), la pantalla no se queda bloqueada para siempre.
+// Mide INACTIVIDAD, no duracion total: cada paso reinicia la cuenta, para no
+// cortar un proceso largo pero sano (p.ej. el reporte de expedientes, que hace
+// una llamada por cliente).
+function _pensArma() {
   if (_pensTimer) clearTimeout(_pensTimer);
   _pensTimer = setTimeout(function(){
     pensadorOff();
@@ -1744,6 +1750,7 @@ function pensador(msg, sub) {
 function pensadorPaso(msg) {
   var m = document.getElementById('pens-msg');
   if (m) m.textContent = msg || 'Procesando...';
+  if (_pensTimer) _pensArma();   // hubo avance: reinicia la red de seguridad
 }
 function pensadorOff() {
   if (_pensTimer) { clearTimeout(_pensTimer); _pensTimer = null; }
@@ -5328,7 +5335,7 @@ function subirAcuseSAT(input, alertaId, nomCliente) {
   var file = input.files[0]; if(!file) return;
   // Cliente de la alerta: el acuse se guarda en la carpeta de su expediente
   var cliAlerta = _clientePorRef(input.getAttribute('data-cliid'), input.getAttribute('data-num'));
-  toast('Procesando acuse...','i');
+  pensador('Leyendo el acuse...');
   // Leer folio y fecha de envio del acuse (texto o OCR) y prellenar los campos antes de subir
   extraerFolioAcuse(file, function(datos){
     datos = datos || {};
@@ -5356,7 +5363,7 @@ function subirAcuseSAT(input, alertaId, nomCliente) {
 }
 
 function _subirAcusePDF(file, alertaId, nomCliente, folioDetectado, fechaDetectada, estatusDetectado, cliAlerta) {
-  toast('Subiendo acuse SAT...','i');
+  pensadorPaso('Subiendo el acuse...');
   var reader = new FileReader();
   reader.onload = function(e) {
     // Carpeta del expediente del cliente; si la alerta no tiene cliente ligado, carpeta generica
@@ -5374,7 +5381,7 @@ function _subirAcusePDF(file, alertaId, nomCliente, folioDetectado, fechaDetecta
         spGet('PLD_Alertas', function(lista) {
           var a = null;
           lista.forEach(function(x){ if(String(x.id)===String(alertaId)) a=x; });
-          if (!a) return;
+          if (!a) { pensadorOff(); toast('El acuse se subio, pero no se encontro la alerta para adjuntarlo','e'); return; }
           var estatusAnterior = a.estatus_atencion || 'Pendiente';
           // Folio y fecha de envio: lo que el usuario tenga en el campo, o lo detectado, o lo ya guardado
           var campo   = document.querySelector('[name="alt-folio-acuse"]');
@@ -5390,6 +5397,7 @@ function _subirAcusePDF(file, alertaId, nomCliente, folioDetectado, fechaDetecta
           if (fechaFinal) a.fecha_envio_aviso = fechaFinal;
           if (estatusFinal) a.estatus_envio_aviso = estatusFinal;
           spUpdate('PLD_Alertas', alertaId, a, function(){
+            pensadorOff();
             toast('Acuse SAT cargado — estatus cambiado a Reportada','s');
             renderFichaAlerta(a);
             // Marcar ops del cliente como reportadas si el estatus cambia a Reportada
@@ -5398,8 +5406,8 @@ function _subirAcusePDF(file, alertaId, nomCliente, folioDetectado, fechaDetecta
             }
           });
         });
-      } else { toast('Error al subir acuse','e'); }
-    }).catch(function(){ toast('Error al subir acuse','e'); });
+      } else { pensadorOff(); toast('Error al subir acuse','e'); }
+    }).catch(function(){ pensadorOff(); toast('Error al subir acuse','e'); });
   };
   reader.readAsArrayBuffer(file);
 }
@@ -5448,13 +5456,13 @@ function extraerFolioAcuse(file, cb) {
               var datos = _datosAcuse(texto);
               if (datos.folio || datos.fecha || datos.estatus) { cb(datos); return; }   // acuse digital
               // acuse escaneado (sin texto) -> OCR de la pagina
-              toast('Acuse escaneado: leyendo con OCR...','i');
+              pensadorPaso('Acuse escaneado: leyendo con OCR...');
               var vp = page.getViewport({scale:2.5});
               var canvas = document.createElement('canvas');
               canvas.width = vp.width; canvas.height = vp.height;
               page.render({canvasContext:canvas.getContext('2d'), viewport:vp}).promise.then(function(){
                 _preprocesarImagen(canvas, function(cvs){
-                  Tesseract.recognize(cvs, 'spa', {logger:function(mm){ if(mm.status==='recognizing text') toast('OCR acuse: '+Math.round((mm.progress||0)*100)+'%...','i'); }})
+                  Tesseract.recognize(cvs, 'spa', {logger:function(mm){ if(mm.status==='recognizing text') pensadorPaso('Leyendo el acuse con OCR: '+Math.round((mm.progress||0)*100)+'%...'); }})
                     .then(function(r){ cb(_datosAcuse(r.data.text)); })
                     .catch(function(){ cb({}); });
                 });
@@ -5467,7 +5475,7 @@ function extraerFolioAcuse(file, cb) {
     } else if (window.Tesseract) {
       // Imagen suelta (jpg/png)
       _preprocesarImagen(URL.createObjectURL(file), function(canvas){
-        Tesseract.recognize(canvas, 'spa', {logger:function(mm){ if(mm.status==='recognizing text') toast('OCR acuse: '+Math.round((mm.progress||0)*100)+'%...','i'); }})
+        Tesseract.recognize(canvas, 'spa', {logger:function(mm){ if(mm.status==='recognizing text') pensadorPaso('Leyendo el acuse con OCR: '+Math.round((mm.progress||0)*100)+'%...'); }})
           .then(function(r){ cb(_datosAcuse(r.data.text)); })
           .catch(function(){ cb({}); });
       });
@@ -5488,7 +5496,7 @@ function subirXMLAlerta(input, alertaId, entidadId, idCliRef, numCliRef) {
   var ent = entidadId || (App.entidadActual && App.entidadActual.id !== 'TODAS' ? App.entidadActual.id : 'GEN');
   // Preferir la carpeta del expediente del cliente de la alerta
   var carpetaCli = carpetaExpediente(_clientePorRef(idCliRef, numCliRef));
-  toast('Subiendo XML del aviso...','i');
+  pensador('Subiendo el XML del aviso...');
   var reader = new FileReader();
   reader.onload = function(e) {
     var safe = String(file.name).replace(/\.xml$/i,'').replace(/[^a-zA-Z0-9_\-]/g,'_').substring(0,50) || 'aviso';
@@ -5500,21 +5508,22 @@ function subirXMLAlerta(input, alertaId, entidadId, idCliRef, numCliRef) {
     fetch(url, { method:'PUT', headers:{'Authorization':'Bearer '+App.token,'Content-Type':'application/xml'}, body:e.target.result })
       .then(function(r){ return r.json(); })
       .then(function(d){
-        if (!(d && d.id)) { console.warn('[XML ALERTA]', d); toast('No se pudo subir el XML','e'); return; }
+        if (!(d && d.id)) { pensadorOff(); console.warn('[XML ALERTA]', d); toast('No se pudo subir el XML','e'); return; }
         spGet('PLD_Alertas', function(lista) {
           var a = null;
           lista.forEach(function(x){ if(String(x.id)===String(alertaId)) a=x; });
-          if (!a) { toast('XML guardado','s'); return; }
+          if (!a) { pensadorOff(); toast('XML guardado','s'); return; }
           a.url_xml_aviso    = d.webUrl || '';
           a.xml_aviso_nombre = file.name;
           a.fecha_xml_aviso  = hoy();
           spUpdate('PLD_Alertas', alertaId, a, function(){
+            pensadorOff();
             toast('XML del aviso cargado y adjunto a la alerta','s');
             renderFichaAlerta(a);
           });
         });
       })
-      .catch(function(err){ console.warn('[XML ALERTA]', err); toast('Error al subir el XML','e'); });
+      .catch(function(err){ pensadorOff(); console.warn('[XML ALERTA]', err); toast('Error al subir el XML','e'); });
   };
   reader.readAsText(file);
 }
@@ -6267,6 +6276,7 @@ function generarXML(opId) {
       if (_fiA && _ftA && _ftA < _fiA) {
         toast('La fecha de termino del arrendamiento no puede ser anterior a la fecha de inicio.','e'); return;
       }
+      pensador('Generando el aviso XML...');
       var xmlARI = generarXML_ARI(op, cli, ent);
       var mesRepARI = op.fecha_operacion ? op.fecha_operacion.replace(/-/g,'').substring(0,6)
         : new Date().getFullYear()+pad(new Date().getMonth()+1);
@@ -6304,6 +6314,7 @@ function generarXML(opId) {
       toast('Falta la descripcion de la alerta (obligatoria cuando el tipo de alerta no es "100 - Sin alerta").','e'); return;
     }
 
+    pensador('Generando el aviso XML...');
     var xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
     xml += '<archivo xsi:schemaLocation="http://www.uif.shcp.gob.mx/recepcion/inm inm.xsd"';
     xml += ' xmlns="http://www.uif.shcp.gob.mx/recepcion/inm"';
@@ -6718,6 +6729,7 @@ function _rutaDrive(carpeta, nombre) {
 function guardarXMLEnSharePoint(xmlContent, nombreArchivo, op) {
   // El XML del aviso se guarda en la carpeta del EXPEDIENTE del cliente.
   // Si el aviso no tiene cliente ligado (registros antiguos), cae a la carpeta por entidad.
+  pensadorPaso('Guardando el XML en el expediente...');
   var cliOp = _clientePorRef(op.id_cliente_ref || op.cliente_ref, op.num_cliente);
   var carpetaCli = carpetaExpediente(cliOp);
   var carpeta = carpetaCli || ('PLD_XML_Avisos/' + (op.entidad_id||'GEN'));
@@ -6733,7 +6745,14 @@ function guardarXMLEnSharePoint(xmlContent, nombreArchivo, op) {
     body: xmlContent
   }).then(function(r){ return r.json(); })
   .then(function(d) {
-    if (!d || !d.webUrl) return;
+    // Hasta ahora esto fallaba en silencio: el XML ya se habia descargado, asi
+    // que el usuario daba por hecho que tambien quedo archivado en el expediente.
+    if (!d || !d.webUrl) {
+      pensadorOff();
+      console.warn('[XML AVISO] respuesta inesperada:', d);
+      toast('El XML se descargo, pero no se pudo guardar en el expediente del cliente. Subelo manualmente.','e');
+      return;
+    }
     var urlXML = d.webUrl;
     console.log('XML guardado en SharePoint:', urlXML);
 
@@ -6741,6 +6760,7 @@ function guardarXMLEnSharePoint(xmlContent, nombreArchivo, op) {
     op.url_xml = urlXML;
     op.fecha_xml = hoy();
     spUpdate('PLD_Operaciones', op.id, op, null);
+    pensadorOff();
 
     // Si el aviso tiene alerta origen, actualizar esa alerta con la URL del XML
     if (op.ref_alerta_origen) {
@@ -6758,7 +6778,9 @@ function guardarXMLEnSharePoint(xmlContent, nombreArchivo, op) {
       });
     }
   }).catch(function(e) {
+    pensadorOff();
     console.error('Error guardando XML en SharePoint:', e);
+    toast('El XML se descargo, pero no se pudo guardar en el expediente del cliente. Subelo manualmente.','e');
   });
 }
 
@@ -7980,7 +8002,7 @@ function descargarLayoutOps() {
 function cargarLayoutExcel(input) {
   var file = input.files[0]; if(!file) return;
   var fraccion = App._fraccionOps || 'INM';
-  toast('Procesando archivo...');
+  pensador('Leyendo el archivo...');
 
   var reader = new FileReader();
   reader.onload = function(e) {
@@ -7993,13 +8015,14 @@ function cargarLayoutExcel(input) {
         var script = document.createElement('script');
         script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
         script.onload = function() { procesarExcel(data, fraccion); };
-        script.onerror = function() { toast('No se pudo cargar el procesador de Excel. Usa formato CSV.', 'e'); };
+        script.onerror = function() { pensadorOff(); toast('No se pudo cargar el procesador de Excel. Usa formato CSV.', 'e'); };
         document.head.appendChild(script);
       } else {
         procesarExcel(data, fraccion);
       }
     } catch(err) {
       console.error(err);
+      pensadorOff();
       toast('Error al leer el archivo: ' + err.message, 'e');
     }
   };
@@ -8146,19 +8169,20 @@ function procesarExcel(data, fraccion) {
       });
     }
 
-    if (!registros.length) { toast('No se encontraron registros con datos en el archivo', 'e'); return; }
+    if (!registros.length) { pensadorOff(); toast('No se encontraron registros con datos en el archivo', 'e'); return; }
 
     // Detectar y alertar pagos en efectivo sobre umbral
     var umbral = CFG_UMA.DIARIA * CFG_UMA.UMBRAL_UMAS;
     var alertas = 0;
 
-    toast('Guardando ' + registros.length + ' registros...');
+    pensadorPaso('Guardando ' + registros.length + ' registros...');
     var guardados = 0;
     registros.forEach(function(datos, idx) {
       datos.Title = 'LIQ-EXCEL-' + Date.now() + '-' + idx;
 
       spCreate('PLD_Ops_Liq', datos, function() {
         guardados++;
+        pensadorPaso('Guardando registro ' + guardados + ' de ' + registros.length + '...');
         // Verificar umbrales por cada registro usando el motor central
         verificarUmbralesCliente(
           datos.id_cliente_ref, datos.nombre_cliente, datos.num_cliente,
@@ -8169,6 +8193,7 @@ function procesarExcel(data, fraccion) {
           datos.id_cliente_ref, datos.nombre_cliente, datos.num_cliente, datos.fecha_pago, null
         );
         if (guardados === registros.length) {
+          pensadorOff();
           toast(guardados + ' registros importados de "' + sheetName + '"', 's');
           pgOps();
         }
@@ -8177,6 +8202,7 @@ function procesarExcel(data, fraccion) {
 
   } catch(err) {
     console.error('procesarExcel error:', err);
+    pensadorOff();
     toast('Error al procesar Excel: ' + err.message, 'e');
   }
 }
@@ -8623,12 +8649,12 @@ function cargarSheetJS(cb) {
 }
 
 function exportarClientesXLS() {
-  toast('Cargando librería de exportación...', 'i');
+  pensador('Cargando la libreria de exportacion...');
   cargarSheetJS(function() { _generarXLSX(); });
 }
 
 function _generarXLSX() {
-  toast('Generando reporte, espera...', 'i');
+  pensadorPaso('Generando el reporte Clientes 360...');
   var entId = App.entidadActual ? App.entidadActual.id : null;
   var esConsolidada = entId === 'TODAS' || !entId;
 
@@ -8766,6 +8792,7 @@ function _generarXLSX() {
     XLSX.utils.book_append_sheet(wb, wsInfo, 'Info');
 
     var nombre = 'Clientes_360_PLD_'+(esConsolidada?'TODAS':entId)+'_'+fecha.replace(/-/g,'')+'.xlsx';
+    pensadorOff();
     XLSX.writeFile(wb, nombre);
     toast('Reporte 360 exportado: '+clientes.length+' clientes, '+filasAlt.length+' alertas', 's');
   }
@@ -8778,12 +8805,12 @@ function _generarXLSX() {
 }
 
 function exportarOpsLiqXLS() {
-  toast('Cargando librería de exportación...', 'i');
+  pensador('Cargando la libreria de exportacion...');
   cargarSheetJS(function() { _generarOpsLiqXLSX(); });
 }
 
 function _generarOpsLiqXLSX() {
-  toast('Generando reporte de operaciones, espera...', 'i');
+  pensadorPaso('Generando el reporte de operaciones...');
   var entId = App.entidadActual ? App.entidadActual.id : null;
   var esConsolidada = entId === 'TODAS' || !entId;
 
@@ -8883,6 +8910,7 @@ function _generarOpsLiqXLSX() {
     XLSX.utils.book_append_sheet(wb, wsInfo, 'Info');
 
     var nombre = 'Operaciones_Liq_'+(esConsolidada?'TODAS':entId)+'_'+fecha.replace(/-/g,'')+'.xlsx';
+    pensadorOff();
     XLSX.writeFile(wb, nombre);
     toast('Reporte exportado: '+filas.length+' operaciones', 's');
   }
@@ -8909,11 +8937,11 @@ function _xlsxHoja(cols, filas) {
 //  EXPORTACIÓN XLSX — REPORTE DE ALERTAS
 // ================================================================
 function exportarAlertasXLS() {
-  toast('Cargando libreria de exportacion...', 'i');
+  pensador('Cargando la libreria de exportacion...');
   cargarSheetJS(function(){ _generarAlertasXLSX(); });
 }
 function _generarAlertasXLSX() {
-  toast('Generando reporte de alertas...', 'i');
+  pensadorPaso('Generando el reporte de alertas...');
   var entId = App.entidadActual ? App.entidadActual.id : null;
   var esConsolidada = entId === 'TODAS' || !entId;
   spGet('PLD_Alertas', function(lista) {
@@ -8949,6 +8977,7 @@ function _generarAlertasXLSX() {
     ]);
     wsInfo['!cols'] = [{wch:34},{wch:30}];
     XLSX.utils.book_append_sheet(wb, wsInfo, 'Info');
+    pensadorOff();
     XLSX.writeFile(wb, 'Alertas_PLD_'+(esConsolidada?'TODAS':entId)+'_'+fecha.replace(/-/g,'')+'.xlsx');
     toast('Reporte de alertas exportado: '+filas.length+' alertas', 's');
   });
@@ -8958,17 +8987,18 @@ function _generarAlertasXLSX() {
 //  EXPORTACIÓN XLSX — REPORTE DE EXPEDIENTES (% de avance documental)
 // ================================================================
 function exportarExpedientesXLS() {
-  toast('Cargando libreria de exportacion...', 'i');
+  pensador('Cargando la libreria de exportacion...');
   cargarSheetJS(function(){ _generarExpedientesXLSX(); });
 }
 function _generarExpedientesXLSX() {
+  pensadorPaso('Generando el reporte de expedientes...');
   var entId = App.entidadActual ? App.entidadActual.id : null;
   var esConsolidada = entId === 'TODAS' || !entId;
   spGet('PLD_Clientes', function(todos) {
     var clientes = todos || [];
     if (!esConsolidada) clientes = clientes.filter(function(c){ return c.entidad_id===entId; });
     else clientes = filtrarPermitidas(clientes);
-    if (!clientes.length) { toast('No hay clientes para el reporte','w'); return; }
+    if (!clientes.length) { pensadorOff(); toast('No hay clientes para el reporte','w'); return; }
 
     function asesorNom(c){
       if (c.asesor_nombre) return c.asesor_nombre;
@@ -8985,7 +9015,7 @@ function _generarExpedientesXLSX() {
     function siguiente() {
       if (i >= clientes.length) { _finExpedientes(filas, esConsolidada, entId); return; }
       var c = clientes[i];
-      toast('Revisando expediente '+(i+1)+' de '+clientes.length+'...','i');
+      pensadorPaso('Revisando expediente '+(i+1)+' de '+clientes.length+'...');
       var nom = nombreCliente(c).replace(/[^a-zA-Z0-9_\-]/g,'_').substring(0,40);
       var carpeta = 'PLD_Documentos/'+nStr(c.num_cliente)+'_'+nom;
       var obligatorios = obligatoriosDe(c);
@@ -9003,7 +9033,7 @@ function _generarExpedientesXLSX() {
         i++; siguiente();
       });
     }
-    toast('Generando reporte de expedientes ('+clientes.length+' clientes)...','i');
+    pensadorPaso('Generando el reporte de expedientes ('+clientes.length+' clientes)...');
     siguiente();
   });
 }
@@ -9021,6 +9051,7 @@ function _finExpedientes(filas, esConsolidada, entId) {
   ]);
   wsInfo['!cols'] = [{wch:34},{wch:30}];
   XLSX.utils.book_append_sheet(wb, wsInfo, 'Info');
+  pensadorOff();
   XLSX.writeFile(wb, 'Expedientes_PLD_'+(esConsolidada?'TODAS':entId)+'_'+fecha.replace(/-/g,'')+'.xlsx');
   toast('Reporte de expedientes exportado: '+filas.length+' clientes', 's');
 }
