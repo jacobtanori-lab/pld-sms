@@ -3351,50 +3351,250 @@ function pgDash() {
     +'<div class="sb-item" onclick="irA(\'reportes\')">Reportes</div>'
     +'<div class="sb-item" onclick="irA(\'operaciones\')">Operaciones</div>');
   setMain('<div class="phdr"><div><div class="ptit">Panel principal</div><div class="psub">PLD/FT - LFPIORPI - Actividad vulnerable</div></div></div>'
-    +'<div id="dash-b"><div class="empty"><div class="spin" style="margin:0 auto 10px"></div>Cargando...</div></div>');
-  spGet('PLD_Clientes', function(listaAll) {
-    var lista = listaAll || [];
-    if (App.entidadActual && App.entidadActual.id !== 'TODAS') {
-      lista = lista.filter(function(c){ return c.entidad_id === App.entidadActual.id; });
-    } else {
-      lista = filtrarPermitidas(lista);
-    }
-    App.clientes = lista;
-    var total=lista.length,activos=0,alto=0,peps=0,prospectos=0;
-    lista.forEach(function(c){
-      if(c.estatus==='Activo')activos++;
-      if(c.riesgo==='Alto')alto++;
-      if(c.estatus==='Prospecto')prospectos++;
-      if(['Activo','Familiar','Relacionado a PEP'].indexOf(c.estatus_pep||'')>=0)peps++;
-    });
-    var hoyD=new Date(), d17=new Date(hoyD.getFullYear(),hoyD.getMonth()+1,17);
-    var dias=Math.ceil((d17-hoyD)/864e5);
-    var dc=dias<=5?'c-rj':dias<=15?'c-am':'c-vd';
-    document.getElementById('dash-b').innerHTML=
-      '<div class="mets">'
-      +'<div class="met"><div class="m-l">Total clientes</div><div class="m-v c-az">'+total+'</div><div class="m-s">Activos: '+activos+'</div></div>'
-      +'<div class="met"><div class="m-l">Riesgo alto</div><div class="m-v c-rj">'+alto+'</div><div class="m-s">PEPs activos: '+peps+'</div></div>'
-      +'<div class="met"><div class="m-l">Prospectos</div><div class="m-v c-am">'+prospectos+'</div></div>'
-      +'<div class="met"><div class="m-l">Prox. vencimiento</div><div class="m-v '+dc+'">'+dias+' dias</div><div class="m-s">Aviso SPPLD</div></div>'
-      +'</div>'
-      +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">'
-      +'<div class="card"><div class="card-h"><span class="card-t">Accesos rapidos</span></div>'
-      +'<div class="card-b" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
-      +'<button class="btn" onclick="abrirNuevoCliente()">+ Nuevo cliente</button>'
-      +'<button class="btn" onclick="irA(\'clientes\')">Ver clientes</button>'
-      +'<button class="btn" onclick="irA(\'alertas\')">Alertas</button>'
-      +'<button class="btn" onclick="irA(\'reportes\')">Reportes</button>'
-      +'</div></div>'
-      +'<div class="card"><div class="card-h"><span class="card-t">Distribucion de riesgo EBR</span></div><div class="card-b">'
-      +barraDash('Alto',alto,total,'var(--rj)')
-      +barraDash('Medio',lista.filter(function(c){return c.riesgo==='Medio';}).length,total,'var(--am)')
-      +barraDash('Bajo',lista.filter(function(c){return c.riesgo==='Bajo';}).length,total,'var(--vd)')
-      +'</div></div></div>';
+    +'<div id="dash-b"><div class="empty"><div class="spin" style="margin:0 auto 10px"></div>Cargando indicadores...</div></div>');
+
+  var entId = App.entidadActual ? App.entidadActual.id : null;
+  var esTodas = !entId || entId === 'TODAS';
+  var D = { cli:null, alt:null, res:null };
+  var pend = 3;
+  function done(){ pend--; if (pend<=0) dashRender(D, esTodas, entId); }
+
+  spGet('PLD_Clientes', function(l){
+    l = l || [];
+    D.cli = esTodas ? filtrarPermitidas(l) : l.filter(function(c){ return c.entidad_id === entId; });
+    App.clientes = D.cli;
+    done();
   });
+  spGet('PLD_Alertas', function(l){
+    l = l || [];
+    D.alt = esTodas ? filtrarPermitidas(l) : l.filter(function(a){ return a.entidad_id === entId || !a.entidad_id; });
+    done();
+  });
+  // Capacitacion es de personal (Art. 20): se muestra a nivel organizacion.
+  spGet('PLD_Resultados', function(l){ D.res = l || []; done(); });
+}
+
+function dashRender(D, esTodas, entId) {
+  var el = document.getElementById('dash-b'); if (!el) return;
+  var cli = D.cli || [], alt = D.alt || [], res = D.res || [];
+
+  // ── Clientes ──
+  var total=cli.length, activos=0, prospectos=0, alto=0, medio=0, bajo=0, peps=0;
+  cli.forEach(function(c){
+    if (c.estatus==='Activo') activos++;
+    else if (c.estatus==='Prospecto') prospectos++;
+    if (c.riesgo==='Alto') alto++; else if (c.riesgo==='Medio') medio++; else if (c.riesgo==='Bajo') bajo++;
+    if (['Activo','Familiar','Relacionado a PEP'].indexOf(c.estatus_pep||'')>=0) peps++;
+  });
+
+  // ── Alertas ──
+  function estA(a){ return a.estatus_atencion || 'Pendiente'; }
+  var aPend=0, aRev=0, aRep=0, aCer=0;
+  alt.forEach(function(a){
+    var e = estA(a);
+    if (e==='Pendiente') aPend++; else if (e==='En revision') aRev++;
+    else if (e==='Reportada') aRep++; else if (e==='Cerrada') aCer++;
+  });
+  var abiertas = aPend + aRev;
+
+  // ── Fecha limite del aviso (dia 17 del mes siguiente) ──
+  var hoyD=new Date(), d17=new Date(hoyD.getFullYear(), hoyD.getMonth()+1, 17);
+  var dias=Math.ceil((d17-hoyD)/864e5);
+  var dc=dias<=5?'c-rj':dias<=15?'c-am':'c-vd';
+
+  // ── Capacitacion (Art. 20 LFPIORPI) ──
+  var resTot=res.length, aprob=0, quienes={};
+  res.forEach(function(r){ if (r.aprobado){ aprob++; quienes[String(r.usuario_email||'').toLowerCase()]=1; } });
+  var pctAprob = resTot>0 ? Math.round(aprob/resTot*100) : 0;
+  var capacitados = Object.keys(quienes).length;
+
+  // ── KPIs ──
+  var html = '<div class="mets">'
+    +'<div class="met"><div class="m-l">Total clientes</div><div class="m-v c-az">'+total+'</div><div class="m-s">Activos: '+activos+' &middot; Prospectos: '+prospectos+'</div></div>'
+    +'<div class="met"><div class="m-l">Riesgo alto</div><div class="m-v c-rj">'+alto+'</div><div class="m-s">PEPs activos: '+peps+'</div></div>'
+    +'<div class="met"><div class="m-l">Alertas abiertas</div><div class="m-v '+(abiertas>0?'c-am':'c-vd')+'">'+abiertas+'</div><div class="m-s">Pendientes: '+aPend+' &middot; En revision: '+aRev+'</div></div>'
+    +'<div class="met"><div class="m-l">Proximo aviso SPPLD</div><div class="m-v '+dc+'">'+dias+' dias</div><div class="m-s">Fecha limite: dia 17</div></div>'
+    +'</div>';
+
+  // ── Graficas (grid responsivo) ──
+  var riesgoSeg = [
+    {label:'Alto', value:alto, color:'var(--rj)'},
+    {label:'Medio', value:medio, color:'var(--am)'},
+    {label:'Bajo', value:bajo, color:'var(--vd)'}
+  ];
+  var alertaSeg = [
+    {label:'Pendiente', value:aPend, color:'var(--am)'},
+    {label:'En revision', value:aRev, color:'var(--az2)'},
+    {label:'Reportada', value:aRep, color:'var(--vd)'},
+    {label:'Cerrada', value:aCer, color:'var(--gr)'}
+  ];
+  var expSeg = [
+    {label:'Activos (en firme)', value:activos, color:'var(--vd)'},
+    {label:'Prospectos (en proceso)', value:prospectos, color:'var(--am)'},
+    {label:'Otros', value:Math.max(0,total-activos-prospectos), color:'var(--gr)'}
+  ];
+  var capSeg = [
+    {label:'Aprobados', value:aprob, color:'var(--vd)'},
+    {label:'No aprobados', value:Math.max(0,resTot-aprob), color:'var(--rj)'}
+  ];
+
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr));gap:14px">';
+
+  html += dashCard('Distribucion de riesgo', dashDonutRow(riesgoSeg, total, 'clientes'));
+
+  html += dashCard('Estatus de alertas',
+    (alt.length ? dashDonutRow(alertaSeg, alt.length, 'alertas')
+      : '<div class="empty" style="padding:20px">Sin alertas registradas.</div>'));
+
+  // Expedientes: estatus al instante + avance documental bajo demanda
+  html += '<div class="card"><div class="card-h"><span class="card-t">Avance de expedientes</span>'
+    +'<button class="btn btn-xs" onclick="dashScanExpedientes()">Calcular avance documental</button></div>'
+    +'<div class="card-b" id="dash-exp-body">'+dashDonutRow(expSeg, total, 'expedientes')
+    +'<div style="font-size:11px;color:var(--tx3);margin-top:10px">Por estatus del expediente. Para el % de documentos obligatorios cargados, pulsa "Calcular avance documental".</div>'
+    +'</div></div>';
+
+  html += '<div class="card"><div class="card-h"><span class="card-t">Capacitacion (Art. 20)</span></div><div class="card-b">'
+    +(resTot>0
+      ? '<div style="display:flex;align-items:center;gap:18px">'
+        + dashDonut(capSeg, pctAprob+'%', 'aprobacion')
+        + '<div style="flex:1">'+legendDash(capSeg)
+        + '<div style="margin-top:10px;font-size:12px;color:var(--tx2)">Colaboradores capacitados: <b>'+capacitados+'</b></div>'
+        + '<div style="font-size:12px;color:var(--tx2)">Constancias emitidas: <b>'+aprob+'</b></div></div></div>'
+      : '<div class="empty" style="padding:20px">Aun no hay evaluaciones presentadas.</div>')
+    +'</div></div>';
+
+  html += '</div>'; // fin grid de graficas
+
+  // ── Alertas proximas a vencer ──
+  var abiertasList = alt.filter(function(a){ var e=estA(a); return e==='Pendiente'||e==='En revision'; });
+  var ordenNivel = {Alto:0, Medio:1, Bajo:2};
+  abiertasList.sort(function(a,b){
+    var na=(ordenNivel[a.nivel]!=null?ordenNivel[a.nivel]:3), nb=(ordenNivel[b.nivel]!=null?ordenNivel[b.nivel]:3);
+    if (na!==nb) return na-nb;
+    return String(a.fecha_registro||'').localeCompare(String(b.fecha_registro||''));
+  });
+  var topAbiertas = abiertasList.slice(0, 8);
+  html += '<div class="card"><div class="card-h"><span class="card-t">Alertas proximas a vencer</span>'
+    +'<span style="font-size:11px;color:var(--tx3)">Fecha limite dia 17 &middot; faltan '+dias+' dias</span></div>';
+  if (!topAbiertas.length) {
+    html += '<div class="card-b"><div class="empty" style="padding:16px">Sin alertas abiertas. Todo al corriente.</div></div>';
+  } else {
+    var rows = topAbiertas.map(function(a){
+      var nc = a.nivel==='Alto'?'p-rj':a.nivel==='Medio'?'p-am':'p-vd';
+      var esc = estA(a)==='En revision'?'p-az':'p-am';
+      return '<tr>'
+        +'<td style="font-size:11px;color:var(--tx3)">'+String(a.fecha_registro||'-').substring(0,10)+'</td>'
+        +'<td><div style="font-weight:500">'+(a.nombre_cliente||'-')+'</div>'
+        +(a.num_cliente?'<div style="font-size:11px;color:var(--tx3)">#'+nStr(a.num_cliente)+'</div>':'')+'</td>'
+        +'<td><span class="pill p-az" style="font-size:10px">'+altCategoria(a)+'</span></td>'
+        +'<td><span class="pill '+nc+'">'+(a.nivel||'-')+'</span></td>'
+        +'<td><span class="pill '+esc+'">'+estA(a)+'</span></td>'
+        +'<td><button class="btn btn-xs ver-alerta-btn" data-altid="'+a.id+'">Ver</button></td>'
+        +'</tr>';
+    }).join('');
+    html += '<div class="twrap"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Categoria</th><th>Nivel</th><th>Atencion</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    if (abiertasList.length > topAbiertas.length) {
+      html += '<div class="card-b" style="text-align:center;border-top:1px solid var(--brd)"><button class="btn btn-sm" onclick="irA(\'alertas\')">Ver las '+abiertasList.length+' alertas abiertas</button></div>';
+    }
+  }
+  html += '</div>';
+
+  el.innerHTML = html;
+}
+
+// ── Helpers de graficas (SVG inline, sin librerias externas) ──
+function dashCard(titulo, cuerpo){
+  return '<div class="card"><div class="card-h"><span class="card-t">'+titulo+'</span></div><div class="card-b">'+cuerpo+'</div></div>';
+}
+function dashDonutRow(segs, totalCentro, etiquetaCentro){
+  return '<div style="display:flex;align-items:center;gap:18px">'
+    + dashDonut(segs, (totalCentro||0), etiquetaCentro)
+    + '<div style="flex:1">'+legendDash(segs)+'</div></div>';
+}
+function dashDonut(segs, centroBig, centroSmall){
+  var r=52, cx=60, cy=60, C=2*Math.PI*r, off=0, arcs='';
+  var total = segs.reduce(function(s,x){ return s+(x.value||0); }, 0);
+  if (total>0){
+    segs.forEach(function(x){
+      var len = (x.value||0)/total*C;
+      if (len<=0) return;
+      arcs += '<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="'+x.color+'" stroke-width="15" '
+        + 'stroke-dasharray="'+len.toFixed(2)+' '+(C-len).toFixed(2)+'" stroke-dashoffset="'+(-off).toFixed(2)+'" transform="rotate(-90 '+cx+' '+cy+')"/>';
+      off += len;
+    });
+  } else {
+    arcs = '<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="var(--brd)" stroke-width="15"/>';
+  }
+  var fs = String(centroBig).length>3 ? '19' : '26';
+  return '<svg viewBox="0 0 120 120" width="132" height="132" style="flex-shrink:0">'+arcs
+    +'<text x="60" y="58" text-anchor="middle" font-size="'+fs+'" font-weight="700" fill="var(--tx)">'+centroBig+'</text>'
+    +'<text x="60" y="76" text-anchor="middle" font-size="9" fill="var(--tx3)">'+(centroSmall||'')+'</text>'
+    +'</svg>';
+}
+function legendDash(segs){
+  return '<div style="display:flex;flex-direction:column;gap:7px">'
+    + segs.map(function(x){
+        return '<div style="display:flex;align-items:center;gap:8px;font-size:12px">'
+          +'<span style="width:11px;height:11px;border-radius:3px;background:'+x.color+';flex-shrink:0"></span>'
+          +'<span style="color:var(--tx2)">'+x.label+'</span>'
+          +'<span style="margin-left:auto;font-weight:600">'+(x.value||0)+'</span></div>';
+      }).join('')
+    + '</div>';
 }
 function barraDash(l,v,t,col){
   var p=t>0?Math.round(v/t*100):0;
   return '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--tx2)">'+l+'</span><span style="font-weight:500">'+v+'</span></div><div style="height:5px;background:var(--brd);border-radius:3px;overflow:hidden"><div style="height:100%;width:'+p+'%;background:'+col+';border-radius:3px"></div></div></div>';
+}
+
+// Avance documental de expedientes: bajo demanda (1 llamada Graph por cliente,
+// como el reporte de Expedientes). No corre en cada carga del dashboard para no
+// martillar Graph; el usuario lo dispara con el boton.
+function dashScanExpedientes(){
+  var box = document.getElementById('dash-exp-body'); if(!box) return;
+  var clientes = App.clientes || [];
+  if (!clientes.length){ box.innerHTML = '<div class="empty" style="padding:16px">Sin clientes para calcular.</div>'; return; }
+  function oblDe(c){
+    var arr = (DOCS_OBL[c.tipo]||[]).slice();
+    Object.keys(DOCS_OBL_COND).forEach(function(d){ if (DOCS_OBL_COND[d](c) && arr.indexOf(d)<0) arr.push(d); });
+    return arr;
+  }
+  var i=0, sumaPct=0, completos=0, parciales=0, vacios=0, conObl=0;
+  function paso(){
+    if (i >= clientes.length){
+      dashPintarAvance(box, clientes.length, conObl?Math.round(sumaPct/conObl):0, completos, parciales, vacios);
+      return;
+    }
+    var c = clientes[i];
+    box.innerHTML = '<div class="empty" style="padding:16px"><div class="spin" style="margin:0 auto 8px"></div>Revisando expediente '+(i+1)+' de '+clientes.length+'...</div>';
+    var nom = nombreCliente(c).replace(/[^a-zA-Z0-9_\-]/g,'_').substring(0,40);
+    var carpeta = 'PLD_Documentos/'+nStr(c.num_cliente)+'_'+nom;
+    var obl = oblDe(c);
+    graph('GET', '/sites/'+App.siteId+'/drive/root:/'+carpeta+':/children', null, function(data){
+      var archivos = (data && data.value) ? data.value : [];
+      function tiene(td){ var pref = td.replace(/\s/g,'_').substring(0,20); return archivos.some(function(a){ return a.name.indexOf(pref)>=0; }); }
+      if (obl.length){
+        var car = obl.filter(tiene).length;
+        var pct = Math.round(car/obl.length*100);
+        sumaPct += pct; conObl++;
+        if (pct>=100) completos++; else if (pct>0) parciales++; else vacios++;
+      }
+      i++; paso();
+    });
+  }
+  paso();
+}
+function dashPintarAvance(box, totalCli, promedio, completos, parciales, vacios){
+  box.innerHTML = '<div style="display:flex;align-items:center;gap:18px">'
+    + dashDonut([
+        {label:'', value:promedio, color:'var(--vd)'},
+        {label:'', value:Math.max(0,100-promedio), color:'var(--brd)'}
+      ], promedio+'%', 'avance')
+    + '<div style="flex:1">'
+      + barraDash('Completos (100%)', completos, totalCli, 'var(--vd)')
+      + barraDash('Parciales', parciales, totalCli, 'var(--am)')
+      + barraDash('Sin documentos', vacios, totalCli, 'var(--rj)')
+    + '</div></div>'
+    + '<div style="font-size:11px;color:var(--tx3);margin-top:8px">Promedio de documentos obligatorios cargados sobre '+totalCli+' expedientes.</div>';
 }
 
 // ================================================================
