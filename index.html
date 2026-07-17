@@ -3418,9 +3418,6 @@ function dashRender(D, esTodas, entId) {
     +'<div class="met"><div class="m-l">Proximo aviso SPPLD</div><div class="m-v '+dc+'">'+dias+' dias</div><div class="m-s">Fecha limite: dia 17</div></div>'
     +'</div>';
 
-  // ── Newsletter (tarjeta destacada) ──
-  html += dashNewsletterCard(D.blog || [], !!App.listas['PLD_Blog']);
-
   // ── Graficas (grid responsivo) ──
   var riesgoSeg = [
     {label:'Alto', value:alto, color:'var(--rj)'},
@@ -3506,6 +3503,9 @@ function dashRender(D, esTodas, entId) {
     }
   }
   html += '</div>';
+
+  // ── Newsletter (al final del panel) ──
+  html += dashNewsletterCard(D.blog || [], !!App.listas['PLD_Blog']);
 
   el.innerHTML = html;
 }
