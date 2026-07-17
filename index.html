@@ -5894,7 +5894,7 @@ function renderFichaOp(op) {
     +'<div style="display:flex;gap:8px">'
     +'<button class="btn btn-p gen-xml-btn" data-xmlid="'+op.id+'">Generar XML</button>'
     +'<button class="btn" onclick="nuevaOpForm(App._opActual)">Editar</button>'
-    +'<button class="btn" onclick="pgOps()">Volver</button>'
+    +'<button class="btn" onclick="pgAvisos()">Volver</button>'
     +'</div></div>'
     +(op.url_xml?'<div class="alerta-banner" style="background:var(--vd3);color:var(--vd);border-color:rgba(15,110,86,.15)">'
       +'XML generado el '+String(op.fecha_xml||'-').substring(0,10)+': '
@@ -5968,7 +5968,7 @@ function nuevaOpForm(datos, fraccion) {
 
   var html = '<div class="phdr"><div><div class="ptit">'+(idEx?'Editar':'Nueva')+' operacion inmobiliaria</div>'
     +'<div class="psub">Aviso de actividad vulnerable - LFPIORPI Art. 17 Fr. V</div></div>'
-    +'<button class="btn" onclick="pgOps()">Volver</button></div>'
+    +'<button class="btn" onclick="pgAvisos()">Volver</button></div>'
     +'<form id="frm-op" onsubmit="return false">'
 
     // Datos del aviso
