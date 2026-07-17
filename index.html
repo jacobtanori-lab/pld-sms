@@ -1547,11 +1547,18 @@ function cambiarEntidad() {
 // ================================================================
 function iniciarApp() {
   var nombre = App.cuenta.name || App.cuenta.username;
-  document.getElementById('login-screen').style.display = 'none';
-  document.getElementById('topbar').style.display = 'flex';
-  document.getElementById('layout').style.display = 'flex';
   document.getElementById('nav-nombre').textContent = nombre;
   document.getElementById('nav-avatar').textContent = nombre[0].toUpperCase();
+  // Mantener la pantalla de acceso (con indicador de carga) hasta saber a donde
+  // enrutar. Antes se revelaba aqui el topbar + layout vacios, lo que dejaba una
+  // pantalla en blanco sin spinner mientras cargaban las listas de SharePoint,
+  // hasta que al final aparecia el selector de entidad.
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('topbar').style.display = 'none';
+  document.getElementById('layout').style.display = 'none';
+  document.getElementById('login-ct').innerHTML =
+    '<div class="login-box"><div class="spin" style="margin:0 auto 12px"></div>'
+    + '<p style="font-size:13px;color:var(--tx2)">Cargando tu informacion...</p></div>';
   // Determinar si es usuario global
   // Comparar username e email de forma flexible (puede venir como UPN o email)
   var emailNorm = (App.cuenta.username || '').toLowerCase();
@@ -1580,6 +1587,9 @@ function iniciarApp() {
         if (App.esGlobal) {
           mostrarSelectorEntidad();
         } else {
+          document.getElementById('login-screen').style.display = 'none';
+          document.getElementById('topbar').style.display = 'flex';
+          document.getElementById('layout').style.display = 'flex';
           App.entidadActual = ENTIDADES[0];
           var be2 = document.getElementById('brand-entidad');
           if (be2) be2.textContent = App.entidadActual.nombre;
