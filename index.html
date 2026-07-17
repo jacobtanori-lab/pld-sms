@@ -1547,18 +1547,42 @@ function cambiarEntidad() {
 // ================================================================
 function iniciarApp() {
   var nombre = App.cuenta.name || App.cuenta.username;
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('topbar').style.display = 'flex';
+  document.getElementById('layout').style.display = 'flex';
   document.getElementById('nav-nombre').textContent = nombre;
   document.getElementById('nav-avatar').textContent = nombre[0].toUpperCase();
-  // Mantener la pantalla de acceso (con indicador de carga) hasta saber a donde
-  // enrutar. Antes se revelaba aqui el topbar + layout vacios, lo que dejaba una
-  // pantalla en blanco sin spinner mientras cargaban las listas de SharePoint,
-  // hasta que al final aparecia el selector de entidad.
-  document.getElementById('login-screen').style.display = 'flex';
-  document.getElementById('topbar').style.display = 'none';
-  document.getElementById('layout').style.display = 'none';
-  document.getElementById('login-ct').innerHTML =
-    '<div class="login-box"><div class="spin" style="margin:0 auto 12px"></div>'
-    + '<p style="font-size:13px;color:var(--tx2)">Cargando tu informacion...</p></div>';
+  // Indicador de carga en el area principal mientras cargan las listas de
+  // SharePoint (antes quedaba en blanco). El topbar queda visible a proposito:
+  // su brand sirve de escape manual al selector de entidad si la carga tarda.
+  var _mainCarga = document.getElementById('main');
+  if (_mainCarga) _mainCarga.innerHTML =
+    '<div class="empty" style="padding-top:80px"><div class="spin" style="margin:0 auto 12px"></div>'
+    + 'Cargando tu informacion...</div>';
+
+  // Enrutado idempotente: se ejecuta al terminar la cadena de carga, o por
+  // respaldo a los 8s si alguna llamada a Graph no regresa (la cadena se
+  // atoraba en silencio y dejaba al usuario esperando sin salida).
+  var _ruteado = false, _respaldo = null;
+  function rutear(porRespaldo) {
+    if (_ruteado) return; _ruteado = true;
+    if (_respaldo) { clearTimeout(_respaldo); _respaldo = null; }
+    if (porRespaldo) console.warn('[iniciarApp] carga lenta; enrutando por respaldo');
+    if (App.esGlobal) {
+      mostrarSelectorEntidad();
+    } else {
+      App.entidadActual = ENTIDADES[0];
+      var be2 = document.getElementById('brand-entidad');
+      if (be2) be2.textContent = App.entidadActual.nombre;
+      aplicarTema(App.entidadActual);
+      actualizarBrandLogo(App.entidadActual.id);
+      renderNav();
+      cargarConfigUMA();
+      irA('dashboard');
+    }
+  }
+  _respaldo = setTimeout(function(){ rutear(true); }, 8000);
+
   // Determinar si es usuario global
   // Comparar username e email de forma flexible (puede venir como UPN o email)
   var emailNorm = (App.cuenta.username || '').toLowerCase();
@@ -1584,21 +1608,7 @@ function iniciarApp() {
       cargarAsesoresConfig(function(){});
       cargarRolUsuario(emailNorm, emailAlt, function(){
       cargarEntidadesConfig(function() {
-        if (App.esGlobal) {
-          mostrarSelectorEntidad();
-        } else {
-          document.getElementById('login-screen').style.display = 'none';
-          document.getElementById('topbar').style.display = 'flex';
-          document.getElementById('layout').style.display = 'flex';
-          App.entidadActual = ENTIDADES[0];
-          var be2 = document.getElementById('brand-entidad');
-          if (be2) be2.textContent = App.entidadActual.nombre;
-          aplicarTema(App.entidadActual);
-          actualizarBrandLogo(App.entidadActual.id);
-          renderNav();
-          cargarConfigUMA();
-          irA('dashboard');
-        }
+        rutear(false);
         // Sincroniza listas de screening desde PEP Manager (en segundo plano)
         try { autoSyncPEPManager(); } catch(e){ console.warn('[PEPM] auto-sync', e); }
       });
