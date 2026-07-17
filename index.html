@@ -3632,7 +3632,7 @@ function blogLeer(id){
       + '<button class="btn" onclick="irA(\'dashboard\')">Volver</button></div></div>';
     html += '<div class="card"><div class="card-b" style="max-width:820px;margin:0 auto">';
     if (!p.publicado) html += '<div style="margin-bottom:10px"><span class="pill p-am" style="font-size:10px">Borrador — solo visible para administradores</span></div>';
-    if (p.portada) html += '<img src="'+p.portada+'" alt="" style="width:100%;max-height:380px;object-fit:cover;border-radius:10px;margin-bottom:18px">';
+    if (p.portada) html += '<img src="'+p.portada+'" alt="" style="width:100%;height:auto;display:block;border-radius:10px;margin-bottom:18px">';
     html += '<h1 style="font-size:27px;font-weight:800;line-height:1.2;margin:0 0 10px">'+blogEsc(p.titulo||'')+'</h1>';
     if (p.resumen) html += '<p style="font-size:15px;color:var(--tx2);font-style:italic;margin:0 0 20px">'+blogEsc(p.resumen)+'</p>';
     html += '<div style="font-size:15px;line-height:1.7;color:var(--tx)">'+blogRenderMD(p.contenido||'')+'</div>';
