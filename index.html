@@ -3466,7 +3466,9 @@ function dashRender(D, esTodas, entId) {
   html += '</div>'; // fin grid de graficas
 
   // ── Alertas proximas a vencer ──
-  var abiertasList = alt.filter(function(a){ var e=estA(a); return e==='Pendiente'||e==='En revision'; });
+  // Solo las de UMBRAL DE OPERACIONES: son las que derivan en un aviso con la
+  // fecha limite del dia 17. Screening/manual/perfil no comparten ese vencimiento.
+  var abiertasList = alt.filter(function(a){ var e=estA(a); return (e==='Pendiente'||e==='En revision') && altCategoria(a)==='Umbral'; });
   var ordenNivel = {Alto:0, Medio:1, Bajo:2};
   abiertasList.sort(function(a,b){
     var na=(ordenNivel[a.nivel]!=null?ordenNivel[a.nivel]:3), nb=(ordenNivel[b.nivel]!=null?ordenNivel[b.nivel]:3);
@@ -3474,27 +3476,28 @@ function dashRender(D, esTodas, entId) {
     return String(a.fecha_registro||'').localeCompare(String(b.fecha_registro||''));
   });
   var topAbiertas = abiertasList.slice(0, 8);
-  html += '<div class="card"><div class="card-h"><span class="card-t">Alertas proximas a vencer</span>'
+  html += '<div class="card"><div class="card-h"><span class="card-t">Alertas de umbral proximas a vencer</span>'
     +'<span style="font-size:11px;color:var(--tx3)">Fecha limite dia 17 &middot; faltan '+dias+' dias</span></div>';
   if (!topAbiertas.length) {
-    html += '<div class="card-b"><div class="empty" style="padding:16px">Sin alertas abiertas. Todo al corriente.</div></div>';
+    html += '<div class="card-b"><div class="empty" style="padding:16px">Sin alertas de umbral abiertas. Todo al corriente.</div></div>';
   } else {
     var rows = topAbiertas.map(function(a){
       var nc = a.nivel==='Alto'?'p-rj':a.nivel==='Medio'?'p-am':'p-vd';
       var esc = estA(a)==='En revision'?'p-az':'p-am';
+      var frac = a.fraccion ? '<span class="pill '+(a.fraccion==='ARI'?'p-mo':'p-az')+'" style="font-size:10px">Fr.'+(a.fraccion==='ARI'?'XV':'V')+'</span>' : '-';
       return '<tr>'
         +'<td style="font-size:11px;color:var(--tx3)">'+String(a.fecha_registro||'-').substring(0,10)+'</td>'
         +'<td><div style="font-weight:500">'+(a.nombre_cliente||'-')+'</div>'
         +(a.num_cliente?'<div style="font-size:11px;color:var(--tx3)">#'+nStr(a.num_cliente)+'</div>':'')+'</td>'
-        +'<td><span class="pill p-az" style="font-size:10px">'+altCategoria(a)+'</span></td>'
+        +'<td>'+frac+'</td>'
         +'<td><span class="pill '+nc+'">'+(a.nivel||'-')+'</span></td>'
         +'<td><span class="pill '+esc+'">'+estA(a)+'</span></td>'
         +'<td><button class="btn btn-xs ver-alerta-btn" data-altid="'+a.id+'">Ver</button></td>'
         +'</tr>';
     }).join('');
-    html += '<div class="twrap"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Categoria</th><th>Nivel</th><th>Atencion</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    html += '<div class="twrap"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Fraccion</th><th>Nivel</th><th>Atencion</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
     if (abiertasList.length > topAbiertas.length) {
-      html += '<div class="card-b" style="text-align:center;border-top:1px solid var(--brd)"><button class="btn btn-sm" onclick="irA(\'alertas\')">Ver las '+abiertasList.length+' alertas abiertas</button></div>';
+      html += '<div class="card-b" style="text-align:center;border-top:1px solid var(--brd)"><button class="btn btn-sm" onclick="irA(\'alertas\')">Ver las '+abiertasList.length+' alertas de umbral abiertas</button></div>';
     }
   }
   html += '</div>';
