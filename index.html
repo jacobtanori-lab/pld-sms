@@ -3573,6 +3573,13 @@ function dashPintarAvance(box, totalCli, promedio, completos, parciales, vacios)
 //  (JSON en Datos). La portada se guarda como data URI optimizado.
 // ================================================================
 function blogEsAdmin(){ return App.rol === 'admin'; }
+// Orden: mas reciente primero. La fecha es de dia; para entradas del mismo dia
+// desempata por id de SharePoint (incremental: id mayor = creada despues).
+function blogCmp(a,b){
+  var f = String(b.fecha||'').localeCompare(String(a.fecha||''));
+  if (f !== 0) return f;
+  return (parseInt(b.id,10)||0) - (parseInt(a.id,10)||0);
+}
 function blogEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function blogEscAttr(s){ return blogEsc(s).replace(/"/g,'&quot;'); }
 function blogInline(s){
@@ -3672,7 +3679,7 @@ function dashNewsletterCard(blog, listaOk){
     return '<div class="card"><div class="card-h"><span class="card-t">Newsletter</span></div>'
       +'<div class="card-b"><div class="empty" style="padding:16px">Para activar el Newsletter, crea la lista <b>PLD_Blog</b> en SharePoint (con la columna <b>Datos</b>, texto multilinea), como las demas listas.</div></div></div>';
   }
-  var posts = (blog||[]).slice().sort(function(a,b){ return String(b.fecha||'').localeCompare(String(a.fecha||'')); });
+  var posts = (blog||[]).slice().sort(blogCmp);
   var visibles = esAdmin ? posts : posts.filter(function(p){ return p.publicado; });
   var head = '<div class="card-h"><span class="card-t">Newsletter</span><span style="display:flex;gap:6px">'
     + (visibles.length ? '<button class="btn btn-xs" onclick="blogHistorial()">Historial ('+visibles.length+')</button>' : '')
@@ -3744,7 +3751,7 @@ function blogLeer(id){
 function blogHistorial(){
   spGet('PLD_Blog', function(lista){
     var esAdmin = blogEsAdmin();
-    var posts = (lista||[]).slice().sort(function(a,b){ return String(b.fecha||'').localeCompare(String(a.fecha||'')); });
+    var posts = (lista||[]).slice().sort(blogCmp);
     if (!esAdmin) posts = posts.filter(function(p){ return p.publicado; });
     var html = '<div class="phdr"><div><div class="ptit">Newsletter — Historial</div><div class="psub">Todas las entradas</div></div>'
       + '<div style="display:flex;gap:8px">'
