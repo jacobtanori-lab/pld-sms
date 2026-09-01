@@ -1655,18 +1655,46 @@ function cargarListas(cb) {
   });
 }
 
-// CRUD SharePoint — almacena todo como JSON en campo Datos
-function spGet(lista, cb) {
+// CRUD SharePoint — almacena todo como JSON en campo Datos.
+// `filtro` (opcional) es una expresion OData sobre las columnas indexadas,
+// p.ej. "fields/entidad_id eq 'CIN'". Para eso usa spBuscar(), que es mas
+// explicito en la intencion.
+function spGet(lista, cb, filtro) {
   var lid = App.listas[lista];
   if (!lid) { if(cb) cb([]); return; }
-  graph('GET', '/sites/'+App.siteId+'/lists/'+lid+'/items?expand=fields&$top=999', null, function(data) {
-    if (!data || !data.value) { if(cb) cb([]); return; }
-    if (cb) cb(data.value.map(function(item) {
-      var f = item.fields || {};
-      if (f.Datos) { try { var p=JSON.parse(f.Datos); p.id=String(item.id); return p; } catch(e){} }
-      f.id = String(item.id); return f;
-    }));
-  });
+  var acumulado = [];
+  function mapear(item) {
+    var f = item.fields || {};
+    if (f.Datos) { try { var p=JSON.parse(f.Datos); p.id=String(item.id); return p; } catch(e){} }
+    f.id = String(item.id); return f;
+  }
+  (function bajar(u){
+    graph('GET', u, null, function(data) {
+      if (!data || !data.value) { if(cb) cb(acumulado); return; }
+      acumulado = acumulado.concat(data.value.map(mapear));
+      // Seguir nextLink no es opcional: sin esto la lista se truncaba en
+      // silencio al pasar de 999 elementos — registros que simplemente no
+      // aparecian, sin ningun aviso ni error.
+      if (data['@odata.nextLink']) { bajar(data['@odata.nextLink']); return; }
+      if (cb) cb(acumulado);
+    });
+  })('/sites/'+App.siteId+'/lists/'+lid+'/items?expand=fields&$top=999'
+     // Se codifica por si un valor trae & o #, pero la barra se restaura: la
+     // forma con `fields/campo` literal es la que se probo contra Graph.
+     + (filtro ? '&$filter='+encodeURIComponent(filtro).replace(/%2F/g, '/') : ''));
+}
+
+// Escapa un valor para meterlo en un $filter de OData: la comilla simple se
+// duplica. Sin esto un RFC o un nombre con apostrofe rompe la consulta.
+function odataStr(v) {
+  return String(v === null || v === undefined ? '' : v).replace(/'/g, "''");
+}
+
+// spGet filtrando del lado del servidor. Solo sirve sobre las columnas
+// indexadas (COLS_INDEXADAS); sobre un campo que solo vive en el JSON,
+// SharePoint rechaza la consulta.
+function spBuscar(lista, filtro, cb) {
+  spGet(lista, cb, filtro);
 }
 
 function spCreate(lista, datos, cb) {
@@ -1749,7 +1777,7 @@ function camposIndexados(lista, datos) {
 // Relleno retroactivo: copia a las columnas lo que hoy solo esta en el JSON.
 // Solo escribe donde hay diferencia, asi que es idempotente y se puede repetir
 // sin costo. Nunca toca `Datos`.
-function rellenarColumnasIndexadas(lista, prog, cb) {
+function rellenarColumnasIndexadas(lista, prog, cb, soloRevisar) {
   var cols = COLS_INDEXADAS[lista], lid = App.listas[lista];
   if (!cols || !lid) { if (cb) cb({error:'Lista '+lista+' no configurada'}); return; }
   var items = [];
@@ -1766,7 +1794,7 @@ function rellenarColumnasIndexadas(lista, prog, cb) {
   }
 
   function procesar() {
-    var i = 0, escritos = 0, saltados = 0, errores = 0;
+    var i = 0, escritos = 0, saltados = 0, errores = 0, pendientes = 0;
     (function siguiente(){
       // Lo que no requiere escritura se recorre en bucle, no por recursion:
       // al re-ejecutar casi todo se salta, y un marco de pila por registro
@@ -1783,6 +1811,7 @@ function rellenarColumnasIndexadas(lista, prog, cb) {
           if (actual !== quiere[c]) { cambia[c] = quiere[c]; hay = true; }
         });
         if (!hay) { saltados++; continue; }
+        if (soloRevisar) { pendientes++; continue; }
 
         if (prog) prog('Actualizando '+i+' de '+items.length+'...');
         // De uno en uno a proposito: en paralelo SharePoint responde 429.
@@ -1793,7 +1822,8 @@ function rellenarColumnasIndexadas(lista, prog, cb) {
         });
         return;   // se retoma desde el callback
       }
-      if (cb) cb({total:items.length, escritos:escritos, saltados:saltados, errores:errores});
+      if (cb) cb({total:items.length, escritos:escritos, saltados:saltados,
+                  errores:errores, pendientes:pendientes});
     })();
   }
 
@@ -2726,27 +2756,40 @@ function pgConfigMantenimiento() {
     +'<div class="card-b">'
     +'<p style="font-size:13px;color:var(--tx2);line-height:1.6">Copia a columnas reales de SharePoint los campos que hoy solo viven dentro del JSON: '
     +'<span style="font-family:monospace;font-size:12px;color:var(--tx1)">'+cols+'</span>. '
-    +'Con eso se puede filtrar del lado del servidor en vez de descargar la lista completa.</p>'
-    +'<p style="font-size:12px;color:var(--tx3);margin-top:8px;line-height:1.6">Solo escribe donde encuentra diferencias, asi que puedes ejecutarlo las veces que quieras. '
-    +'No modifica el JSON de <span style="font-family:monospace">Datos</span> ni cambia lo que la app lee hoy: si algo saliera mal, nada se rompe.</p>'
+    +'El guardado de expedientes ya consulta por esas columnas del lado del servidor, asi que conviene tenerlas al dia.</p>'
+    +'<p style="font-size:12px;color:var(--tx3);margin-top:8px;line-height:1.6">«Verificar» solo lee y reporta cuantos expedientes estan desfasados. '
+    +'«Rellenar» escribe unicamente donde encuentra diferencias, asi que puedes ejecutarlo las veces que quieras. '
+    +'Ninguno de los dos toca el JSON de <span style="font-family:monospace">Datos</span>.</p>'
     +'<div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap">'
-    +'<button class="btn btn-p" id="btn-idx" onclick="ejecutarRellenoIndexadas()">Rellenar columnas</button>'
+    +'<button class="btn" id="btn-idx-ver" onclick="ejecutarRellenoIndexadas(true)">Verificar cobertura</button>'
+    +'<button class="btn btn-p" id="btn-idx" onclick="ejecutarRellenoIndexadas(false)">Rellenar columnas</button>'
     +'<span id="idx-status" style="font-size:12px;color:var(--tx3)"></span>'
     +'</div></div></div>');
 }
 
-function ejecutarRellenoIndexadas() {
-  var btn = document.getElementById('btn-idx'), st = document.getElementById('idx-status');
+function ejecutarRellenoIndexadas(soloRevisar) {
+  var btn  = document.getElementById(soloRevisar ? 'btn-idx-ver' : 'btn-idx');
+  var otro = document.getElementById(soloRevisar ? 'btn-idx' : 'btn-idx-ver');
+  var st   = document.getElementById('idx-status');
+  var etiqueta = btn ? btn.textContent : '';
   function prog(t){ if (st) st.textContent = t; }
-  if (btn) { btn.disabled = true; btn.textContent = 'Procesando...'; }
+  if (btn)  { btn.disabled = true; btn.textContent = soloRevisar ? 'Revisando...' : 'Procesando...'; }
+  if (otro) otro.disabled = true;
   rellenarColumnasIndexadas('PLD_Clientes', prog, function(r){
-    if (btn) { btn.disabled = false; btn.textContent = 'Rellenar columnas'; }
+    if (btn)  { btn.disabled = false; btn.textContent = etiqueta; }
+    if (otro) otro.disabled = false;
     if (r.error) { prog(''); toast(r.error, 'e'); return; }
+    if (soloRevisar) {
+      prog(r.total+' revisados · '+r.pendientes+' desfasados · '+r.saltados+' al dia');
+      if (r.pendientes) toast(r.pendientes+' expedientes desfasados — corre "Rellenar columnas"', 'w');
+      else toast('Todos los expedientes al dia', 's');
+      return;
+    }
     prog(r.total+' revisados · '+r.escritos+' actualizados · '+r.saltados+' sin cambio'
       + (r.errores ? ' · '+r.errores+' con error' : ''));
     if (r.errores) toast('Relleno terminado con '+r.errores+' errores — revisa la consola', 'w');
     else toast('Columnas indexadas al dia', 's');
-  });
+  }, soloRevisar);
 }
 
 // ── Pantalla de configuración EBR ─────────────────────────────
@@ -4983,8 +5026,13 @@ function submitCliente(tipo, idEx) {
 
   // Obtener siguiente numero de cliente por entidad
   pensadorPaso('Guardando el expediente...');
-  spGet('PLD_Clientes', function(lista) {
-    var entId = App.entidadActual ? App.entidadActual.id : '';
+  var entId = App.entidadActual ? App.entidadActual.id : '';
+  // Solo los expedientes de esta entidad. Es exactamente el alcance que ya
+  // usaban las dos operaciones de abajo (el consecutivo compara contra
+  // c.entidad_id === entId, y clientePorRFC ignora las otras entidades), asi
+  // que filtrar en el servidor no cambia la semantica: solo deja de bajar la
+  // lista completa de clientes en cada guardado.
+  spBuscar('PLD_Clientes', "fields/entidad_id eq '"+odataStr(entId)+"'", function(lista) {
     var maxNum = 0;
     lista.forEach(function(c){
       if (c.entidad_id === entId) maxNum = Math.max(maxNum, nStrNum(c.num_cliente));
