@@ -1631,19 +1631,47 @@ function iniciarApp() {
 // ================================================================
 //  GRAPH API
 // ================================================================
+// Toda la app habla con Graph por aqui. Dos garantias que antes no existian:
+//  1. El callback SIEMPRE se invoca. Si falla la red o la respuesta no es
+//     JSON, recibe {error:{code,message}} — la misma forma de los errores
+//     propios de Graph — en vez de no recibir nada y dejar colgado a quien
+//     llamo (spinners eternos, cadenas de carga muertas).
+//  2. El callback corre FUERA de la cadena de promesas. Una excepcion dentro
+//     de el sale a la consola como lo que es, con su stack real, en vez de
+//     caer en el .catch disfrazada de "Graph error". Ese disfraz escondio
+//     semanas el bug de la migracion de entidades.
+// La unica excepcion a (1) es el token vencido: se redirige a MSAL y ya no
+// hay a quien avisar.
 function graph(method, endpoint, body, cb) {
   var url = endpoint.indexOf('http')===0 ? endpoint : GRAPH+endpoint;
-  if (!App.token) { console.error('Sin token'); return; }
+  function entregar(d) { if (cb) setTimeout(function(){ cb(d); }, 0); }
+  if (!App.token) {
+    console.error('Graph '+method+' '+endpoint+': sin token');
+    entregar({error:{code:'SinToken', message:'Sin token de sesion'}});
+    return;
+  }
   var opts = {method:method, headers:{'Authorization':'Bearer '+App.token,'Content-Type':'application/json'}};
   if (body) opts.body = JSON.stringify(body);
-  fetch(url, opts).then(function(r){ return r.status===204?{}:r.json(); })
+  fetch(url, opts)
+    .then(function(r){
+      if (r.status===204) return {};
+      return r.json().catch(function(){
+        return {error:{code:'RespuestaNoJSON', message:'HTTP '+r.status+' sin cuerpo JSON'}};
+      });
+    })
     .then(function(d){
       if (d && d.error && d.error.code==='InvalidAuthenticationToken') {
         msalApp.acquireTokenRedirect({scopes:SCOPES, account:App.cuenta});
         return;
       }
-      if (cb) cb(d);
-    }).catch(function(e){ console.error('Graph error:',e); });
+      entregar(d);
+    })
+    .catch(function(e){
+      // Aqui solo llegan fallos de la peticion en si (red, CORS, abort): las
+      // excepciones del callback ya no pasan por este punto.
+      console.error('Graph '+method+' '+endpoint+' fallo:', e);
+      entregar({error:{code:'ErrorDeRed', message:String(e && e.message || e)}});
+    });
 }
 
 function cargarListas(cb) {
@@ -1670,7 +1698,13 @@ function spGet(lista, cb, filtro) {
   }
   (function bajar(u){
     graph('GET', u, null, function(data) {
-      if (!data || !data.value) { if(cb) cb(acumulado); return; }
+      // Segundo argumento solo cuando la lectura fallo: distingue "lista
+      // vacia" de "no se pudo leer". Los callers que crean-si-no-existe
+      // lo necesitan para no duplicar; el resto lo ignora sin romperse.
+      if (!data || !data.value) {
+        if (cb) cb(acumulado, (data && data.error) || {code:'SinRespuesta'});
+        return;
+      }
       acumulado = acumulado.concat(data.value.map(mapear));
       // Seguir nextLink no es opcional: sin esto la lista se truncaba en
       // silencio al pasar de 999 elementos — registros que simplemente no
@@ -1727,6 +1761,14 @@ function spPatch(lista, itemId, campos, cb) {
   var lid = App.listas[lista];
   if (!lid) { if(cb) cb(null); return; }
   graph('GET', '/sites/'+App.siteId+'/lists/'+lid+'/items/'+itemId+'?expand=fields', null, function(item) {
+    // Si la lectura no trajo el registro (error de Graph o de red), abortar.
+    // Seguir con actual={} escribiria un Datos con solo los campos parchados
+    // y borraria todo lo demas del expediente.
+    if (!item || item.error || !item.fields) {
+      console.error('spPatch: no se pudo leer '+lista+'/'+itemId, item && item.error);
+      toast('No se pudo leer el registro; no se guardo el cambio', 'e');
+      if (cb) cb(null); return;
+    }
     var actual = {};
     if (item && item.fields && item.fields.Datos) {
       try { actual = JSON.parse(item.fields.Datos); } catch(e) {}
@@ -1799,7 +1841,7 @@ function rellenarColumnasIndexadas(lista, prog, cb, soloRevisar) {
       // Lo que no requiere escritura se recorre en bucle, no por recursion:
       // al re-ejecutar casi todo se salta, y un marco de pila por registro
       // desbordaria con listas grandes. Solo el PATCH continua por callback,
-      // y ese si desapila (corre en microtarea de la promesa).
+      // y ese si desapila (graph() entrega el callback de forma asincrona).
       while (i < items.length) {
         var it = items[i++], f = it.fields || {}, datos = null;
         if (f.Datos) { try { datos = JSON.parse(f.Datos); } catch(e){} }
@@ -3261,7 +3303,17 @@ function guardarPerfil() {
 var _entidadesConfigId = null; // id del item en PLD_Config
 
 function cargarEntidadesConfig(cb) {
-  spGet('PLD_Config', function(lista) {
+  spGet('PLD_Config', function(lista, fallo) {
+    // Si no se pudo leer, NO crear el item por defecto: duplicaria
+    // CONFIG_ENTIDADES y en el siguiente login podria ganar la copia con los
+    // valores de fabrica. Se sigue con las entidades en memoria y la carga
+    // continua, para no dejar al usuario colgado.
+    if (fallo) {
+      console.warn('[entidades] no se pudo leer PLD_Config; se conservan las de memoria', fallo);
+      aplicarTemasEntidad();
+      if (cb) cb();
+      return;
+    }
     var item = null;
     (lista||[]).forEach(function(c){ if(c.clave==='CONFIG_ENTIDADES') item=c; });
     if (item && item.entidades && item.entidades.length) {
