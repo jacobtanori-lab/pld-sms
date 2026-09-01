@@ -1673,8 +1673,10 @@ function spCreate(lista, datos, cb) {
   var lid = App.listas[lista];
   if (!lid) { toast('Lista '+lista+' no encontrada','e'); if(cb) cb(null); return; }
   var titulo = datos.Title || datos.nombre || datos.razon_social || datos.folio || ('Item-'+Date.now());
+  var _campos = {Title:String(titulo).substring(0,255), Datos:JSON.stringify(datos)};
+  Object.assign(_campos, camposIndexados(lista, datos));
   graph('POST', '/sites/'+App.siteId+'/lists/'+lid+'/items',
-    {fields:{Title:String(titulo).substring(0,255), Datos:JSON.stringify(datos)}},
+    {fields:_campos},
     function(d) {
       if (d && d.id) { datos.id=String(d.id); if(cb) cb(datos); }
       else { console.error('spCreate error:',d); toast('Error al guardar en SharePoint','e'); if(cb) cb(null); }
@@ -1685,8 +1687,10 @@ function spUpdate(lista, itemId, datos, cb) {
   var lid = App.listas[lista];
   if (!lid) { if(cb) cb(null); return; }
   var titulo = datos.Title || datos.nombre || datos.razon_social || ('Item-'+itemId);
+  var _campos = {Title:String(titulo).substring(0,255), Datos:JSON.stringify(datos)};
+  Object.assign(_campos, camposIndexados(lista, datos));
   graph('PATCH', '/sites/'+App.siteId+'/lists/'+lid+'/items/'+itemId+'/fields',
-    {Title:String(titulo).substring(0,255), Datos:JSON.stringify(datos)},
+    _campos,
     function(d){ if(cb) cb(d); });
 }
 
@@ -1701,8 +1705,10 @@ function spPatch(lista, itemId, campos, cb) {
     }
     var merged = Object.assign({}, actual, campos);
     var titulo = merged.Title || merged.nombre || merged.razon_social || ('Item-'+itemId);
+    var _campos = {Title:String(titulo).substring(0,255), Datos:JSON.stringify(merged)};
+    Object.assign(_campos, camposIndexados(lista, merged));
     graph('PATCH', '/sites/'+App.siteId+'/lists/'+lid+'/items/'+itemId+'/fields',
-      {Title:String(titulo).substring(0,255), Datos:JSON.stringify(merged)},
+      _campos,
       function(d){ if(cb) cb(d); });
   });
 }
@@ -1714,6 +1720,85 @@ function spDelete(lista, itemId, cb) {
     if (d && d.error) { console.error('spDelete error:', d.error); if(cb) cb(false); return; }
     if(cb) cb(true);
   });
+}
+
+// ================================================================
+//  COLUMNAS INDEXADAS (espejo del JSON)
+// ================================================================
+// Campos que, ademas de vivir dentro del JSON de `Datos`, se escriben en
+// columnas reales e indexadas de SharePoint, para poder filtrar del lado del
+// servidor en vez de bajar la lista completa. El JSON sigue siendo la fuente
+// de verdad: por ahora nadie lee de estas columnas.
+var COLS_INDEXADAS = {
+  PLD_Clientes: ['num_cliente','rfc','entidad_id','tipo','riesgo','estatus']
+};
+
+// Devuelve SIEMPRE todas las columnas de la lista, con '' para lo vacio: si un
+// campo se borra en la app, la columna debe quedar vacia tambien y no
+// conservar el valor anterior.
+function camposIndexados(lista, datos) {
+  var cols = COLS_INDEXADAS[lista], out = {};
+  if (!cols || !datos) return out;
+  cols.forEach(function(c){
+    var v = datos[c];
+    out[c] = (v === null || v === undefined) ? '' : String(v);
+  });
+  return out;
+}
+
+// Relleno retroactivo: copia a las columnas lo que hoy solo esta en el JSON.
+// Solo escribe donde hay diferencia, asi que es idempotente y se puede repetir
+// sin costo. Nunca toca `Datos`.
+function rellenarColumnasIndexadas(lista, prog, cb) {
+  var cols = COLS_INDEXADAS[lista], lid = App.listas[lista];
+  if (!cols || !lid) { if (cb) cb({error:'Lista '+lista+' no configurada'}); return; }
+  var items = [];
+
+  function bajar(u) {
+    graph('GET', u, null, function(d){
+      if (!d || !d.value) { if (cb) cb({error:'No se pudo leer '+lista}); return; }
+      items = items.concat(d.value);
+      if (prog) prog('Leyendo... '+items.length+' registros');
+      // Aqui si se sigue la paginacion: la lista puede pasar de 999 elementos.
+      if (d['@odata.nextLink']) { bajar(d['@odata.nextLink']); return; }
+      procesar();
+    });
+  }
+
+  function procesar() {
+    var i = 0, escritos = 0, saltados = 0, errores = 0;
+    (function siguiente(){
+      // Lo que no requiere escritura se recorre en bucle, no por recursion:
+      // al re-ejecutar casi todo se salta, y un marco de pila por registro
+      // desbordaria con listas grandes. Solo el PATCH continua por callback,
+      // y ese si desapila (corre en microtarea de la promesa).
+      while (i < items.length) {
+        var it = items[i++], f = it.fields || {}, datos = null;
+        if (f.Datos) { try { datos = JSON.parse(f.Datos); } catch(e){} }
+        if (!datos) { saltados++; continue; }
+
+        var quiere = camposIndexados(lista, datos), cambia = {}, hay = false;
+        cols.forEach(function(c){
+          var actual = (f[c] === null || f[c] === undefined) ? '' : String(f[c]);
+          if (actual !== quiere[c]) { cambia[c] = quiere[c]; hay = true; }
+        });
+        if (!hay) { saltados++; continue; }
+
+        if (prog) prog('Actualizando '+i+' de '+items.length+'...');
+        // De uno en uno a proposito: en paralelo SharePoint responde 429.
+        graph('PATCH', '/sites/'+App.siteId+'/lists/'+lid+'/items/'+it.id+'/fields', cambia, function(r){
+          if (r && r.error) { errores++; console.warn('[idx] item '+it.id, r.error); }
+          else escritos++;
+          siguiente();
+        });
+        return;   // se retoma desde el callback
+      }
+      if (cb) cb({total:items.length, escritos:escritos, saltados:saltados, errores:errores});
+    })();
+  }
+
+  if (prog) prog('Leyendo registros...');
+  bajar('/sites/'+App.siteId+'/lists/'+lid+'/items?expand=fields&$top=999');
 }
 
 // ================================================================
@@ -2481,9 +2566,11 @@ function pgConfig(sec) {
   setSB('<div class="sb-sec">Configuracion</div>'
     +'<div class="sb-item'+(sec==='sistema'?' on':'')+'" onclick="pgConfig(\'sistema\')">Parametros del sistema</div>'
     +'<div class="sb-item'+(sec==='ebr'?' on':'')+'" onclick="pgConfig(\'ebr\')">Nivel de Riesgo de clientes</div>'
-    +'<div class="sb-item'+(sec==='perfil'?' on':'')+'" onclick="pgConfig(\'perfil\')">Perfil transaccional</div>');
+    +'<div class="sb-item'+(sec==='perfil'?' on':'')+'" onclick="pgConfig(\'perfil\')">Perfil transaccional</div>'
+    +(App.rol==='admin' ? '<div class="sb-item'+(sec==='mant'?' on':'')+'" onclick="pgConfig(\'mant\')">Mantenimiento de datos</div>' : ''));
   if (sec === 'ebr')    { pgConfigEBR(); return; }
   if (sec === 'perfil') { pgConfigPerfil(); return; }
+  if (sec === 'mant')   { pgConfigMantenimiento(); return; }
 
   var uma = CFG_UMA.DIARIA;
   var umbral = (uma * CFG_UMA.UMBRAL_UMAS).toLocaleString('es-MX');
@@ -2626,6 +2713,40 @@ function pgConfig(sec) {
       }).join('');
     });
   }
+}
+
+// ── Mantenimiento de datos (solo admin) ───────────────────────
+function pgConfigMantenimiento() {
+  if (App.rol !== 'admin') { sinAcceso(); return; }
+  var cols = (COLS_INDEXADAS.PLD_Clientes || []).join(', ');
+  setMain('<div class="phdr"><div><div class="ptit">Mantenimiento de datos</div>'
+    +'<div class="psub">Operaciones de administrador sobre las listas de SharePoint</div></div></div>'
+
+    +'<div class="card"><div class="card-h"><span class="card-t">Columnas indexadas de Clientes</span></div>'
+    +'<div class="card-b">'
+    +'<p style="font-size:13px;color:var(--tx2);line-height:1.6">Copia a columnas reales de SharePoint los campos que hoy solo viven dentro del JSON: '
+    +'<span style="font-family:monospace;font-size:12px;color:var(--tx1)">'+cols+'</span>. '
+    +'Con eso se puede filtrar del lado del servidor en vez de descargar la lista completa.</p>'
+    +'<p style="font-size:12px;color:var(--tx3);margin-top:8px;line-height:1.6">Solo escribe donde encuentra diferencias, asi que puedes ejecutarlo las veces que quieras. '
+    +'No modifica el JSON de <span style="font-family:monospace">Datos</span> ni cambia lo que la app lee hoy: si algo saliera mal, nada se rompe.</p>'
+    +'<div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap">'
+    +'<button class="btn btn-p" id="btn-idx" onclick="ejecutarRellenoIndexadas()">Rellenar columnas</button>'
+    +'<span id="idx-status" style="font-size:12px;color:var(--tx3)"></span>'
+    +'</div></div></div>');
+}
+
+function ejecutarRellenoIndexadas() {
+  var btn = document.getElementById('btn-idx'), st = document.getElementById('idx-status');
+  function prog(t){ if (st) st.textContent = t; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Procesando...'; }
+  rellenarColumnasIndexadas('PLD_Clientes', prog, function(r){
+    if (btn) { btn.disabled = false; btn.textContent = 'Rellenar columnas'; }
+    if (r.error) { prog(''); toast(r.error, 'e'); return; }
+    prog(r.total+' revisados · '+r.escritos+' actualizados · '+r.saltados+' sin cambio'
+      + (r.errores ? ' · '+r.errores+' con error' : ''));
+    if (r.errores) toast('Relleno terminado con '+r.errores+' errores — revisa la consola', 'w');
+    else toast('Columnas indexadas al dia', 's');
+  });
 }
 
 // ── Pantalla de configuración EBR ─────────────────────────────
