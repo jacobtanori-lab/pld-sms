@@ -3111,9 +3111,13 @@ function cargarEntidadesConfig(cb) {
       };
       var necesitaMigrar = false;
       ENTIDADES.forEach(function(e, i){
-        if (migraciones[e.id]) {
-          ENTIDADES[i].id     = migraciones[e.id].id;
-          ENTIDADES[i].nombre = migraciones[e.id].nombre;
+        // Resolver la migración ANTES de tocar el id: e es el mismo objeto que
+        // ENTIDADES[i], así que reasignar e.id dejaba migraciones[e.id]
+        // indefinido en la línea siguiente y reventaba la carga en cada login.
+        var m = migraciones[e.id];
+        if (m) {
+          ENTIDADES[i].id     = m.id;
+          ENTIDADES[i].nombre = m.nombre;
           necesitaMigrar = true;
         }
       });
