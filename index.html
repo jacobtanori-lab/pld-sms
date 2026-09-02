@@ -2838,7 +2838,13 @@ function _ocrReversoINE(source, cb, fraccion) {
     if (!w || !h) { cb(''); return; }
     var fr = (typeof fraccion === 'number') ? fraccion : 0.50;
     var y0 = Math.floor(h * fr);              // por defecto, la mitad inferior
-    var escala = Math.max(1, Math.min(3, 1800 / w));
+    // Se lleva la banda a unos 1800 px de ancho, ENCOGIENDO si hace falta.
+    // Antes habia un suelo en 1, puesto para no ampliar de menos las fotos
+    // pequenas, que de paso impedia reducir las grandes: con una foto de 3856
+    // px la banda se quedaba a tamano original, con letras enormes y muy fuera
+    // del rango en que Tesseract lee bien, y no sacaba nada. La lectura
+    // general, que si reduce, era la unica que acertaba.
+    var escala = Math.min(3, 1800 / w);
     var out = document.createElement('canvas');
     out.width  = Math.round(w * escala);
     out.height = Math.round((h - y0) * escala);
