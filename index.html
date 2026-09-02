@@ -2499,29 +2499,72 @@ function _runOCR(source, pref, cara) {
       for (var k in d) if (d[k] && !acumA[k]) acumA[k] = d[k];
     };
     var terminarA = function(){ _preRellenarDesdeCURP(acumA, pref, 'anverso'); };
-    var pasadaA = function(binarizar, etiqueta, luego) {
-      _preprocesarImagen(source, function(canvas){
-        Tesseract.recognize(canvas, 'spa', {
-          logger: function(m){
-            if (m.status==='recognizing text')
-              toast('Anverso, '+etiqueta+': '+Math.round((m.progress||0)*100)+'%...', 'i');
-          }
-        }).then(function(r){
-          var t = (r && r.data && r.data.text) || '';
-          console.log('[OCR] anverso (' + etiqueta + ') - ' + t.length + ' caracteres leidos:\n' + t);
-          sumarA(t, etiqueta);
-          luego();
-        }).catch(function(e){
-          console.warn('[OCR] fallo el anverso (' + etiqueta + '):', e);
-          luego();
-        });
-      }, binarizar);
+
+    // Zonas del anverso, en fracciones de la tarjeta, cada una con su propia
+    // ampliacion. El texto de la mitad inferior (clave de elector y CURP) es
+    // mas pequeno que el del nombre y a tamano natural cae por debajo de lo
+    // que Tesseract resuelve: leyendo la tarjeta entera no salia ninguno de
+    // los dos, y recortando ese bloque y ampliandolo salen ambos correctos.
+    // Recortar ademas deja fuera el retrato, la greca del borde y parte del
+    // mapa de fondo, que son la fuente del ruido.
+    var ZONAS = [
+      { x0:0.33, x1:0.90, y0:0.28, y1:1.00, esc:2.0, nom:'bloque de texto' },
+      { x0:0.33, x1:0.92, y0:0.70, y1:1.00, esc:2.2, nom:'bloque inferior ampliado' },
+      { x0:0.00, x1:1.00, y0:0.00, y1:1.00, esc:1.0, nom:'tarjeta completa' }
+    ];
+    var recortarZona = function(base, z) {
+      var W = base.width, H = base.height;
+      var sx = Math.round(W*z.x0), sw = Math.round(W*(z.x1-z.x0));
+      var sy = Math.round(H*z.y0), sh = Math.round(H*(z.y1-z.y0));
+      if (sw < 40 || sh < 40) return null;
+      var c = document.createElement('canvas');
+      c.width  = Math.round(sw*z.esc);
+      c.height = Math.round(sh*z.esc);
+      var g2 = c.getContext('2d');
+      g2.imageSmoothingEnabled = true;
+      g2.imageSmoothingQuality = 'high';
+      g2.drawImage(base, sx, sy, sw, sh, 0, 0, c.width, c.height);
+      return c;
     };
-    // Primero en gris, que es lo que funciona con una credencial real; el
-    // umbral duro queda como segundo intento por si alguna foto lo necesita.
-    pasadaA(false, 'escala de grises', function(){
-      if (completoA()) { terminarA(); return; }
-      pasadaA(true, 'umbral duro', terminarA);
+    var leerZona = function(base, i, luego) {
+      if (i >= ZONAS.length) { luego(); return; }
+      var z = ZONAS[i], c = recortarZona(base, z);
+      if (!c) { leerZona(base, i+1, luego); return; }
+      Tesseract.recognize(c, 'spa', {
+        logger: function(m){
+          if (m.status==='recognizing text')
+            toast('Anverso, '+z.nom+': '+Math.round((m.progress||0)*100)+'%...', 'i');
+        }
+      }).then(function(r){
+        var t = (r && r.data && r.data.text) || '';
+        console.log('[OCR] anverso (' + z.nom + ') - ' + t.length + ' caracteres leidos:\n' + t);
+        sumarA(t, z.nom);
+        if (completoA() && acumA.ap_pat) { terminarA(); return; }
+        leerZona(base, i+1, luego);
+      }).catch(function(e){
+        console.warn('[OCR] fallo el anverso (' + z.nom + '):', e);
+        leerZona(base, i+1, luego);
+      });
+    };
+    // Se preprocesa una sola vez en gris y se recorren las zonas; si aun asi
+    // no aparece ninguno de los dos numeros largos, se prueba el umbral duro
+    // sobre la tarjeta entera, que es el tratamiento anterior.
+    _preprocesarImagen(source, function(base){
+      leerZona(base, 0, function(){
+        if (completoA()) { terminarA(); return; }
+        toast('Ultimo intento con otro tratamiento...', 'i');
+        _preprocesarImagen(source, function(bin){
+          Tesseract.recognize(bin, 'spa').then(function(r){
+            var t = (r && r.data && r.data.text) || '';
+            console.log('[OCR] anverso (umbral duro) - ' + t.length + ' caracteres leidos:\n' + t);
+            sumarA(t, 'umbral duro');
+            terminarA();
+          }).catch(function(e){
+            console.warn('[OCR] fallo el anverso (umbral duro):', e);
+            terminarA();
+          });
+        }, true);
+      });
     });
     return;
   }
@@ -2611,7 +2654,10 @@ function _extraerDatosConstancia(txt) {
 
 // Etiquetas impresas en el frente de la credencial. Ninguna puede formar parte
 // de un nombre ni de un domicilio, y marcan donde termina cada bloque.
-var _INE_FIN_BLOQUE = /^(DOMICI?L?IO|CLAVE|CURP|A[NÑ]O|FECHA|SECCI|VIGENCIA|EMISI|ESTADO|MUNICIPIO|LOCALIDAD|INSTITUTO|CREDENCIAL|REGISTRO|ELECCIONES|IDMEX)/;
+// DOMIC\w* y no DOMICILIO exacto: el OCR se come letras (se observo "DOMICILO"),
+// y si la etiqueta no se reconoce, el domicilio no se encuentra y ademas sus
+// renglones se cuelan dentro del nombre.
+var _INE_FIN_BLOQUE = /^(DOMIC\w*|CLAVE|CURP|A[NÑ]O|FECHA|SECCI|VIGENCIA|EMISI|ESTADO|MUNICIPIO|LOCALIDAD|INSTITUTO|CREDENCIAL|REGISTRO|ELECCIONES|IDMEX)/;
 // Etiquetas sueltas que pueden caer en medio del nombre segun como el OCR
 // ordene la pagina (SEXO va a la derecha del nombre): se saltan, no cortan.
 var _INE_ETIQUETA_SUELTA = /^(SEXO|SEXO\/SEX|G[EÉ]NERO|INDIGENA|NOMBRE\/NAME|DOMICILIO\/ADDRESS|M[EÉ]XICO)\b/;
@@ -2669,10 +2715,17 @@ function _extraerDatosINE(txt) {
   // El INE lo imprime en TRES renglones bajo la etiqueta NOMBRE: apellido
   // paterno, apellido materno y nombre de pila. La version anterior esperaba
   // los tres en un mismo renglon, asi que no lo encontraba nunca.
+  // Se quita lo que no sea letra y se tiran las palabras de una o dos letras:
+  // el fondo de seguridad deja pegados restos al final del renglon, y sin esto
+  // el "SE" que el OCR añadia a la etiqueta acababa en el apellido paterno.
+  function limpiaRenglon(l) {
+    return l.replace(/[^A-ZÁÉÍÓÚÜÑ'\-\s]/g, ' ').replace(/\s+/g, ' ').trim()
+            .split(' ').filter(function(p){ return p.length > 2; }).join(' ');
+  }
   function esRenglonDeNombre(l) {
-    return l.length >= 2 && !/\d/.test(l)
-        && !/[^A-ZÁÉÍÓÚÜÑ'\-\s]/.test(l)
-        && !_INE_FIN_BLOQUE.test(l) && !_INE_ETIQUETA_SUELTA.test(l);
+    if (/\d/.test(l)) return false;
+    if (_INE_FIN_BLOQUE.test(l) || _INE_ETIQUETA_SUELTA.test(l)) return false;
+    return limpiaRenglon(l).length >= 3;
   }
   var iNom = -1;
   for (i = 0; i < lineas.length; i++) {
@@ -2681,21 +2734,45 @@ function _extraerDatosINE(txt) {
   if (iNom >= 0) {
     var partes = [];
     var resto = lineas[iNom].replace(/^NOMBRE\b[\s:\/]*(NAME\b)?[\s:]*/, '').trim();
-    if (resto && esRenglonDeNombre(resto)) partes.push(resto);
+    if (resto && esRenglonDeNombre(resto)) partes.push(limpiaRenglon(resto));
     for (j = iNom + 1; j < lineas.length && partes.length < 4; j++) {
       if (_INE_FIN_BLOQUE.test(lineas[j])) break;
       if (_INE_ETIQUETA_SUELTA.test(lineas[j])) continue;   // SEXO y similares
       if (!esRenglonDeNombre(lineas[j])) break;
-      partes.push(lineas[j]);
+      partes.push(limpiaRenglon(lineas[j]));
     }
-    if (partes.length >= 3) {
-      d.ap_pat = partes[0]; d.ap_mat = partes[1]; d.nombre = partes.slice(2).join(' ');
-    } else if (partes.length === 2) {
-      d.ap_pat = partes[0]; d.nombre = partes[1];
-    } else if (partes.length === 1) {
-      var pal = partes[0].split(/\s+/).filter(Boolean);
-      if (pal.length >= 3)      { d.ap_pat = pal[0]; d.ap_mat = pal[1]; d.nombre = pal.slice(2).join(' '); }
-      else if (pal.length === 2) { d.ap_pat = pal[0]; d.nombre = pal[1]; }
+    // La CURP lleva la inicial del apellido paterno, la del materno y la del
+    // nombre (posiciones 0, 2 y 3). Cuando se pudo leer, se usa para colocar
+    // cada renglon en su sitio en vez de fiarse del orden, que el OCR altera.
+    var puesto = false;
+    if (d.curp && partes.length) {
+      var libres = partes.slice();
+      var tomar = function(letra) {
+        for (var k = 0; k < libres.length; k++) {
+          if (libres[k].charAt(0) === letra) return libres.splice(k, 1)[0];
+        }
+        return '';
+      };
+      var pat = tomar(d.curp.charAt(0));
+      var mat = tomar(d.curp.charAt(2));
+      var nom = tomar(d.curp.charAt(3));
+      if (pat || mat || nom) {
+        if (pat) d.ap_pat = pat;
+        if (mat) d.ap_mat = mat;
+        if (nom) d.nombre = nom;
+        puesto = true;
+      }
+    }
+    if (!puesto) {
+      if (partes.length >= 3) {
+        d.ap_pat = partes[0]; d.ap_mat = partes[1]; d.nombre = partes.slice(2).join(' ');
+      } else if (partes.length === 2) {
+        d.ap_pat = partes[0]; d.nombre = partes[1];
+      } else if (partes.length === 1) {
+        var pal = partes[0].split(/\s+/).filter(Boolean);
+        if (pal.length >= 3)      { d.ap_pat = pal[0]; d.ap_mat = pal[1]; d.nombre = pal.slice(2).join(' '); }
+        else if (pal.length === 2) { d.ap_pat = pal[0]; d.nombre = pal[1]; }
+      }
     }
   }
 
@@ -2705,29 +2782,47 @@ function _extraerDatosINE(txt) {
   // como calle, porque el domicilio real trae puntos que rompian el patron.
   var iDom = -1;
   for (i = 0; i < lineas.length; i++) {
-    if (/^DOMICI?L?IO\b/.test(lineas[i])) { iDom = i; break; }
+    if (/^DOMIC/.test(lineas[i])) { iDom = i; break; }
   }
   if (iDom >= 0) {
     var bloque = [];
-    var r0 = lineas[iDom].replace(/^DOMICI?L?IO\b[\s:\/]*(ADDRESS\b)?[\s:]*/, '').trim();
-    if (r0) bloque.push(r0);
+    // Un renglon util del domicilio trae una palabra de al menos tres letras o
+    // algun numero. Sin este filtro se colaban lineas de puro ruido: el OCR
+    // intercalo un "o r" entre la calle y la colonia y, al leer por posicion,
+    // esa basura acababa guardada como la colonia.
+    var sirveRenglon = function(l) {
+      return /[A-ZÁÉÍÓÚÜÑ]{3}/.test(l) || /\d/.test(l);
+    };
+    var r0 = lineas[iDom].replace(/^DOMIC\w*[\s:\/]*(ADDRESS\b)?[\s:]*/, '').trim();
+    if (r0 && sirveRenglon(r0)) bloque.push(r0);
     for (j = iDom + 1; j < lineas.length && bloque.length < 3; j++) {
       if (_INE_FIN_BLOQUE.test(lineas[j])) break;
+      if (!sirveRenglon(lineas[j])) continue;
       bloque.push(lineas[j]);
     }
-    var sinColonia = [];
-    bloque.forEach(function(lb){
-      if (!d.colonia && /^COL(?:ONIA)?[\s\.]+/.test(lb)) {
-        d.colonia = lb.replace(/^COL(?:ONIA)?[\s\.]+/, '').replace(/,.*$/, '').trim();
-      } else sinColonia.push(lb);
-    });
-    for (i = 0; i < sinColonia.length && !d.calle; i++) {
+    // El INE imprime el domicilio en tres renglones: calle y numero, colonia,
+    // y municipio con estado. Se usa la POSICION en vez de buscar patrones por
+    // todo el bloque: con una foto real el OCR pega ruido al final del renglon
+    // ("C EMILIO CARRANZA 820 E") y junta palabras ("COLLOS SAUCES"), y esos
+    // dos detalles bastaban para no reconocer ni la calle ni la colonia.
+    if (bloque[0]) {
       // El \b antes de NO y NUM no es cosmetico: sin el, "CALLE PINO 123" se
-      // partia como calle "CALLE PI" y numero 123, porque el patron encontraba
-      // la abreviatura "NO" dentro de la palabra PINO.
-      var mc = sinColonia[i].match(/^(.+?)[\s,]*(?:\bNO\.?|\bN[UÚ]M(?:ERO)?\.?|#)\s*(\d+[A-Z]?)\b/)
-            || sinColonia[i].match(/^([A-ZÁÉÍÓÚÜÑ\s\.]{4,}?)\s+(\d+[A-Z]?)\s*$/);
+      // partia como calle "CALLE PI", porque encontraba la abreviatura "NO"
+      // dentro de PINO. Y no se ancla al final del renglon, para que el ruido
+      // que quede detras del numero no impida reconocerlo.
+      var mc = bloque[0].match(/^(.+?)[\s,]*(?:\bNO\.?|\bN[UÚ]M(?:ERO)?\.?|#)\s*(\d+[A-Z]?)\b/)
+            || bloque[0].match(/^([A-ZÁÉÍÓÚÜÑ\s\.]{4,}?)\s+(\d{1,6}[A-Z]?)\b/);
       if (mc) { d.calle = mc[1].replace(/[\s,\.]+$/, '').trim(); d.num_ext = mc[2]; }
+      else    { d.calle = bloque[0]; }
+    }
+    if (bloque[1]) {
+      d.colonia = bloque[1]
+        .replace(/^COL(?:ONIA)?[\s\.]*/, '')      // "COL.", "COLONIA" o pegado
+        .replace(/,.*$/, '')                       // lo que siga a una coma
+        .replace(/\d.*$/, '')                      // corta al llegar al CP
+        .replace(/[^A-ZÁÉÍÓÚÜÑ]+$/, '')            // ruido del final
+        .replace(/\s+/g, ' ').trim();
+      if (!/[A-ZÁÉÍÓÚÜÑ]{3}/.test(d.colonia)) d.colonia = '';
     }
     var todoDom = bloque.join(' ');
     var mcp = todoDom.match(/C\.?\s*P\.?\s*(\d{5})/) || todoDom.match(/\b(\d{5})\b/);
@@ -2940,6 +3035,10 @@ function _preRellenarDesdeCURP(datos, pref, modo) {
   // Reverso de la credencial INE
   setV(pref+'ine_cic',           datos.ine_cic);
   setV(pref+'ine_id_ciudadano',  datos.ine_id_ciudadano);
+  // La clave de elector es el numero de la credencial para votar, asi que va
+  // al campo de numero de identificacion. Se extraia y se tiraba, porque no
+  // habia ninguna casilla que la recibiera.
+  setV(pref+'num_id',            datos.clave_elector);
 
   var fuente = modo === 'reverso' ? 'el reverso del INE'
              : modo === 'anverso' ? 'el anverso del INE'
