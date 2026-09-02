@@ -2411,39 +2411,45 @@ function _runOCR(source, pref, cara) {
       if (mrz.ocr && !acum.ine_ocr)                   acum.ine_ocr = mrz.ocr;
     };
     var terminar = function(){ _preRellenarDesdeCURP(acum, pref, 'reverso'); };
-    // Paso 3: pasada dedicada sobre la imagen completa (el encuadre puede dejar
-    // la tira mas arriba de la banda inferior).
-    var pasoCompleta = function(){
-      _ocrReversoINE(source, function(t3){ sumar(t3, 'dedicada, imagen completa'); terminar(); }, 0);
-    };
-    // Paso 2: pasada dedicada sobre la banda inferior.
-    var pasoBanda = function(){
-      toast('Afinando la lectura de la tira de numeros...', 'i');
-      _ocrReversoINE(source, function(t2){
-        sumar(t2, 'dedicada, banda inferior');
-        if (completo()) { terminar(); return; }
-        pasoCompleta();
-      }, 0.45);
-    };
-    // Paso 1: lectura general con preprocesamiento, que es la que venia
-    // funcionando con fotos reales.
-    _preprocesarImagen(source, function(canvas){
-      Tesseract.recognize(canvas, 'spa', {
-        logger: function(m){
-          if (m.status==='recognizing text')
-            toast('Reverso, lectura general: '+Math.round((m.progress||0)*100)+'%...', 'i');
-        }
-      }).then(function(res1){
-        var t1 = (res1 && res1.data && res1.data.text) || '';
-        console.log('[OCR] reverso, lectura general - ' + t1.length + ' caracteres leidos:\n' + t1);
-        sumar(t1, 'lectura general');
-        if (completo()) { terminar(); return; }
-        pasoBanda();
-      }).catch(function(e){
-        console.warn('[OCR] fallo la lectura general del reverso:', e);
-        pasoBanda();
+
+    // Ultimo recurso: lectura general con preprocesamiento. Se conserva porque
+    // en su dia leyo un reverso que la pasada dedicada no supo leer.
+    var general = function(){
+      toast('Ultimo intento sobre la imagen completa...', 'i');
+      _preprocesarImagen(source, function(canvas){
+        Tesseract.recognize(canvas, 'spa', {
+          logger: function(m){
+            if (m.status==='recognizing text')
+              toast('Reverso, lectura general: '+Math.round((m.progress||0)*100)+'%...', 'i');
+          }
+        }).then(function(res1){
+          var t1 = (res1 && res1.data && res1.data.text) || '';
+          console.log('[OCR] reverso, lectura general - ' + t1.length + ' caracteres leidos:\n' + t1);
+          sumar(t1, 'lectura general');
+          terminar();
+        }).catch(function(e){
+          console.warn('[OCR] fallo la lectura general del reverso:', e);
+          terminar();
+        });
       });
-    });
+    };
+
+    // Recortes de mas ajustado a mas amplio. El primero deja fuera los codigos
+    // QR, y ese detalle lo es todo: Tesseract intenta leerlos como texto y
+    // produce cientos de caracteres de basura que ahogan la tira. Verificado
+    // con la foto real de una credencial, donde el recorte al 32% inferior
+    // acierta los dos numeros y el del 55% no devuelve nada.
+    var RECORTES = [0.68, 0.45, 0];
+    var siguiente = function(i){
+      if (i >= RECORTES.length) { general(); return; }
+      if (i > 0) toast('Ampliando la busqueda de la tira...', 'i');
+      _ocrReversoINE(source, function(t){
+        sumar(t, 'recorte ' + Math.round((1 - RECORTES[i]) * 100) + '% inferior');
+        if (completo()) { terminar(); return; }
+        siguiente(i + 1);
+      }, RECORTES[i]);
+    };
+    siguiente(0);
     return;
   }
 
