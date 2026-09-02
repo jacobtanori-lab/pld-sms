@@ -1924,11 +1924,19 @@ function setSB(h){document.getElementById('sb-ct').innerHTML=h;}
 function setMain(h){document.getElementById('main').innerHTML=h;}
 function cerrarMo(id){document.getElementById(id).classList.remove('open');}
 function abrirMo(id){document.getElementById(id).classList.add('open');}
+// Un solo temporizador compartido. Sin esto el aviso viejo apagaba al nuevo: en
+// el OCR cada avance de porcentaje dejaba su propio temporizador corriendo, y
+// uno de ellos borraba el mensaje de error casi al aparecer, sin dar tiempo a
+// leerlo. Los errores y advertencias ademas se quedan mas rato en pantalla.
+var _toastTimer = null;
 function toast(msg,tipo){
   var el=document.getElementById('toast');
   el.textContent=msg;
   el.style.background=tipo==='e'?'#A32D2D':tipo==='s'?'#0F6E56':tipo==='w'?'#854F0B':'#1a1a18';
-  el.classList.add('show'); setTimeout(function(){el.classList.remove('show');},4000);
+  el.classList.add('show');
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(function(){el.classList.remove('show');},
+                           (tipo==='e'||tipo==='w') ? 12000 : 4000);
 }
 
 // ── Pensador: indicador de proceso en curso ────────────────────────────────
@@ -2387,6 +2395,10 @@ function _runOCR(source, pref, esINE) {
       }
     }).then(function(result){
       var txt = result.data.text;
+      // Queda en consola lo que el OCR leyo de verdad: sin esto, un fallo de
+      // lectura no hay forma de diagnosticarlo.
+      console.log('[OCR] ' + (esINE ? 'credencial' : 'constancia') + ' - '
+        + txt.length + ' caracteres leidos:\n' + txt);
       if (esINE) {
         var datos = _extraerDatosINE(txt);
         _preRellenarDesdeCURP(datos, pref, true);
@@ -2565,14 +2577,20 @@ function _extraerMRZReversoINE(tUp) {
 
 function _preRellenarDesdeCURP(datos, pref, soloVacios) {
   var frm = document.getElementById('frm') || document;
-  var llenados = 0;
+  // Se cuentan por separado para poder decir POR QUE no se lleno nada:
+  //   conValor  = datos que el OCR si extrajo
+  //   sinCampo  = datos sin casilla en el formulario (sintoma tipico de una
+  //               version vieja de la pagina guardada en el navegador)
+  //   yaTenian  = casillas que ya traian valor y no se sobreescriben
+  var llenados = 0, conValor = 0, sinCampo = 0, yaTenian = 0;
 
   function setV(name, val) {
     if (!val) return;
+    conValor++;
     var el = frm.querySelector('[name="'+name+'"]');
-    if (!el) return;
+    if (!el) { sinCampo++; console.warn('[OCR] el formulario no tiene la casilla', name); return; }
     // Si soloVacios=true, no sobreescribir campos que ya tienen valor
-    if (soloVacios && el.value && el.value.trim() !== '') return;
+    if (soloVacios && el.value && el.value.trim() !== '') { yaTenian++; return; }
     el.value = String(val).trim();
     el.dispatchEvent(new Event('change'));
     llenados++;
@@ -2602,10 +2620,22 @@ function _preRellenarDesdeCURP(datos, pref, soloVacios) {
   setV(pref+'ine_id_ciudadano',  datos.ine_id_ciudadano);
 
   var fuente = soloVacios ? 'INE' : 'constancia CURP';
+  console.log('[OCR] prellenado:', { extraidos: conValor, llenados: llenados,
+    sinCasilla: sinCampo, yaTenianValor: yaTenian, datos: datos });
+
   if (llenados > 0) {
     toast('✓ '+llenados+' campos prellenados desde '+fuente, 's');
+  } else if (sinCampo > 0) {
+    // Se leyeron datos pero el formulario no tiene donde ponerlos.
+    toast('Se leyeron '+conValor+' datos, pero esta pantalla no tiene esas casillas. '
+      + 'Recarga con Ctrl+Shift+R y vuelve a intentar.', 'e');
+  } else if (yaTenian > 0) {
+    toast('Lo que se leyo ya estaba capturado en el expediente; no se cambio nada.', 'w');
+  } else if (soloVacios) {
+    toast('No se reconocio nada en la imagen. El CIC y el identificador estan en el REVERSO; '
+      + 'el nombre y la CURP, en el FRENTE. Revisa que se lea nitida y sin reflejos.', 'e');
   } else {
-    toast('No se extrajeron datos del '+fuente+'. Intenta con imagen más clara.', 'e');
+    toast('No se extrajeron datos de la '+fuente+'. Intenta con una imagen mas clara.', 'e');
   }
 }
 
