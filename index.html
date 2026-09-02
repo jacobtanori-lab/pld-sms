@@ -7982,8 +7982,14 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
         if (prevTotal >= UMA_CALIFICA_ARI) acumSemestralPrev += prevTotal;
       });
 
-      if (acumSemestral >= UMA_SEMESTRAL_ARI && acumSemestralPrev < UMA_SEMESTRAL_ARI) {
-        console.log('[UMBRAL ARI] ALERTA SEMESTRAL');
+      // Mientras el acumulado supere el umbral se entra SIEMPRE: crearAlertaUmbral
+      // deduplica (actualiza la alerta abierta del cliente+fraccion o crea una si
+      // no hay), asi que el monto a reportar se mantiene al dia. Antes solo se
+      // entraba en la operacion que cruzaba, y la alerta se quedaba con el
+      // acumulado de ese momento. El aviso emergente se conserva solo en el cruce.
+      if (acumSemestral >= UMA_SEMESTRAL_ARI) {
+        var cruza = acumSemestralPrev < UMA_SEMESTRAL_ARI;
+        console.log('[UMBRAL ARI]', cruza ? 'ALERTA SEMESTRAL' : 'sigue sobre el umbral: se refresca la alerta abierta');
         var descMeses = mesesQueCalifican.map(function(m){
           return m.mes + ' ($' + m.total.toLocaleString('es-MX') + ')';
         }).join(', ');
@@ -7999,7 +8005,7 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
           meses_califican: mesesQueCalifican.length,
           estatus_atencion: 'Pendiente'
         });
-        toast('ALERTA UMBRAL SEMESTRAL Fr.XV: $' + acumSemestral.toLocaleString('es-MX')
+        if (cruza) toast('ALERTA UMBRAL SEMESTRAL Fr.XV: $' + acumSemestral.toLocaleString('es-MX')
           + ' en ' + mesesQueCalifican.length + ' meses calificados', 'w');
       }
 
@@ -8013,8 +8019,11 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
         '+ nueva:', nuevaMonto, '= total:', acumConNueva,
         '| umbral:', UMBRAL_INM);
 
-      if (acumConNueva >= UMBRAL_INM && acumuladoPrev < UMBRAL_INM) {
-        console.log('[UMBRAL INM] ALERTA ACUMULADO');
+      // Misma regla que en Fr. XV: se entra siempre que el acumulado supere el
+      // umbral; crearAlertaUmbral actualiza la alerta abierta o crea una.
+      if (acumConNueva >= UMBRAL_INM) {
+        var cruza = acumuladoPrev < UMBRAL_INM;
+        console.log('[UMBRAL INM]', cruza ? 'ALERTA ACUMULADO' : 'sigue sobre el umbral: se refresca la alerta abierta');
         crearAlertaUmbral({
           nombre_cliente: nomCli||'Sin nombre', num_cliente: numCli,
           id_cliente_ref: idCli, fraccion: 'INM',
@@ -8025,7 +8034,7 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
           monto_acumulado: acumConNueva, monto_umbral: UMBRAL_INM,
           num_operaciones: opsCliente.length + 1, estatus_atencion: 'Pendiente'
         });
-        toast('ALERTA UMBRAL Fr.V: acumulado $' + acumConNueva.toLocaleString('es-MX'), 'w');
+        if (cruza) toast('ALERTA UMBRAL Fr.V: acumulado $' + acumConNueva.toLocaleString('es-MX'), 'w');
       } else if (acumConNueva < UMBRAL_INM) {
         var pct = Math.round(acumConNueva / UMBRAL_INM * 100);
         if (pct >= 70) {
