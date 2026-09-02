@@ -7951,24 +7951,36 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
 
       console.log('[UMBRAL ARI] Resumen por mes:', JSON.stringify(porMes));
 
-      var mesActual      = ahora.getFullYear() + '-' + pad(ahora.getMonth() + 1);
-      var totalMesActual = porMes[mesActual] ? porMes[mesActual].total : 0;
-      var totalMesAntes  = totalMesActual - nuevaMonto;
+      // Mes de la OPERACION, no el calendario de hoy: Paso 1 ya la agrupo ahi, y
+      // una operacion capturada con fecha de otro mes debe evaluarse en el suyo.
+      var mesActual = mesDe(nuevaFecha || hoy());
+      var mesOp     = porMes[mesActual] || { total: 0, ops: 0, calif: 0, opsCalif: 0 };
 
-      // Paso 2: Alerta mensual directa — mes cruza 3,210 UMAs con esta operación
-      if (totalMesActual >= UMA_DIRECTO_ARI && totalMesAntes < UMA_DIRECTO_ARI) {
-        console.log('[UMBRAL ARI] ALERTA MENSUAL DIRECTA');
+      // Paso 2: Alerta mensual directa. Solo cuentan los pagos del mes que
+      // individualmente alcanzan 1,605 UMA (regla del Oficial de Cumplimiento):
+      //   - un pago >= 3,210 UMA dispara solo;
+      //   - dos o mas pagos >= 1,605 UMA disparan cuando su suma llega a 3,210;
+      //   - pagos < 1,605 UMA no cuentan, ni solos ni combinados con uno que si.
+      // Se entra siempre que la suma calificada supere el umbral (la alerta
+      // abierta se refresca); el aviso emergente solo en el cruce.
+      var califMesActual = mesOp.calif;
+      var califMesAntes  = califMesActual - (nuevaMonto >= UMA_CALIFICA_ARI ? nuevaMonto : 0);
+      if (califMesActual >= UMA_DIRECTO_ARI) {
+        var cruzaMes = califMesAntes < UMA_DIRECTO_ARI;
+        console.log('[UMBRAL ARI]', cruzaMes ? 'ALERTA MENSUAL DIRECTA' : 'mes sigue sobre 3,210 UMA: se refresca la alerta mensual',
+          '| pagos >= 1,605 UMA en ' + mesActual + ': $' + califMesActual.toLocaleString('es-MX')
+          + ' (' + mesOp.opsCalif + ' de ' + mesOp.ops + ' pagos)');
         crearAlertaUmbral({
           nombre_cliente: nomCli||'Sin nombre', num_cliente: numCli,
           id_cliente_ref: idCli, fraccion: 'ARI',
           tipo: 'Umbral mensual directo Fr.XV', nivel: 'Alto',
-          descripcion: 'Acumulado mensual de $' + totalMesActual.toLocaleString('es-MX')
-            + ' en ' + mesActual + ' supera el umbral mensual de $' + UMA_DIRECTO_ARI.toLocaleString('es-MX')
-            + ' (3,210 UMAs Fr.XV)',
-          monto_acumulado: totalMesActual, monto_umbral: UMA_DIRECTO_ARI,
-          num_operaciones: porMes[mesActual].ops, estatus_atencion: 'Pendiente'
+          descripcion: 'Pagos que alcanzan 1,605 UMA en ' + mesActual + ' suman $' + califMesActual.toLocaleString('es-MX')
+            + ' y superan el umbral mensual de $' + UMA_DIRECTO_ARI.toLocaleString('es-MX')
+            + ' (3,210 UMAs Fr.XV); ' + mesOp.opsCalif + ' de ' + mesOp.ops + ' pagos del mes',
+          monto_acumulado: califMesActual, monto_umbral: UMA_DIRECTO_ARI,
+          num_operaciones: mesOp.opsCalif, estatus_atencion: 'Pendiente'
         });
-        toast('ALERTA UMBRAL MENSUAL Fr.XV: $' + totalMesActual.toLocaleString('es-MX'), 'w');
+        if (cruzaMes) toast('ALERTA UMBRAL MENSUAL Fr.XV: $' + califMesActual.toLocaleString('es-MX'), 'w');
       }
 
       // Paso 3: Acumulado semestral — solo los pagos que individualmente alcanzan
@@ -8482,8 +8494,12 @@ function crearAlertaUmbral(datos) {
       if (!mismoCliente && datos.num_cliente && String(a.num_cliente) === String(datos.num_cliente)) mismoCliente = true;
       var mismaFrac = (a.fraccion || 'INM') === datos.fraccion;
       var estaAbierta = (a.estatus_atencion || 'Pendiente') !== 'Reportada' && (a.estatus_atencion || 'Pendiente') !== 'Cerrada';
-      var esUmbral = a.tipo && (a.tipo.indexOf('Umbral') >= 0 || a.tipo.indexOf('umbral') >= 0);
-      if (mismoCliente && mismaFrac && estaAbierta && esUmbral) alertaExistente = a;
+      // Mismo TIPO de alerta, no "cualquier umbral": la mensual directa, la
+      // semestral y la individual son eventos distintos y cada una conserva su
+      // propia alerta abierta. Antes cualquiera sobreescribia a cualquiera, y
+      // con el refresco en cada operacion se pisaban en orden aleatorio.
+      var mismoTipo = (a.tipo || '') === (datos.tipo || '');
+      if (mismoCliente && mismaFrac && estaAbierta && mismoTipo) alertaExistente = a;
     });
 
     if (alertaExistente) {
