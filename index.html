@@ -2614,7 +2614,10 @@ function _extraerDatosINE(txt) {
       } else sinColonia.push(lb);
     });
     for (i = 0; i < sinColonia.length && !d.calle; i++) {
-      var mc = sinColonia[i].match(/^(.+?)[\s,]*(?:NO\.?|N[UÚ]M(?:ERO)?\.?|#)\s*(\d+[A-Z]?)\b/)
+      // El \b antes de NO y NUM no es cosmetico: sin el, "CALLE PINO 123" se
+      // partia como calle "CALLE PI" y numero 123, porque el patron encontraba
+      // la abreviatura "NO" dentro de la palabra PINO.
+      var mc = sinColonia[i].match(/^(.+?)[\s,]*(?:\bNO\.?|\bN[UÚ]M(?:ERO)?\.?|#)\s*(\d+[A-Z]?)\b/)
             || sinColonia[i].match(/^([A-ZÁÉÍÓÚÜÑ\s\.]{4,}?)\s+(\d+[A-Z]?)\s*$/);
       if (mc) { d.calle = mc[1].replace(/[\s,\.]+$/, '').trim(); d.num_ext = mc[2]; }
     }
