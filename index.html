@@ -1691,11 +1691,6 @@ function spGet(lista, cb, filtro) {
   var lid = App.listas[lista];
   if (!lid) { if(cb) cb([]); return; }
   var acumulado = [];
-  function mapear(item) {
-    var f = item.fields || {};
-    if (f.Datos) { try { var p=JSON.parse(f.Datos); p.id=String(item.id); return p; } catch(e){} }
-    f.id = String(item.id); return f;
-  }
   (function bajar(u){
     graph('GET', u, null, function(data) {
       // Segundo argumento solo cuando la lectura fallo: distingue "lista
@@ -1705,7 +1700,7 @@ function spGet(lista, cb, filtro) {
         if (cb) cb(acumulado, (data && data.error) || {code:'SinRespuesta'});
         return;
       }
-      acumulado = acumulado.concat(data.value.map(mapear));
+      acumulado = acumulado.concat(data.value.map(spMapear));
       // Seguir nextLink no es opcional: sin esto la lista se truncaba en
       // silencio al pasar de 999 elementos — registros que simplemente no
       // aparecian, sin ningun aviso ni error.
@@ -1729,6 +1724,26 @@ function odataStr(v) {
 // SharePoint rechaza la consulta.
 function spBuscar(lista, filtro, cb) {
   spGet(lista, cb, filtro);
+}
+
+// Un item de Graph -> registro de la app: el JSON de Datos con su id, o los
+// fields crudos si no hay JSON. Lo comparten spGet y spGetUno para no divergir.
+function spMapear(item) {
+  var f = item.fields || {};
+  if (f.Datos) { try { var p=JSON.parse(f.Datos); p.id=String(item.id); return p; } catch(e){} }
+  f.id = String(item.id); return f;
+}
+
+// Un solo registro por su id de SharePoint. Ese id es el de la lista, indexado
+// de fabrica, asi que no necesita columna alguna. Sustituye al patron "bajar
+// la lista completa para hacer x.id === id". cb(null) si no existe o fallo.
+function spGetUno(lista, id, cb) {
+  var lid = App.listas[lista];
+  if (!lid || id === undefined || id === null || id === '') { if (cb) cb(null); return; }
+  graph('GET', '/sites/'+App.siteId+'/lists/'+lid+'/items/'+encodeURIComponent(id)+'?expand=fields', null, function(item) {
+    if (!item || item.error || !item.fields) { if (cb) cb(null); return; }
+    if (cb) cb(spMapear(item));
+  });
 }
 
 function spCreate(lista, datos, cb) {
@@ -1800,7 +1815,8 @@ function spDelete(lista, itemId, cb) {
 // servidor en vez de bajar la lista completa. El JSON sigue siendo la fuente
 // de verdad: por ahora nadie lee de estas columnas.
 var COLS_INDEXADAS = {
-  PLD_Clientes: ['num_cliente','rfc','entidad_id','tipo','riesgo','estatus']
+  PLD_Clientes: ['num_cliente','rfc','entidad_id','tipo','riesgo','estatus'],
+  PLD_Alertas:  ['id_cliente_ref','num_cliente','entidad_id']
 };
 
 // Devuelve SIEMPRE todas las columnas de la lista, con '' para lo vacio: si un
@@ -2790,47 +2806,51 @@ function pgConfig(sec) {
 // ── Mantenimiento de datos (solo admin) ───────────────────────
 function pgConfigMantenimiento() {
   if (App.rol !== 'admin') { sinAcceso(); return; }
-  var cols = (COLS_INDEXADAS.PLD_Clientes || []).join(', ');
+  // Una tarjeta por cada lista con columnas espejo (COLS_INDEXADAS).
+  var tarjetas = Object.keys(COLS_INDEXADAS).map(function(l){
+    var nombre = l.replace(/^PLD_/, '');
+    return '<div class="card"><div class="card-h"><span class="card-t">Columnas indexadas de '+nombre+'</span>'
+      +'<span style="font-size:12px;color:var(--tx3);font-family:monospace">'+l+'</span></div>'
+      +'<div class="card-b">'
+      +'<p style="font-size:13px;color:var(--tx2);line-height:1.6">Copia a columnas reales de SharePoint los campos que hoy solo viven dentro del JSON: '
+      +'<span style="font-family:monospace;font-size:12px;color:var(--tx1)">'+COLS_INDEXADAS[l].join(', ')+'</span>. '
+      +'Sirven para consultar del lado del servidor en vez de bajar la lista completa.</p>'
+      +'<p style="font-size:12px;color:var(--tx3);margin-top:8px;line-height:1.6">«Verificar» solo lee y reporta cuantos registros estan desfasados. '
+      +'«Rellenar» escribe unicamente donde encuentra diferencias, asi que puedes ejecutarlo las veces que quieras. '
+      +'Ninguno de los dos toca el JSON de <span style="font-family:monospace">Datos</span>.</p>'
+      +'<div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap">'
+      +'<button class="btn" id="btn-idx-ver-'+l+'" onclick="ejecutarRellenoIndexadas(\''+l+'\',true)">Verificar cobertura</button>'
+      +'<button class="btn btn-p" id="btn-idx-'+l+'" onclick="ejecutarRellenoIndexadas(\''+l+'\',false)">Rellenar columnas</button>'
+      +'<span id="idx-status-'+l+'" style="font-size:12px;color:var(--tx3)"></span>'
+      +'</div></div></div>';
+  }).join('');
   setMain('<div class="phdr"><div><div class="ptit">Mantenimiento de datos</div>'
     +'<div class="psub">Operaciones de administrador sobre las listas de SharePoint</div></div></div>'
-
-    +'<div class="card"><div class="card-h"><span class="card-t">Columnas indexadas de Clientes</span></div>'
-    +'<div class="card-b">'
-    +'<p style="font-size:13px;color:var(--tx2);line-height:1.6">Copia a columnas reales de SharePoint los campos que hoy solo viven dentro del JSON: '
-    +'<span style="font-family:monospace;font-size:12px;color:var(--tx1)">'+cols+'</span>. '
-    +'El guardado de expedientes ya consulta por esas columnas del lado del servidor, asi que conviene tenerlas al dia.</p>'
-    +'<p style="font-size:12px;color:var(--tx3);margin-top:8px;line-height:1.6">«Verificar» solo lee y reporta cuantos expedientes estan desfasados. '
-    +'«Rellenar» escribe unicamente donde encuentra diferencias, asi que puedes ejecutarlo las veces que quieras. '
-    +'Ninguno de los dos toca el JSON de <span style="font-family:monospace">Datos</span>.</p>'
-    +'<div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap">'
-    +'<button class="btn" id="btn-idx-ver" onclick="ejecutarRellenoIndexadas(true)">Verificar cobertura</button>'
-    +'<button class="btn btn-p" id="btn-idx" onclick="ejecutarRellenoIndexadas(false)">Rellenar columnas</button>'
-    +'<span id="idx-status" style="font-size:12px;color:var(--tx3)"></span>'
-    +'</div></div></div>');
+    + tarjetas);
 }
 
-function ejecutarRellenoIndexadas(soloRevisar) {
-  var btn  = document.getElementById(soloRevisar ? 'btn-idx-ver' : 'btn-idx');
-  var otro = document.getElementById(soloRevisar ? 'btn-idx' : 'btn-idx-ver');
-  var st   = document.getElementById('idx-status');
+function ejecutarRellenoIndexadas(lista, soloRevisar) {
+  var btn  = document.getElementById(soloRevisar ? 'btn-idx-ver-'+lista : 'btn-idx-'+lista);
+  var otro = document.getElementById(soloRevisar ? 'btn-idx-'+lista : 'btn-idx-ver-'+lista);
+  var st   = document.getElementById('idx-status-'+lista);
   var etiqueta = btn ? btn.textContent : '';
   function prog(t){ if (st) st.textContent = t; }
   if (btn)  { btn.disabled = true; btn.textContent = soloRevisar ? 'Revisando...' : 'Procesando...'; }
   if (otro) otro.disabled = true;
-  rellenarColumnasIndexadas('PLD_Clientes', prog, function(r){
+  rellenarColumnasIndexadas(lista, prog, function(r){
     if (btn)  { btn.disabled = false; btn.textContent = etiqueta; }
     if (otro) otro.disabled = false;
     if (r.error) { prog(''); toast(r.error, 'e'); return; }
     if (soloRevisar) {
       prog(r.total+' revisados · '+r.pendientes+' desfasados · '+r.saltados+' al dia');
-      if (r.pendientes) toast(r.pendientes+' expedientes desfasados — corre "Rellenar columnas"', 'w');
-      else toast('Todos los expedientes al dia', 's');
+      if (r.pendientes) toast(r.pendientes+' registros desfasados en '+lista+' — corre "Rellenar columnas"', 'w');
+      else toast(lista+': todos los registros al dia', 's');
       return;
     }
     prog(r.total+' revisados · '+r.escritos+' actualizados · '+r.saltados+' sin cambio'
       + (r.errores ? ' · '+r.errores+' con error' : ''));
-    if (r.errores) toast('Relleno terminado con '+r.errores+' errores — revisa la consola', 'w');
-    else toast('Columnas indexadas al dia', 's');
+    if (r.errores) toast('Relleno de '+lista+' terminado con '+r.errores+' errores — revisa la consola', 'w');
+    else toast(lista+': columnas indexadas al dia', 's');
   }, soloRevisar);
 }
 
@@ -5888,9 +5908,7 @@ function altTabla(lista) {
 }
 
 function verAlerta(id) {
-  spGet('PLD_Alertas', function(lista) {
-    var a = null;
-    lista.forEach(function(x){ if(String(x.id)===String(id)) a=x; });
+  spGetUno('PLD_Alertas', id, function(a) {
     if (!a) { toast('Alerta no encontrada','e'); return; }
     App._alertaActual = a;
     renderFichaAlerta(a);
@@ -6000,9 +6018,7 @@ function seccionAtencionAlerta(a) {
 }
 
 function cambiarEstatusAlerta(id, estatus) {
-  spGet('PLD_Alertas', function(lista) {
-    var a = null;
-    lista.forEach(function(x){ if(String(x.id)===String(id)) a=x; });
+  spGetUno('PLD_Alertas', id, function(a) {
     if (!a) return;
     a.estatus_atencion = estatus;
     spUpdate('PLD_Alertas', id, a, function(){ toast('Estatus actualizado: '+estatus,'s'); });
@@ -6019,9 +6035,7 @@ function guardarAtencionAlerta(id) {
   var statusEl = document.querySelector('[name="alt-estatus-at"]');
   var nuevoEstatus = statusEl ? statusEl.value : null;
 
-  spGet('PLD_Alertas', function(lista) {
-    var a = null;
-    lista.forEach(function(x){ if(String(x.id)===String(id)) a=x; });
+  spGetUno('PLD_Alertas', id, function(a) {
     if (!a) return;
 
     var estatusAnterior = a.estatus_atencion || 'Pendiente';
@@ -6137,9 +6151,7 @@ function _subirAcusePDF(file, alertaId, nomCliente, folioDetectado, fechaDetecta
     }).then(function(r){return r.json();}).then(function(d){
       if (d && d.webUrl) {
         // Actualizar alerta con URL del acuse y cambiar estatus a Reportada
-        spGet('PLD_Alertas', function(lista) {
-          var a = null;
-          lista.forEach(function(x){ if(String(x.id)===String(alertaId)) a=x; });
+        spGetUno('PLD_Alertas', alertaId, function(a) {
           if (!a) { pensadorOff(); toast('El acuse se subio, pero no se encontro la alerta para adjuntarlo','e'); return; }
           var estatusAnterior = a.estatus_atencion || 'Pendiente';
           // Folio y fecha de envio: lo que el usuario tenga en el campo, o lo detectado, o lo ya guardado
@@ -6268,9 +6280,7 @@ function subirXMLAlerta(input, alertaId, entidadId, idCliRef, numCliRef) {
       .then(function(r){ return r.json(); })
       .then(function(d){
         if (!(d && d.id)) { pensadorOff(); console.warn('[XML ALERTA]', d); toast('No se pudo subir el XML','e'); return; }
-        spGet('PLD_Alertas', function(lista) {
-          var a = null;
-          lista.forEach(function(x){ if(String(x.id)===String(alertaId)) a=x; });
+        spGetUno('PLD_Alertas', alertaId, function(a) {
           if (!a) { pensadorOff(); toast('XML guardado','s'); return; }
           a.url_xml_aviso    = d.webUrl || '';
           a.xml_aviso_nombre = file.name;
@@ -6288,9 +6298,7 @@ function subirXMLAlerta(input, alertaId, entidadId, idCliRef, numCliRef) {
 }
 
 function crearAvisoDesdeAlerta(alertaId) {
-  spGet('PLD_Alertas', function(listaAlt) {
-    var a = null;
-    listaAlt.forEach(function(x){ if(String(x.id)===String(alertaId)) a=x; });
+  spGetUno('PLD_Alertas', alertaId, function(a) {
     if (!a) { toast('Alerta no encontrada','e'); return; }
 
     var fraccion = a.fraccion || 'INM';
@@ -7523,8 +7531,10 @@ function guardarXMLEnSharePoint(xmlContent, nombreArchivo, op) {
 
     // Si el aviso tiene alerta origen, actualizar esa alerta con la URL del XML
     if (op.ref_alerta_origen) {
-      spGet('PLD_Alertas', function(alertas) {
-        alertas.forEach(function(a) {
+      // Se pide solo la alerta origen; el forEach queda sobre 0 o 1 elementos
+      // para no tocar el cierre del bloque.
+      spGetUno('PLD_Alertas', op.ref_alerta_origen, function(alerta) {
+        (alerta ? [alerta] : []).forEach(function(a) {
           if (String(a.id) === String(op.ref_alerta_origen)) {
             a.url_xml_aviso  = urlXML;
             a.ref_aviso_xml  = op.referencia_aviso || op.id;
@@ -8363,8 +8373,7 @@ function aprobarCliente(alertaId) {
   var comEl = document.getElementById('apr-comentario');
   var comentario = comEl ? comEl.value.trim() : '';
   if (!comentario) { toast('Escribe un comentario de aprobación (obligatorio)','e'); if(comEl) comEl.focus(); return; }
-  spGet('PLD_Alertas', function(listaAlt) {
-    var a = null; listaAlt.forEach(function(x){ if(String(x.id)===String(alertaId)) a=x; });
+  spGetUno('PLD_Alertas', alertaId, function(a) {
     if (!a) { toast('Alerta no encontrada','e'); return; }
     spGet('PLD_Clientes', function(listaCli) {
       var cli = null;
@@ -8394,8 +8403,7 @@ function aprobarCliente(alertaId) {
 // El administrador rechaza para modificar: desbloquea la edición del cliente.
 function rechazarClienteModificar(alertaId) {
   if (App.rol !== 'admin') { toast('Solo un administrador puede rechazar','e'); return; }
-  spGet('PLD_Alertas', function(listaAlt) {
-    var a = null; listaAlt.forEach(function(x){ if(String(x.id)===String(alertaId)) a=x; });
+  spGetUno('PLD_Alertas', alertaId, function(a) {
     if (!a) { toast('Alerta no encontrada','e'); return; }
     spGet('PLD_Clientes', function(listaCli) {
       var cli = null;
