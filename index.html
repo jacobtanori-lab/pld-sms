@@ -2313,15 +2313,18 @@ function cargarOCRLibs(cb) {
   }
 }
 
-function iniciarLecturaCURP(input, pref, esINE) {
+// `cara`: 'anverso' o 'reverso' para la credencial; vacio para la constancia.
+// Cada cara lleva datos distintos y se lee de forma distinta, asi que subir el
+// anverso ya no dispara la busqueda de la tira de digitos, que solo esta atras.
+function iniciarLecturaCURP(input, pref, cara) {
   var file = input.files[0];
   input.value = '';
   if (!file) return;
   // Guardar archivo para subirlo al expediente tras crear el cliente
   App._docsPendientes = App._docsPendientes || [];
-  App._docsPendientes.push({file: file, tipo: esINE ? 'INE_IFE' : 'Constancia_CURP'});
+  App._docsPendientes.push({file: file, tipo: cara ? 'INE_IFE' : 'Constancia_CURP'});
   toast('Cargando librería OCR...', 'i');
-  cargarOCRLibs(function(){ leerConstanciaCURP(file, pref||'', !!esINE); });
+  cargarOCRLibs(function(){ leerConstanciaCURP(file, pref||'', cara || ''); });
 }
 
 function leerConstanciaCURP(file, pref, esINE) {
@@ -2384,7 +2387,34 @@ function _preprocesarImagen(source, cb) {
   }
 }
 
-function _runOCR(source, pref, esINE) {
+function _runOCR(source, pref, cara) {
+  // El reverso no pasa por la lectura general: se midio que el modelo de
+  // idioma espanol destroza la tira de digitos (la cola salia como 'egfgf').
+  // Va directo a la pasada dedicada, con alfabeto restringido.
+  if (cara === 'reverso') {
+    toast('Leyendo el reverso de la credencial...', 'i');
+    var intento = function(fraccion, siFalla) {
+      _ocrReversoINE(source, function(txt2){
+        var mrz = txt2 ? _extraerMRZReversoINE(String(txt2).toUpperCase()) : null;
+        if (!mrz && siFalla) { siFalla(); return; }
+        var datos = {};
+        if (mrz) {
+          if (mrz.cic)           datos.ine_cic = mrz.cic;
+          if (mrz.id_ciudadano)  datos.ine_id_ciudadano = mrz.id_ciudadano;
+          if (mrz.ocr)           datos.ine_ocr = mrz.ocr;
+        }
+        _preRellenarDesdeCURP(datos, pref, 'reverso');
+      }, fraccion);
+    };
+    // Primero la banda inferior; si ahi no aparece, la imagen completa (el
+    // encuadre de la foto puede dejar la tira mas arriba de lo previsto).
+    intento(0.45, function(){
+      console.log('[OCR] la banda inferior no dio resultado; se reintenta con la imagen completa');
+      intento(0, null);
+    });
+    return;
+  }
+
   toast('Analizando documento con OCR...', 'i');
 
   function ejecutarOCR(src) {
@@ -2397,35 +2427,18 @@ function _runOCR(source, pref, esINE) {
       var txt = result.data.text;
       // Queda en consola lo que el OCR leyo de verdad: sin esto, un fallo de
       // lectura no hay forma de diagnosticarlo.
-      console.log('[OCR] ' + (esINE ? 'credencial' : 'constancia') + ' - '
-        + txt.length + ' caracteres leidos:\n' + txt);
-      if (esINE) {
-        var datos = _extraerDatosINE(txt);
-        // Si de la primera pasada no salieron los numeros del reverso, se hace
-        // una segunda enfocada solo en esa banda. Si ya salieron, se ahorra.
-        if (!datos.ine_cic && !datos.ine_id_ciudadano) {
-          toast('Buscando los numeros del reverso...', 'i');
-          _ocrReversoINE(source, function(txt2){
-            var mrz = txt2 ? _extraerMRZReversoINE(String(txt2).toUpperCase()) : null;
-            if (mrz) {
-              if (mrz.cic) datos.ine_cic = mrz.cic;
-              if (mrz.id_ciudadano) datos.ine_id_ciudadano = mrz.id_ciudadano;
-              if (mrz.ocr) datos.ine_ocr = mrz.ocr;
-            }
-            _preRellenarDesdeCURP(datos, pref, true);
-          });
-          return;
-        }
-        _preRellenarDesdeCURP(datos, pref, true);
+      console.log('[OCR] ' + (cara === 'anverso' ? 'anverso de la credencial' : 'constancia')
+        + ' - ' + txt.length + ' caracteres leidos:\n' + txt);
+      if (cara === 'anverso') {
+        _preRellenarDesdeCURP(_extraerDatosINE(txt), pref, 'anverso');
       } else {
-        var datos = _extraerDatosConstancia(txt);
-        _preRellenarDesdeCURP(datos, pref, false);
+        _preRellenarDesdeCURP(_extraerDatosConstancia(txt), pref, '');
       }
     }).catch(function(e){ toast('Error OCR: '+(e.message||e),'e'); });
   }
 
-  if (esINE) {
-    // Para INE siempre preprocesar para mejorar lectura sobre fondo de seguridad
+  if (cara === 'anverso') {
+    // El anverso se preprocesa para despegar el texto del fondo de seguridad.
     _preprocesarImagen(source, function(canvas){ ejecutarOCR(canvas); });
   } else {
     ejecutarOCR(source);
@@ -2696,7 +2709,10 @@ function _extraerMRZReversoINE(tUp) {
 // que la cola salia como 'egfgf'). Aqui se recorta la mitad inferior, se
 // amplia, se estira el contraste sin binarizar, y se lee en ingles con el
 // alfabeto restringido a los caracteres que la MRZ puede contener.
-function _ocrReversoINE(source, cb) {
+// `fraccion` indica desde que altura recortar (0.45 = se conserva el 55% de
+// abajo). Con 0 se lee la imagen completa, que es el reintento cuando el
+// encuadre deja la tira mas arriba de lo previsto.
+function _ocrReversoINE(source, cb, fraccion) {
   function leer(cv) {
     var w = null;
     Tesseract.createWorker()
@@ -2724,7 +2740,8 @@ function _ocrReversoINE(source, cb) {
   function recortar(cv) {
     var w = cv.width, h = cv.height;
     if (!w || !h) { cb(''); return; }
-    var y0 = Math.floor(h * 0.50);            // la MRZ vive en la mitad inferior
+    var fr = (typeof fraccion === 'number') ? fraccion : 0.50;
+    var y0 = Math.floor(h * fr);              // por defecto, la mitad inferior
     var escala = Math.max(1, Math.min(3, 1800 / w));
     var out = document.createElement('canvas');
     out.width  = Math.round(w * escala);
@@ -2760,7 +2777,11 @@ function _ocrReversoINE(source, cb) {
   img.src = source;
 }
 
-function _preRellenarDesdeCURP(datos, pref, soloVacios) {
+// `modo`: 'anverso', 'reverso' o vacio (constancia). Ademas de elegir el texto
+// de los avisos, decide si se sobreescriben las casillas que ya traen valor:
+// de la credencial no se pisa lo capturado, de la constancia si.
+function _preRellenarDesdeCURP(datos, pref, modo) {
+  var soloVacios = !!modo;
   var frm = document.getElementById('frm') || document;
   // Se cuentan por separado para poder decir POR QUE no se lleno nada:
   //   conValor  = datos que el OCR si extrajo
@@ -2804,13 +2825,15 @@ function _preRellenarDesdeCURP(datos, pref, soloVacios) {
   setV(pref+'ine_cic',           datos.ine_cic);
   setV(pref+'ine_id_ciudadano',  datos.ine_id_ciudadano);
 
-  var fuente = soloVacios ? 'INE' : 'constancia CURP';
+  var fuente = modo === 'reverso' ? 'el reverso del INE'
+             : modo === 'anverso' ? 'el anverso del INE'
+             : 'la constancia CURP';
   console.log('[OCR] prellenado:', { extraidos: conValor, llenados: llenados,
     sinCasilla: sinCampo, yaTenianValor: yaTenian, datos: datos });
 
   if (llenados > 0) {
     // Con una foto real es comun que salga un numero del reverso y el otro no.
-    var faltaUno = soloVacios
+    var faltaUno = modo === 'reverso'
       && ((datos.ine_cic && !datos.ine_id_ciudadano) || (!datos.ine_cic && datos.ine_id_ciudadano));
     if (faltaUno) {
       toast('✓ '+llenados+' campos prellenados. Del reverso solo se pudo leer '
@@ -2824,11 +2847,14 @@ function _preRellenarDesdeCURP(datos, pref, soloVacios) {
       + 'Recarga con Ctrl+Shift+R y vuelve a intentar.', 'e');
   } else if (yaTenian > 0) {
     toast('Lo que se leyo ya estaba capturado en el expediente; no se cambio nada.', 'w');
-  } else if (soloVacios) {
-    toast('No se reconocio nada en la imagen. El CIC y el identificador estan en el REVERSO; '
-      + 'el nombre y la CURP, en el FRENTE. Revisa que se lea nitida y sin reflejos.', 'e');
+  } else if (modo === 'reverso') {
+    toast('No se encontro la tira de numeros del reverso. Deben verse las tres lineas '
+      + 'de abajo completas, nitidas y sin reflejos.', 'e');
+  } else if (modo === 'anverso') {
+    toast('No se reconocio nada en el anverso. Deben verse el nombre, la CURP y el domicilio. '
+      + 'Si buscas el CIC y el identificador, esos van en el reverso.', 'e');
   } else {
-    toast('No se extrajeron datos de la '+fuente+'. Intenta con una imagen mas clara.', 'e');
+    toast('No se extrajeron datos de '+fuente+'. Intenta con una imagen mas clara.', 'e');
   }
 }
 
@@ -4723,13 +4749,16 @@ function htmlIdPF(d, pref, esMexicana) {
     ? '<div style="grid-column:1/-1;margin-bottom:4px;display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg2);border:1px dashed var(--brd);border-radius:8px;flex-wrap:wrap">'
       +'<span style="font-size:20px">📄</span>'
       +'<div style="flex:1;min-width:160px"><div style="font-size:12px;font-weight:600;color:var(--tx1)">Prellenar desde documento</div>'
-      +'<div style="font-size:11px;color:var(--tx3)">Sube la constancia CURP → luego INE o Const. SAT para completar domicilio y RFC</div></div>'
+      +'<div style="font-size:11px;color:var(--tx3)">Constancia CURP y anverso del INE para nombre, CURP y domicilio; reverso del INE para el CIC y el identificador</div></div>'
       +'<label class="btn btn-p" style="cursor:pointer;font-size:12px;white-space:nowrap">📋 Constancia CURP'
       +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
-      +'onchange="iniciarLecturaCURP(this,\''+pref+'\',false)"></label>'
-      +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap">🪪 Credencial para votar'
+      +'onchange="iniciarLecturaCURP(this,\''+pref+'\',\'\')"></label>'
+      +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap">🪪 INE anverso'
       +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
-      +'onchange="iniciarLecturaCURP(this,\''+pref+'\',true)"></label>'
+      +'onchange="iniciarLecturaCURP(this,\''+pref+'\',\'anverso\')"></label>'
+      +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap">🔄 INE reverso'
+      +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
+      +'onchange="iniciarLecturaCURP(this,\''+pref+'\',\'reverso\')"></label>'
       +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap">🧾 Const. SAT'
       +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
       +'onchange="iniciarLecturaCSF(this,\''+pref+'\')"></label>'
