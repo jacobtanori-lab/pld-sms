@@ -2368,8 +2368,13 @@ function _preprocesarImagen(source, cb) {
   };
 
   if (source && source.tagName === 'CANVAS') {
-    // Ya es canvas (PDF renderizado)
-    procesarCanvas(source);
+    // Ya es canvas (PDF renderizado). Se trabaja sobre una COPIA: antes se
+    // binarizaba el canvas recibido, y en la cadena del reverso los pasos
+    // siguientes acababan leyendo esa version aplastada en vez del original.
+    var copia = document.createElement('canvas');
+    copia.width = source.width; copia.height = source.height;
+    copia.getContext('2d').drawImage(source, 0, 0);
+    procesarCanvas(copia);
   } else {
     // URL de imagen
     var img = new Image();
