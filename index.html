@@ -2350,18 +2350,38 @@ function leerConstanciaCURP(file, pref, esINE) {
   }
 }
 
-function _preprocesarImagen(source, cb) {
-  // Preprocesamiento para mejorar OCR: escala de grises + umbral de contraste
+// `binarizar` = true aplica el umbral duro de siempre; por omision solo se pasa
+// a escala de grises estirando el contraste, que es lo que conviene.
+//
+// El umbral fijo destrozaba el anverso: comprobado sobre la foto de una
+// credencial real, la grafica de fondo de la mitad inferior es mas oscura que
+// el corte, se convertia en un manchon negro y se tragaba la CURP, la clave de
+// elector y la fecha de nacimiento. Arriba sobrevivia el nombre, y por eso solo
+// de ahi salian fragmentos. En gris se lee la tarjeta entera.
+function _preprocesarImagen(source, cb, binarizar) {
   var procesarCanvas = function(canvas) {
     var ctx = canvas.getContext('2d');
     var img2 = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    var data = img2.data;
-    for (var i = 0; i < data.length; i += 4) {
-      // Escala de grises ponderada
-      var g = 0.299*data[i] + 0.587*data[i+1] + 0.114*data[i+2];
-      // Umbral adaptativo: texto oscuro → negro, fondo claro → blanco
-      var v = g < 150 ? 0 : 255;
-      data[i] = data[i+1] = data[i+2] = v;
+    var data = img2.data, i, g;
+    if (binarizar) {
+      for (i = 0; i < data.length; i += 4) {
+        g = 0.299*data[i] + 0.587*data[i+1] + 0.114*data[i+2];
+        data[i] = data[i+1] = data[i+2] = (g < 150 ? 0 : 255);
+      }
+    } else {
+      // Se estira el contraste al rango completo y se deja que Tesseract haga
+      // su propia binarizacion, que es adaptativa y no pierde el texto claro.
+      var min = 255, max = 0;
+      for (i = 0; i < data.length; i += 4) {
+        g = 0.299*data[i] + 0.587*data[i+1] + 0.114*data[i+2];
+        if (g < min) min = g;
+        if (g > max) max = g;
+      }
+      var rango = Math.max(1, max - min);
+      for (i = 0; i < data.length; i += 4) {
+        g = 0.299*data[i] + 0.587*data[i+1] + 0.114*data[i+2];
+        data[i] = data[i+1] = data[i+2] = Math.max(0, Math.min(255, ((g - min) / rango) * 255));
+      }
     }
     ctx.putImageData(img2, 0, 0);
     cb(canvas);
@@ -2453,34 +2473,57 @@ function _runOCR(source, pref, cara) {
     return;
   }
 
-  toast('Analizando documento con OCR...', 'i');
-
-  function ejecutarOCR(src) {
-    Tesseract.recognize(src, 'spa', {
-      logger: function(m){
-        if (m.status==='recognizing text')
-          toast('OCR: '+Math.round((m.progress||0)*100)+'%...', 'i');
-      }
-    }).then(function(result){
-      var txt = result.data.text;
-      // Queda en consola lo que el OCR leyo de verdad: sin esto, un fallo de
-      // lectura no hay forma de diagnosticarlo.
-      console.log('[OCR] ' + (cara === 'anverso' ? 'anverso de la credencial' : 'constancia')
-        + ' - ' + txt.length + ' caracteres leidos:\n' + txt);
-      if (cara === 'anverso') {
-        _preRellenarDesdeCURP(_extraerDatosINE(txt), pref, 'anverso');
-      } else {
-        _preRellenarDesdeCURP(_extraerDatosConstancia(txt), pref, '');
-      }
-    }).catch(function(e){ toast('Error OCR: '+(e.message||e),'e'); });
-  }
-
   if (cara === 'anverso') {
-    // El anverso se preprocesa para despegar el texto del fondo de seguridad.
-    _preprocesarImagen(source, function(canvas){ ejecutarOCR(canvas); });
-  } else {
-    ejecutarOCR(source);
+    toast('Leyendo el anverso de la credencial...', 'i');
+    var acumA = {};
+    // Se da por buena la lectura cuando aparece alguno de los dos numeros
+    // largos: son los que confirman que se llego a la mitad inferior.
+    var completoA = function(){ return !!(acumA.curp || acumA.clave_elector); };
+    var sumarA = function(txt, etiqueta) {
+      var d = _extraerDatosINE(txt || '');
+      console.log('[OCR] anverso via ' + etiqueta + ' -> ' + JSON.stringify(d));
+      for (var k in d) if (d[k] && !acumA[k]) acumA[k] = d[k];
+    };
+    var terminarA = function(){ _preRellenarDesdeCURP(acumA, pref, 'anverso'); };
+    var pasadaA = function(binarizar, etiqueta, luego) {
+      _preprocesarImagen(source, function(canvas){
+        Tesseract.recognize(canvas, 'spa', {
+          logger: function(m){
+            if (m.status==='recognizing text')
+              toast('Anverso, '+etiqueta+': '+Math.round((m.progress||0)*100)+'%...', 'i');
+          }
+        }).then(function(r){
+          var t = (r && r.data && r.data.text) || '';
+          console.log('[OCR] anverso (' + etiqueta + ') - ' + t.length + ' caracteres leidos:\n' + t);
+          sumarA(t, etiqueta);
+          luego();
+        }).catch(function(e){
+          console.warn('[OCR] fallo el anverso (' + etiqueta + '):', e);
+          luego();
+        });
+      }, binarizar);
+    };
+    // Primero en gris, que es lo que funciona con una credencial real; el
+    // umbral duro queda como segundo intento por si alguna foto lo necesita.
+    pasadaA(false, 'escala de grises', function(){
+      if (completoA()) { terminarA(); return; }
+      pasadaA(true, 'umbral duro', terminarA);
+    });
+    return;
   }
+
+  // Constancia CURP: documento impreso sobre fondo blanco, sin preprocesar.
+  toast('Analizando documento con OCR...', 'i');
+  Tesseract.recognize(source, 'spa', {
+    logger: function(m){
+      if (m.status==='recognizing text')
+        toast('OCR: '+Math.round((m.progress||0)*100)+'%...', 'i');
+    }
+  }).then(function(result){
+    var txt = result.data.text;
+    console.log('[OCR] constancia - ' + txt.length + ' caracteres leidos:\n' + txt);
+    _preRellenarDesdeCURP(_extraerDatosConstancia(txt), pref, '');
+  }).catch(function(e){ toast('Error OCR: '+(e.message||e),'e'); });
 }
 
 function _extraerDatosConstancia(txt) {
