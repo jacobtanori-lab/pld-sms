@@ -2388,29 +2388,56 @@ function _preprocesarImagen(source, cb) {
 }
 
 function _runOCR(source, pref, cara) {
-  // El reverso no pasa por la lectura general: se midio que el modelo de
-  // idioma espanol destroza la tira de digitos (la cola salia como 'egfgf').
-  // Va directo a la pasada dedicada, con alfabeto restringido.
+  // El reverso combina los dos metodos y se queda con lo que cada uno logre.
+  // Se intento en su momento usar solo la pasada dedicada, porque sobre una
+  // tira sintetica con sombra la lectura general salia peor; con una foto real
+  // ocurrio lo contrario y se dejo de leer un reverso que antes si funcionaba.
+  // La medicion sintetica no basta: se conservan ambas y se combinan.
   if (cara === 'reverso') {
     toast('Leyendo el reverso de la credencial...', 'i');
-    var intento = function(fraccion, siFalla) {
-      _ocrReversoINE(source, function(txt2){
-        var mrz = txt2 ? _extraerMRZReversoINE(String(txt2).toUpperCase()) : null;
-        if (!mrz && siFalla) { siFalla(); return; }
-        var datos = {};
-        if (mrz) {
-          if (mrz.cic)           datos.ine_cic = mrz.cic;
-          if (mrz.id_ciudadano)  datos.ine_id_ciudadano = mrz.id_ciudadano;
-          if (mrz.ocr)           datos.ine_ocr = mrz.ocr;
-        }
-        _preRellenarDesdeCURP(datos, pref, 'reverso');
-      }, fraccion);
+    var acum = {};
+    var completo = function(){ return !!(acum.ine_cic && acum.ine_id_ciudadano); };
+    var sumar = function(txt2, etiqueta) {
+      var mrz = txt2 ? _extraerMRZReversoINE(String(txt2).toUpperCase()) : null;
+      console.log('[OCR] reverso via ' + etiqueta + ' -> ' + JSON.stringify(mrz));
+      if (!mrz) return;
+      if (mrz.cic && !acum.ine_cic)                   acum.ine_cic = mrz.cic;
+      if (mrz.id_ciudadano && !acum.ine_id_ciudadano) acum.ine_id_ciudadano = mrz.id_ciudadano;
+      if (mrz.ocr && !acum.ine_ocr)                   acum.ine_ocr = mrz.ocr;
     };
-    // Primero la banda inferior; si ahi no aparece, la imagen completa (el
-    // encuadre de la foto puede dejar la tira mas arriba de lo previsto).
-    intento(0.45, function(){
-      console.log('[OCR] la banda inferior no dio resultado; se reintenta con la imagen completa');
-      intento(0, null);
+    var terminar = function(){ _preRellenarDesdeCURP(acum, pref, 'reverso'); };
+    // Paso 3: pasada dedicada sobre la imagen completa (el encuadre puede dejar
+    // la tira mas arriba de la banda inferior).
+    var pasoCompleta = function(){
+      _ocrReversoINE(source, function(t3){ sumar(t3, 'dedicada, imagen completa'); terminar(); }, 0);
+    };
+    // Paso 2: pasada dedicada sobre la banda inferior.
+    var pasoBanda = function(){
+      toast('Afinando la lectura de la tira de numeros...', 'i');
+      _ocrReversoINE(source, function(t2){
+        sumar(t2, 'dedicada, banda inferior');
+        if (completo()) { terminar(); return; }
+        pasoCompleta();
+      }, 0.45);
+    };
+    // Paso 1: lectura general con preprocesamiento, que es la que venia
+    // funcionando con fotos reales.
+    _preprocesarImagen(source, function(canvas){
+      Tesseract.recognize(canvas, 'spa', {
+        logger: function(m){
+          if (m.status==='recognizing text')
+            toast('Reverso, lectura general: '+Math.round((m.progress||0)*100)+'%...', 'i');
+        }
+      }).then(function(res1){
+        var t1 = (res1 && res1.data && res1.data.text) || '';
+        console.log('[OCR] reverso, lectura general - ' + t1.length + ' caracteres leidos:\n' + t1);
+        sumar(t1, 'lectura general');
+        if (completo()) { terminar(); return; }
+        pasoBanda();
+      }).catch(function(e){
+        console.warn('[OCR] fallo la lectura general del reverso:', e);
+        pasoBanda();
+      });
     });
     return;
   }
@@ -2715,14 +2742,29 @@ function _extraerMRZReversoINE(tUp) {
 function _ocrReversoINE(source, cb, fraccion) {
   function leer(cv) {
     var w = null;
-    Tesseract.createWorker()
-      .then(function(x){ w = x; return w.load(); })
-      .then(function(){ return w.loadLanguage('eng'); })
-      .then(function(){ return w.initialize('eng'); })
-      .then(function(){ return w.setParameters({
-        tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ<',
-        tessedit_pageseg_mode: (Tesseract.PSM && Tesseract.PSM.SINGLE_BLOCK) || '6'
-      }); })
+    // La API de tesseract.js cambia entre versiones del CDN: en unas hay que
+    // encadenar load/loadLanguage/initialize y en otras el worker ya viene
+    // listo y esos metodos avisan de obsoletos. Se invocan solo si existen y
+    // se ignora su fallo, para que sirva con cualquiera de las dos.
+    var opcional = function(nombre, arg) {
+      return function() {
+        if (typeof w[nombre] !== 'function') return Promise.resolve();
+        try { return Promise.resolve(w[nombre](arg)).catch(function(){}); }
+        catch (e) { return Promise.resolve(); }
+      };
+    };
+    Tesseract.createWorker('eng')
+      .then(function(x){ w = x; return opcional('load')(); })
+      .then(opcional('loadLanguage', 'eng'))
+      .then(opcional('initialize', 'eng'))
+      .then(function(){
+        // Si los parametros no se pueden fijar, se lee igual: son una mejora,
+        // no un requisito.
+        return Promise.resolve(w.setParameters({
+          tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ<',
+          tessedit_pageseg_mode: (Tesseract.PSM && Tesseract.PSM.SINGLE_BLOCK) || '6'
+        })).catch(function(e){ console.warn('[OCR] no se pudieron fijar los parametros:', e && e.message); });
+      })
       .then(function(){ return w.recognize(cv); })
       .then(function(r){
         var t = (r && r.data && r.data.text) || '';
