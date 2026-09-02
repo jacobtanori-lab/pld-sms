@@ -2539,7 +2539,26 @@ function _extraerDatosINE(txt) {
   var vigm = tUp.match(/VIGENCIA[\s:]+(\d{4})/);
   if (vigm) d.vigencia = vigm[1];
 
+  // Reverso (modelos D a J): zona de lectura mecanica, primera linea
+  //   IDMEX + 10 digitos + << + 13 digitos
+  // Los 10 son el numero de documento con digito verificador al final: el CIC
+  // son los primeros 9. Los 13 son el OCR: el Identificador del Ciudadano que
+  // pide el INE para los modelos E-J son los ultimos 9. Tesseract confunde
+  // '<' con « ( [ K y algunos digitos con letras; se normaliza antes de leer.
+  var mrz = _extraerMRZReversoINE(tUp);
+  if (mrz) { d.ine_cic = mrz.cic; d.ine_id_ciudadano = mrz.id_ciudadano; d.ine_ocr = mrz.ocr; }
+
   return d;
+}
+
+function _extraerMRZReversoINE(tUp) {
+  var t = tUp.replace(/[«‹\(\[\{]/g, '<').replace(/[\r]/g, '');
+  var m = t.match(/IDMEX\s*([0-9OIQSBZ]{10})\s*[<K]{1,3}\s*([0-9OIQSBZ]{13})/);
+  if (!m) return null;
+  function num(x){ return x.replace(/[OQ]/g,'0').replace(/I/g,'1').replace(/S/g,'5').replace(/B/g,'8').replace(/Z/g,'2'); }
+  var doc = num(m[1]), ocr = num(m[2]);
+  if (!/^\d{10}$/.test(doc) || !/^\d{13}$/.test(ocr)) return null;
+  return { cic: doc.substring(0, 9), ocr: ocr, id_ciudadano: ocr.substring(4) };
 }
 
 function _preRellenarDesdeCURP(datos, pref, soloVacios) {
@@ -2576,6 +2595,9 @@ function _preRellenarDesdeCURP(datos, pref, soloVacios) {
   setV(pref+'num_ext',  datos.num_ext);
   setV(pref+'colonia',  datos.colonia);
   setV(pref+'cp',       datos.cp);
+  // Reverso de la credencial INE
+  setV(pref+'ine_cic',           datos.ine_cic);
+  setV(pref+'ine_id_ciudadano',  datos.ine_id_ciudadano);
 
   var fuente = soloVacios ? 'INE' : 'constancia CURP';
   if (llenados > 0) {
@@ -4507,6 +4529,12 @@ function htmlIdPF(d, pref, esMexicana) {
       ? fg(tipoIdLabel,pref+'tipo_id',true)+fs(pref+'tipo_id',opts(LISTAS.tiposId,d[pref+'tipo_id']||''))
       : fg(tipoIdLabel,pref+'tipo_id',true)+fi(pref+'tipo_id',d[pref+'tipo_id']||'','Ej: Pasaporte, Visa, Documento migratorio'))
     +fg('Numero de identificacion',pref+'num_id',true)+fi(pref+'num_id',d[pref+'num_id']||'','')
+    // Reverso de la credencial para votar (modelos E a J): con estos dos datos el INE
+    // responde la vigencia en listanominal.ine.mx. Se prellenan por OCR del reverso.
+    +(esMexicana
+      ? fg('CIC (reverso de la credencial INE)',pref+'ine_cic',false)+fi(pref+'ine_cic',d[pref+'ine_cic']||'','9 digitos','mono')
+        +fg('Identificador del ciudadano (reverso INE)',pref+'ine_id_ciudadano',false)+fi(pref+'ine_id_ciudadano',d[pref+'ine_id_ciudadano']||'','9 digitos','mono')
+      : '')
     +(esMexicana
       ? fg('Autoridad que la emite',pref+'autoridad_id',true)+fs(pref+'autoridad_id',opts(LISTAS.autoridades,d[pref+'autoridad_id']||''))
       : fg('Autoridad que la emite',pref+'autoridad_id',true)+fi(pref+'autoridad_id',d[pref+'autoridad_id']||'','Ej: Gobierno de Estados Unidos, Autoridad migratoria'))
@@ -5318,6 +5346,7 @@ function renderDatosGenerales(c) {
       +fcHtml('RFC',c.rfc)+fcHtml('CURP',c.curp)+fcHtml('Fecha de nacimiento',c.fecha_nac)
       +fcHtml('Pais de nacimiento',c.pais_nac)+fcHtml('Pais de nacionalidad',c.pais_nac2)
       +fcHtml('Nombre de la identificacion',c.tipo_id)+fcHtml('No. identificacion',c.num_id)
+      +((c.ine_cic || c.ine_id_ciudadano) ? fcHtml('CIC (INE)',c.ine_cic)+fcHtml('Identificador del ciudadano (INE)',c.ine_id_ciudadano) : '')
       +fcHtml('Autoridad que la emite',c.autoridad_id)
       +fcHtml('Telefono',c.telefono)+fcHtml('Correo electronico',c.email)
       +fcHtml('Actividad economica',actPFLabel(c.actividad_pf)||c.actividad)+fcHtml('Estatus PEP',c.estatus_pep)
@@ -5480,6 +5509,159 @@ function renapoSubir(blob){
         renapoCerrar();
         renderFicha(c);
         // Regresar a la pestana de Documentos (la verificacion ya quedo guardada)
+        var docTab = null;
+        document.querySelectorAll('.ftab').forEach(function(t){ if (t.textContent.trim()==='Documentos') docTab = t; });
+        if (docTab) { fichaTab(docTab,'fd-docs'); renderDocs(); }
+      });
+    })
+    .catch(function(e){ console.warn(e); toast('Error al subir la constancia','e'); });
+}
+
+// ── Vigencia de la credencial para votar en el INE ───────────────────────
+// Mismo patron que RENAPO: instrucciones, se abre el sitio oficial, el usuario
+// pega los datos y resuelve el captcha, y el resultado se captura como
+// constancia en el expediente. No hay API ni prellenado por URL: el formulario
+// del INE es POST con reCAPTCHA. La app Valida INE-QR no permite capturas.
+var INE_URL_VIGENCIA = 'https://listanominal.ine.mx/scpln/';
+var INE_RESULTADOS = ['Vigente','No vigente','Con reporte de robo o extravio','No localizada'];
+
+function ineBtnHtml(c){
+  if (!c || c.tipo!=='PF_MEX') return '';
+  var esINE = /credencial/i.test(String(c.tipo_id||''));
+  var contenido;
+  if (!esINE) {
+    contenido = '<span style="font-size:12px;color:var(--tx3)">Aplica cuando la identificacion es la credencial para votar.</span>';
+  } else if (!(c.ine_cic && c.ine_id_ciudadano)) {
+    contenido = '<span style="font-size:12px;color:var(--tx3)">Captura el CIC y el Identificador del ciudadano (reverso) en el expediente, o sube el reverso de la credencial para leerlos por OCR.</span>';
+  } else {
+    contenido = '<button class="btn btn-sm" onclick="ineIniciar()">&#128269; '+(c.ine_verificada?'Volver a verificar':'Verificar vigencia en el INE')+'</button>';
+    if (c.ine_verificada) {
+      var ok = (c.ine_resultado||'') === 'Vigente';
+      contenido += '<span class="pill" style="background:'+(ok?'#d8f0e8':'#fde8e8')+';color:'+(ok?'#0F6E56':'#8a1f1f')+'">'
+        +(ok?'&#10003; ':'&#9888; ')+capEsc(c.ine_resultado||'Verificada')
+        +(c.ine_fecha_verificacion?(' &middot; '+String(c.ine_fecha_verificacion).substring(0,10)):'')+'</span>';
+      if (c.ine_url_constancia) contenido += '<a href="'+capEsc(c.ine_url_constancia)+'" target="_blank" rel="noopener" style="font-size:12px">Ver constancia</a>';
+    }
+  }
+  return '<div style="margin-top:14px;padding:12px 14px;border:1px dashed var(--brd);border-radius:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
+    +'<span style="font-size:13px;font-weight:600">Vigencia INE:</span>'+contenido+'</div>';
+}
+
+function ineIniciar(){
+  var c = App.clienteActual;
+  if (!c) { toast('Cliente no cargado','e'); return; }
+  if (!(c.ine_cic && c.ine_id_ciudadano)) { toast('Faltan el CIC o el Identificador del ciudadano','e'); return; }
+  ineModal('inicio');
+}
+
+function ineCopiar(txt, btn){
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(String(txt)).then(function(){ if (btn) { btn.textContent = 'Copiado'; setTimeout(function(){ btn.textContent = 'Copiar'; }, 1500); } }).catch(function(){});
+  }
+}
+
+// Al aceptar: copiar el CIC y abrir el INE (ambos dentro del gesto del clic)
+function ineAbrir(){
+  var c = App.clienteActual; if (!c) return;
+  ineCopiar(c.ine_cic);
+  window.open(INE_URL_VIGENCIA,'_blank','noopener');
+  ineModal('captura');
+}
+
+function ineModal(fase){
+  ineCerrar();
+  var c = App.clienteActual || {};
+  fase = fase || 'inicio';
+  var soporta = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+  var alt = soporta ? '' : '<div class="alerta-banner" style="background:#fff4e5;border:1px solid #c98a12;color:#7a5200;margin-top:10px">Tu navegador no soporta captura de pantalla automatica. Toma una captura manual y subela desde el boton "Subir" de la Identificacion oficial vigente.</div>';
+  var datos = '<div style="display:grid;grid-template-columns:auto 1fr auto;gap:6px 12px;align-items:center;margin:10px 0;font-size:13px">'
+    +'<span style="color:var(--tx3)">CIC</span><span style="font-family:monospace;font-size:15px;letter-spacing:1px">'+capEsc(c.ine_cic||'')+'</span><button class="btn btn-xs" onclick="ineCopiar(\''+capEsc(c.ine_cic||'')+'\',this)">Copiar</button>'
+    +'<span style="color:var(--tx3)">Identificador del ciudadano</span><span style="font-family:monospace;font-size:15px;letter-spacing:1px">'+capEsc(c.ine_id_ciudadano||'')+'</span><button class="btn btn-xs" onclick="ineCopiar(\''+capEsc(c.ine_id_ciudadano||'')+'\',this)">Copiar</button>'
+    +'</div>';
+  var pasos = '<ol style="font-size:13px;color:var(--tx2);line-height:1.7;padding-left:20px;margin:8px 0">'
+    +'<li>Al aceptar, se <strong>copiara el CIC</strong> al portapapeles y se abrira el <strong>INE</strong> en una pestana nueva.</li>'
+    +'<li>En el bloque <strong>modelo E, F, G, H, I y J</strong>: pega el CIC, copia y pega el Identificador del ciudadano desde esta ventana, resuelve el captcha y pulsa <strong>Consultar</strong>.</li>'
+    +'<li>Cuando veas el resultado, <strong>regresa a esta pestana</strong>, indica el resultado y haz clic en <strong>Capturar resultado</strong>; elige la pestana del INE en el selector.</li>'
+    +'<li>La constancia se guarda automaticamente en el expediente bajo <strong>Identificacion oficial vigente</strong>.</li>'
+    +'</ol>';
+  var cuerpo, botones;
+  if (fase === 'captura') {
+    cuerpo = '<p style="font-size:13px;margin:0 0 6px">El CIC fue <strong>copiado al portapapeles</strong> y se abrio el INE en otra pestana. Ten a la mano ambos datos:</p>'
+      + datos
+      +'<div class="fg" style="margin-top:8px"><label class="lbl">Resultado que muestra el INE</label>'
+      +'<select class="sel" id="ine-resultado">'+opts(INE_RESULTADOS, c.ine_resultado||'Vigente')+'</select></div>'
+      +'<p style="font-size:13px;margin:10px 0 0">Con el resultado en pantalla, haz clic en <strong>Capturar resultado</strong> y elige la pestana del INE.</p>'
+      + alt + '<div id="ine-msg"></div>';
+    botones = '<button class="btn" onclick="ineCerrar()">Cancelar</button>'
+      + (soporta ? '<button class="btn btn-p" onclick="ineCapturar()">Capturar resultado</button>' : '');
+  } else {
+    cuerpo = '<p style="font-size:13px;margin:0 0 6px">Vas a consultar la vigencia de la credencial en el sitio del INE. Datos del reverso:</p>' + datos + pasos + alt;
+    botones = '<button class="btn" onclick="ineCerrar()">Cancelar</button>'
+      + '<button class="btn btn-p" onclick="ineAbrir()">Aceptar y abrir el INE</button>';
+  }
+  var ov = document.createElement('div'); ov.id = 'ine-ov';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  ov.onclick = function(e){ if (e.target===ov) ineCerrar(); };
+  ov.innerHTML = '<div class="card" style="max-width:560px;width:100%">'
+    +'<div class="card-h"><span class="card-t">Vigencia de la credencial para votar (INE)</span></div>'
+    +'<div class="card-b" style="padding:18px">'
+    + cuerpo
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">'+botones+'</div>'
+    +'</div></div>';
+  document.body.appendChild(ov);
+}
+function ineCerrar(){ var e = document.getElementById('ine-ov'); if (e && e.parentNode) e.parentNode.removeChild(e); }
+
+// getDisplayMedia debe invocarse DIRECTO en el gesto del usuario (este onclick)
+function ineCapturar(){
+  if (!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia)) {
+    var box = document.getElementById('ine-msg');
+    var msg = 'Tu navegador no soporta captura de pantalla automatica. Toma una captura manual y subela desde el boton de documentos del expediente.';
+    if (box) box.innerHTML = '<div class="alerta-banner" style="background:#fff4e5;border:1px solid #c98a12;color:#7a5200;margin-top:12px">'+msg+'</div>';
+    else toast(msg,'w');
+    return;
+  }
+  var sel = document.getElementById('ine-resultado');
+  var resultado = sel ? sel.value : 'Vigente';
+  navigator.mediaDevices.getDisplayMedia({video:true, preferCurrentTab:false}).then(function(stream){
+    var video = document.createElement('video');
+    video.muted = true; video.playsInline = true; video.srcObject = stream;
+    function grab(){
+      var vw = video.videoWidth||1280, vh = video.videoHeight||720;
+      var canvas = document.createElement('canvas'); canvas.width = vw; canvas.height = vh;
+      try { canvas.getContext('2d').drawImage(video, 0, 0, vw, vh); } catch(e){ console.warn(e); }
+      stream.getTracks().forEach(function(t){ t.stop(); });
+      canvas.toBlob(function(blob){ if (blob) ineSubir(blob, resultado); else toast('No se pudo capturar la imagen','e'); }, 'image/png');
+    }
+    video.onloadedmetadata = function(){
+      var p = video.play();
+      var run = function(){ if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(function(){ grab(); }); else setTimeout(grab, 300); };
+      if (p && p.then) p.then(run).catch(run); else run();
+    };
+  }).catch(function(e){ console.warn('getDisplayMedia:', e); toast('Captura cancelada o sin permiso','w'); });
+}
+
+function ineSubir(blob, resultado){
+  var c = App.clienteActual; if (!c) { toast('Cliente no cargado','e'); return; }
+  toast('Subiendo constancia de vigencia INE...','i');
+  var fecha = hoy();
+  var cic = String(c.ine_cic||'').replace(/[^0-9]/g,'');
+  var nom = (nombreClienteDatos(c)||'').replace(/[^a-zA-Z0-9_\-]/g,'_').substring(0,40);
+  var carpeta = 'PLD_Documentos/'+nStr(c.num_cliente)+'_'+nom;
+  // El prefijo debe coincidir con la fila "Identificacion oficial vigente" (archivosDoc usa indexOf)
+  var fname = 'Identificacion_oficial_vigente_Verificacion_INE_'+cic+'_'+fecha+'.png';
+  var ruta = carpeta.split('/').map(encodeURIComponent).join('/') + '/' + encodeURIComponent(fname);
+  var url = GRAPH+'/sites/'+App.siteId+'/drive/root:/'+ruta+':/content';
+  fetch(url, {method:'PUT', headers:{'Authorization':'Bearer '+App.token,'Content-Type':'image/png'}, body:blob})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d || !d.id) { console.warn('ine upload:', d); toast('Error al subir la constancia','e'); return; }
+      var campos = { ine_verificada:true, ine_resultado:resultado, ine_fecha_verificacion:fecha, ine_url_constancia:(d.webUrl||'') };
+      spPatch('PLD_Clientes', c.id, campos, function(){
+        for (var k in campos) c[k] = campos[k];
+        toast('Constancia de vigencia INE guardada en el expediente','s');
+        ineCerrar();
+        renderFicha(c);
         var docTab = null;
         document.querySelectorAll('.ftab').forEach(function(t){ if (t.textContent.trim()==='Documentos') docTab = t; });
         if (docTab) { fichaTab(docTab,'fd-docs'); renderDocs(); }
@@ -5738,7 +5920,9 @@ function renderDocs() {
         +'</label>'
         +'</div></div>'
         // Debajo de la Constancia CURP: verificacion RENAPO (solo PF Mexicana)
-        + ((td==='Constancia CURP' && c.tipo==='PF_MEX') ? renapoBtnHtml(c) : '');
+        + ((td==='Constancia CURP' && c.tipo==='PF_MEX') ? renapoBtnHtml(c) : '')
+        // Debajo de la identificacion: vigencia de la credencial en el INE (solo PF Mexicana)
+        + ((td==='Identificacion oficial vigente' && c.tipo==='PF_MEX') ? ineBtnHtml(c) : '');
     }
 
     if (oblDocs.length) {
