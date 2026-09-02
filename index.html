@@ -2501,79 +2501,144 @@ function _extraerDatosConstancia(txt) {
   return d;
 }
 
+// Etiquetas impresas en el frente de la credencial. Ninguna puede formar parte
+// de un nombre ni de un domicilio, y marcan donde termina cada bloque.
+var _INE_FIN_BLOQUE = /^(DOMICI?L?IO|CLAVE|CURP|A[NÑ]O|FECHA|SECCI|VIGENCIA|EMISI|ESTADO|MUNICIPIO|LOCALIDAD|INSTITUTO|CREDENCIAL|REGISTRO|ELECCIONES|IDMEX)/;
+// Etiquetas sueltas que pueden caer en medio del nombre segun como el OCR
+// ordene la pagina (SEXO va a la derecha del nombre): se saltan, no cortan.
+var _INE_ETIQUETA_SUELTA = /^(SEXO|SEXO\/SEX|G[EÉ]NERO|INDIGENA|NOMBRE\/NAME|DOMICILIO\/ADDRESS|M[EÉ]XICO)\b/;
+
+// Confusiones de OCR en ambos sentidos, para corregir por posicion.
+function _ocrADigito(c){ var m={O:'0',Q:'0',D:'0',I:'1',L:'1',S:'5',B:'8',Z:'2',G:'6'}; return m[c]||c; }
+function _ocrALetra(c){ var m={'0':'O','1':'I','5':'S','8':'B','2':'Z','6':'G','4':'A'}; return m[c]||c; }
+
+// La CURP tiene estructura fija: 4 letras, 6 digitos, H/M, 2 letras, 3
+// consonantes, 1 alfanumerico y 1 digito. Sabiendo que va en cada posicion se
+// corrigen las confusiones tipicas; antes un solo caracter mal leido la perdia.
+function _corrigeCURP(tok) {
+  if (!tok || tok.length !== 18) return null;
+  var s = '', i, c;
+  for (i = 0; i < 18; i++) {
+    c = tok.charAt(i);
+    if (i <= 3 || (i >= 11 && i <= 15)) s += _ocrALetra(c);
+    else if (i >= 4 && i <= 9)          s += _ocrADigito(c);
+    else if (i === 10)                  s += (c === '4' ? 'H' : _ocrALetra(c));
+    else if (i === 17)                  s += _ocrADigito(c);
+    else                                s += c;
+  }
+  return /^[A-Z]{4}\d{6}[HM][A-Z]{2}[B-DF-HJ-NP-TV-Z]{3}[A-Z0-9]\d$/.test(s) ? s : null;
+}
+
+// Clave de elector: 6 letras, 8 digitos, H/M y 3 digitos.
+function _corrigeClaveElector(tok) {
+  if (!tok || tok.length !== 18) return null;
+  var s = '', i, c;
+  for (i = 0; i < 18; i++) {
+    c = tok.charAt(i);
+    if (i <= 5)                s += _ocrALetra(c);
+    else if (i >= 6 && i <= 13) s += _ocrADigito(c);
+    else if (i === 14)          s += (c === '4' ? 'H' : _ocrALetra(c));
+    else                        s += _ocrADigito(c);
+  }
+  return /^[A-Z]{6}\d{8}[HM]\d{3}$/.test(s) ? s : null;
+}
+
 function _extraerDatosINE(txt) {
   var d = {};
   var tUp = txt.toUpperCase().replace(/\r/g, '');
+  var lineas = tUp.split('\n').map(function(l){ return l.trim(); }).filter(Boolean);
+  var i, j;
 
-  // CURP (si aparece en el INE)
-  var cm = tUp.match(/[A-Z]{4}\d{6}[HM][A-Z]{2}[B-DF-HJ-NP-TV-Z]{3}[A-Z0-9][\dA-Z]/);
-  if (cm) d.curp = cm[0];
+  // --- CURP y clave de elector -------------------------------------------
+  // Se prueban todos los grupos de 18 caracteres corrigiendo por posicion.
+  var tokens = tUp.split(/[^A-Z0-9]+/).filter(function(t){ return t.length === 18; });
+  for (i = 0; i < tokens.length; i++) {
+    if (!d.curp) { var c1 = _corrigeCURP(tokens[i]); if (c1) { d.curp = c1; continue; } }
+    if (!d.clave_elector) { var c2 = _corrigeClaveElector(tokens[i]); if (c2) d.clave_elector = c2; }
+  }
 
-  // Nombre completo (misma lógica que constancia, apoyada en CURP)
-  if (d.curp && d.curp.length === 18) {
-    var letraAP = d.curp[0], letraAM = d.curp[2], letraNom = d.curp[3];
-    var lineas = tUp.split('\n').map(function(l){ return l.trim(); });
-    for (var i = 0; i < lineas.length; i++) {
-      var l = lineas[i];
-      if (l.length < 4 || /\d/.test(l) || /[^A-ZÁÉÍÓÚÜÑ\s]/.test(l)) continue;
-      var palabras = l.split(/\s+/).filter(Boolean);
-      if (palabras.length < 2) continue;
-      var ini = palabras.map(function(w){ return w[0]; });
-      if (ini.indexOf(letraAP) >= 0 && ini.indexOf(letraNom) >= 0) {
-        var usados = [], idxAP = -1, idxAM = -1;
-        for (var p = 0; p < palabras.length; p++) {
-          if (palabras[p][0] === letraAP) { idxAP = p; usados.push(p); break; }
-        }
-        for (var m = 0; m < palabras.length; m++) {
-          if (usados.indexOf(m) < 0 && palabras[m][0] === letraAM) { idxAM = m; usados.push(m); break; }
-        }
-        var nomParts = palabras.filter(function(_,k){ return usados.indexOf(k)<0 && palabras[k].length>1; });
-        if (idxAP >= 0) d.ap_pat = palabras[idxAP];
-        if (idxAM >= 0) d.ap_mat = palabras[idxAM];
-        if (nomParts.length > 0) d.nombre = nomParts.join(' ');
-        break;
-      }
+  // --- Nombre -------------------------------------------------------------
+  // El INE lo imprime en TRES renglones bajo la etiqueta NOMBRE: apellido
+  // paterno, apellido materno y nombre de pila. La version anterior esperaba
+  // los tres en un mismo renglon, asi que no lo encontraba nunca.
+  function esRenglonDeNombre(l) {
+    return l.length >= 2 && !/\d/.test(l)
+        && !/[^A-ZÁÉÍÓÚÜÑ'\-\s]/.test(l)
+        && !_INE_FIN_BLOQUE.test(l) && !_INE_ETIQUETA_SUELTA.test(l);
+  }
+  var iNom = -1;
+  for (i = 0; i < lineas.length; i++) {
+    if (/^NOMBRE\b/.test(lineas[i])) { iNom = i; break; }
+  }
+  if (iNom >= 0) {
+    var partes = [];
+    var resto = lineas[iNom].replace(/^NOMBRE\b[\s:\/]*(NAME\b)?[\s:]*/, '').trim();
+    if (resto && esRenglonDeNombre(resto)) partes.push(resto);
+    for (j = iNom + 1; j < lineas.length && partes.length < 4; j++) {
+      if (_INE_FIN_BLOQUE.test(lineas[j])) break;
+      if (_INE_ETIQUETA_SUELTA.test(lineas[j])) continue;   // SEXO y similares
+      if (!esRenglonDeNombre(lineas[j])) break;
+      partes.push(lineas[j]);
+    }
+    if (partes.length >= 3) {
+      d.ap_pat = partes[0]; d.ap_mat = partes[1]; d.nombre = partes.slice(2).join(' ');
+    } else if (partes.length === 2) {
+      d.ap_pat = partes[0]; d.nombre = partes[1];
+    } else if (partes.length === 1) {
+      var pal = partes[0].split(/\s+/).filter(Boolean);
+      if (pal.length >= 3)      { d.ap_pat = pal[0]; d.ap_mat = pal[1]; d.nombre = pal.slice(2).join(' '); }
+      else if (pal.length === 2) { d.ap_pat = pal[0]; d.nombre = pal[1]; }
     }
   }
 
-  // Fecha de nacimiento DD/MM/AAAA
-  var fm = tUp.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{4})/);
+  // --- Domicilio ----------------------------------------------------------
+  // Se ancla a la etiqueta DOMICILIO. Antes se buscaba "letras seguidas de
+  // numero" por todo el texto y acababa tomando "ANO DE REGISTRO 2008 01"
+  // como calle, porque el domicilio real trae puntos que rompian el patron.
+  var iDom = -1;
+  for (i = 0; i < lineas.length; i++) {
+    if (/^DOMICI?L?IO\b/.test(lineas[i])) { iDom = i; break; }
+  }
+  if (iDom >= 0) {
+    var bloque = [];
+    var r0 = lineas[iDom].replace(/^DOMICI?L?IO\b[\s:\/]*(ADDRESS\b)?[\s:]*/, '').trim();
+    if (r0) bloque.push(r0);
+    for (j = iDom + 1; j < lineas.length && bloque.length < 3; j++) {
+      if (_INE_FIN_BLOQUE.test(lineas[j])) break;
+      bloque.push(lineas[j]);
+    }
+    var sinColonia = [];
+    bloque.forEach(function(lb){
+      if (!d.colonia && /^COL(?:ONIA)?[\s\.]+/.test(lb)) {
+        d.colonia = lb.replace(/^COL(?:ONIA)?[\s\.]+/, '').replace(/,.*$/, '').trim();
+      } else sinColonia.push(lb);
+    });
+    for (i = 0; i < sinColonia.length && !d.calle; i++) {
+      var mc = sinColonia[i].match(/^(.+?)[\s,]*(?:NO\.?|N[UÚ]M(?:ERO)?\.?|#)\s*(\d+[A-Z]?)\b/)
+            || sinColonia[i].match(/^([A-ZÁÉÍÓÚÜÑ\s\.]{4,}?)\s+(\d+[A-Z]?)\s*$/);
+      if (mc) { d.calle = mc[1].replace(/[\s,\.]+$/, '').trim(); d.num_ext = mc[2]; }
+    }
+    var todoDom = bloque.join(' ');
+    var mcp = todoDom.match(/C\.?\s*P\.?\s*(\d{5})/) || todoDom.match(/\b(\d{5})\b/);
+    if (mcp) d.cp = mcp[1];
+  }
+
+  // --- Fecha de nacimiento y vigencia -------------------------------------
+  var fm = tUp.match(/FECHA\s*DE\s*NACIMIENTO[\s:\/A-Z]*(\d{2})[\/\-](\d{2})[\/\-](\d{4})/)
+        || tUp.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{4})/);
   if (fm) d.fecha_nac = fm[1]+'-'+fm[2]+'-'+fm[3];
 
-  // Domicilio — el INE imprime la dirección en líneas separadas
-  // Buscar patrón: calle + número, colonia, municipio/estado CP
-  var lineas = tUp.split('\n').map(function(l){ return l.trim(); }).filter(Boolean);
-  for (var i = 0; i < lineas.length; i++) {
-    var l = lineas[i];
-    // Calle y número: línea con letra seguida de dígitos (ej. "CALLE PINO 123")
-    if (!d.calle && /^[A-ZÁÉÍÓÚÜÑ\s]{4,}\s+\d+/.test(l)) {
-      var partes = l.match(/^([A-ZÁÉÍÓÚÜÑ\s]+?)\s+(\d+\s*(?:INT\.?\s*\d+)?)$/);
-      if (partes) { d.calle = partes[1].trim(); d.num_ext = partes[2].trim(); }
-      else d.calle = l;
-    }
-    // Colonia: línea que empieza con COL o COLONIA
-    if (!d.colonia && /^COL(?:ONIA)?[\s\.]+/.test(l))
-      d.colonia = l.replace(/^COL(?:ONIA)?[\s\.]+/,'').trim();
-    // CP: 5 dígitos
-    if (!d.cp) { var cpm = l.match(/\b(\d{5})\b/); if (cpm) d.cp = cpm[1]; }
-  }
+  // La vigencia viene como rango "2019 - 2029"; interesa el año final.
+  var vigm = tUp.match(/VIGENCIA[\s:\/A-Z]*(\d{4})(?:\s*[-–—]\s*(\d{4}))?/);
+  if (vigm) d.vigencia = vigm[2] || vigm[1];
 
-  // Clave de elector (18 chars alfanumérico que no sea CURP)
-  var claves = tUp.match(/\b[A-Z]{6}\d{8}[HM]\d{3}\b/);
-  if (claves) d.clave_elector = claves[0];
-
-  // Vigencia (año 4 dígitos al final, típicamente 202X o 203X)
-  var vigm = tUp.match(/VIGENCIA[\s:]+(\d{4})/);
-  if (vigm) d.vigencia = vigm[1];
-
-  // Reverso (modelos D a J): zona de lectura mecanica, primera linea
-  //   IDMEX + 10 digitos + << + 13 digitos
-  // Los 10 son el numero de documento con digito verificador al final: el CIC
-  // son los primeros 9. Los 13 son el OCR: el Identificador del Ciudadano que
-  // pide el INE para los modelos E-J son los ultimos 9. Tesseract confunde
-  // '<' con « ( [ K y algunos digitos con letras; se normaliza antes de leer.
+  // --- Reverso: zona de lectura mecanica ----------------------------------
   var mrz = _extraerMRZReversoINE(tUp);
-  if (mrz) { d.ine_cic = mrz.cic; d.ine_id_ciudadano = mrz.id_ciudadano; d.ine_ocr = mrz.ocr; }
+  if (mrz) {
+    if (mrz.cic) d.ine_cic = mrz.cic;
+    if (mrz.id_ciudadano) d.ine_id_ciudadano = mrz.id_ciudadano;
+    if (mrz.ocr) d.ine_ocr = mrz.ocr;
+  }
 
   return d;
 }
