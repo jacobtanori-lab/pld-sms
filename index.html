@@ -1976,6 +1976,15 @@ function pensadorOff() {
 }
 function opts(arr,sel){var h='';(arr||[]).forEach(function(v){h+='<option value="'+v+'"'+(v===sel?' selected':'')+'>'+v+'</option>';});return h;}
 function hoy(){var d=new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());}
+// Mes 'AAAA-MM' de una fecha guardada como 'AAAA-MM-DD'. Se toma del texto y no
+// de new Date(): esa parsea 'AAAA-MM-DD' en UTC y getMonth() es hora local, asi
+// que en Mexico (UTC-6) el dia 1 de cada mes caia en el mes anterior.
+function mesDe(f) {
+  var s = String(f || '');
+  if (/^\d{4}-\d{2}/.test(s)) return s.slice(0, 7);
+  var d = new Date(s || Date.now());
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1);
+}
 function pad(n){return n<10?'0'+n:''+n;}
 function nStr(n){
   if(!n&&n!==0) return '0000';
@@ -7926,14 +7935,18 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
       var UMA_CALIFICA_ARI   = uma * 1605;  // umbral para que un mes califique al semestral
       var UMA_SEMESTRAL_ARI  = uma * 3210;  // umbral de alerta semestral acumulada
 
-      // Paso 1: Agrupar por mes calendario
+      // Paso 1: Agrupar por mes calendario. `total`/`ops` cuentan todos los
+      // pagos del mes (los usa la alerta mensual directa); `calif`/`opsCalif`
+      // solo los pagos que individualmente alcanzan 1,605 UMA, que son los
+      // unicos que entran a la acumulacion semestral (Paso 3).
       var porMes = {};
       todasConNueva.forEach(function(o) {
-        var fecha = new Date(o.fecha_pago || o.fecha_registro || hoy());
-        var key = fecha.getFullYear() + '-' + pad(fecha.getMonth() + 1);
-        if (!porMes[key]) porMes[key] = { total: 0, ops: 0 };
-        porMes[key].total += parseFloat(o.monto || 0);
+        var key   = mesDe(o.fecha_pago || o.fecha_registro || hoy());
+        var monto = parseFloat(o.monto || 0);
+        if (!porMes[key]) porMes[key] = { total: 0, ops: 0, calif: 0, opsCalif: 0 };
+        porMes[key].total += monto;
         porMes[key].ops++;
+        if (monto >= UMA_CALIFICA_ARI) { porMes[key].calif += monto; porMes[key].opsCalif++; }
       });
 
       console.log('[UMBRAL ARI] Resumen por mes:', JSON.stringify(porMes));
@@ -7958,17 +7971,20 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
         toast('ALERTA UMBRAL MENSUAL Fr.XV: $' + totalMesActual.toLocaleString('es-MX'), 'w');
       }
 
-      // Paso 3: Acumulado semestral — sumar meses que ≥ 1,605 UMAs
+      // Paso 3: Acumulado semestral — solo los pagos que individualmente alcanzan
+      // 1,605 UMA (umbral de identificacion). Un mes califica si tiene al menos
+      // uno, y aporta unicamente la suma de esos pagos, no su total.
       var mesesQueCalifican = [];
       var acumSemestral = 0;
       Object.keys(porMes).forEach(function(mes) {
-        var totalMes = porMes[mes].total;
-        if (totalMes >= UMA_CALIFICA_ARI) {
-          mesesQueCalifican.push({ mes: mes, total: totalMes });
-          acumSemestral += totalMes;
-          console.log('[UMBRAL ARI] Mes', mes, 'califica para semestral: $' + totalMes.toLocaleString('es-MX'));
+        var m = porMes[mes];
+        if (m.opsCalif > 0) {
+          mesesQueCalifican.push({ mes: mes, total: m.calif, ops: m.opsCalif });
+          acumSemestral += m.calif;
+          console.log('[UMBRAL ARI] Mes', mes, 'califica para semestral: $' + m.calif.toLocaleString('es-MX'),
+            '(' + m.opsCalif + ' de ' + m.ops + ' pagos alcanzan 1,605 UMA; total del mes $' + m.total.toLocaleString('es-MX') + ')');
         } else {
-          console.log('[UMBRAL ARI] Mes', mes, 'no califica: $' + totalMes.toLocaleString('es-MX'));
+          console.log('[UMBRAL ARI] Mes', mes, 'no califica: ningun pago alcanza 1,605 UMA (total del mes $' + m.total.toLocaleString('es-MX') + ')');
         }
       });
 
@@ -7976,10 +7992,12 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
         '| Umbral: $' + UMA_SEMESTRAL_ARI.toLocaleString('es-MX'));
 
       // Solo crear alerta si esta operación es la que cruzó el semestral
+      // m.total ya es la suma de pagos calificados; el pago nuevo se descuenta
+      // solo si el mismo alcanza 1,605 UMA (si no, nunca entro a la suma).
       var acumSemestralPrev = 0;
       mesesQueCalifican.forEach(function(m) {
-        var prevTotal = m.mes === mesActual ? Math.max(0, m.total - nuevaMonto) : m.total;
-        if (prevTotal >= UMA_CALIFICA_ARI) acumSemestralPrev += prevTotal;
+        var descontar = (m.mes === mesActual && nuevaMonto >= UMA_CALIFICA_ARI) ? nuevaMonto : 0;
+        acumSemestralPrev += Math.max(0, m.total - descontar);
       });
 
       // Mientras el acumulado supere el umbral se entra SIEMPRE: crearAlertaUmbral
@@ -7991,17 +8009,18 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
         var cruza = acumSemestralPrev < UMA_SEMESTRAL_ARI;
         console.log('[UMBRAL ARI]', cruza ? 'ALERTA SEMESTRAL' : 'sigue sobre el umbral: se refresca la alerta abierta');
         var descMeses = mesesQueCalifican.map(function(m){
-          return m.mes + ' ($' + m.total.toLocaleString('es-MX') + ')';
+          return m.mes + ' ($' + m.total.toLocaleString('es-MX') + ', ' + m.ops + (m.ops === 1 ? ' pago' : ' pagos') + ')';
         }).join(', ');
+        var opsCalificadas = mesesQueCalifican.reduce(function(s, m){ return s + m.ops; }, 0);
         crearAlertaUmbral({
           nombre_cliente: nomCli||'Sin nombre', num_cliente: numCli,
           id_cliente_ref: idCli, fraccion: 'ARI',
           tipo: 'Umbral acumulado semestral Fr.XV', nivel: 'Alto',
           descripcion: 'Acumulado semestral de $' + acumSemestral.toLocaleString('es-MX')
             + ' supera umbral de $' + UMA_SEMESTRAL_ARI.toLocaleString('es-MX')
-            + ' (3,210 UMAs). Meses calificados (≥1,605 UMAs c/u): ' + descMeses,
+            + ' (3,210 UMAs). Solo pagos que alcanzan 1,605 UMA, por mes: ' + descMeses,
           monto_acumulado: acumSemestral, monto_umbral: UMA_SEMESTRAL_ARI,
-          num_operaciones: todasConNueva.length,
+          num_operaciones: opsCalificadas,
           meses_califican: mesesQueCalifican.length,
           estatus_atencion: 'Pendiente'
         });
