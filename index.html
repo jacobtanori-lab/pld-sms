@@ -1746,6 +1746,19 @@ function spGetUno(lista, id, cb) {
   });
 }
 
+// Alertas de un cliente, filtradas del lado del servidor. Acepta al cliente
+// por id_cliente_ref O por num_cliente porque asi lo hacen las dos rutinas de
+// deduplicacion (el numero es el respaldo para alertas viejas sin id). Si el
+// registro no trae ninguno de los dos, ninguna alerta podria ser suya: se
+// devuelve [] sin tocar la red, que es lo que el bucle en memoria concluiria.
+function spAlertasDeCliente(datos, cb) {
+  var partes = [];
+  if (datos && datos.id_cliente_ref) partes.push("fields/id_cliente_ref eq '"+odataStr(datos.id_cliente_ref)+"'");
+  if (datos && datos.num_cliente)    partes.push("fields/num_cliente eq '"+odataStr(datos.num_cliente)+"'");
+  if (!partes.length) { if (cb) cb([]); return; }
+  spBuscar('PLD_Alertas', partes.join(' or '), cb);
+}
+
 function spCreate(lista, datos, cb) {
   var lid = App.listas[lista];
   if (!lid) { toast('Lista '+lista+' no encontrada','e'); if(cb) cb(null); return; }
@@ -8430,7 +8443,9 @@ function rechazarClienteModificar(alertaId) {
 
 function crearAlertaUmbral(datos) {
   // Buscar si ya existe una alerta de umbral abierta para este cliente+fracción
-  spGet('PLD_Alertas', function(listaAlt) {
+  // Solo las alertas de este cliente (columnas indexadas); el resto del
+  // cotejo sigue en memoria, asi que la semantica no cambia.
+  spAlertasDeCliente(datos, function(listaAlt) {
     var alertaExistente = null;
     listaAlt.forEach(function(a) {
       if (alertaExistente) return;
@@ -8578,7 +8593,9 @@ function verificarPerfilTransaccional(idCli, nomCli, numCli, fechaOp, cb) {
 
 function crearAlertaPerfil(datos) {
   // Una sola alerta abierta por cliente + periodo (mes)
-  spGet('PLD_Alertas', function(listaAlt) {
+  // Solo las alertas de este cliente (columnas indexadas); el resto del
+  // cotejo sigue en memoria, asi que la semantica no cambia.
+  spAlertasDeCliente(datos, function(listaAlt) {
     var existente = null;
     (listaAlt||[]).forEach(function(a){
       if (existente) return;
