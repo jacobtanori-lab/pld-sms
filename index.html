@@ -2401,6 +2401,21 @@ function _runOCR(source, pref, esINE) {
         + txt.length + ' caracteres leidos:\n' + txt);
       if (esINE) {
         var datos = _extraerDatosINE(txt);
+        // Si de la primera pasada no salieron los numeros del reverso, se hace
+        // una segunda enfocada solo en esa banda. Si ya salieron, se ahorra.
+        if (!datos.ine_cic && !datos.ine_id_ciudadano) {
+          toast('Buscando los numeros del reverso...', 'i');
+          _ocrReversoINE(source, function(txt2){
+            var mrz = txt2 ? _extraerMRZReversoINE(String(txt2).toUpperCase()) : null;
+            if (mrz) {
+              if (mrz.cic) datos.ine_cic = mrz.cic;
+              if (mrz.id_ciudadano) datos.ine_id_ciudadano = mrz.id_ciudadano;
+              if (mrz.ocr) datos.ine_ocr = mrz.ocr;
+            }
+            _preRellenarDesdeCURP(datos, pref, true);
+          });
+          return;
+        }
         _preRellenarDesdeCURP(datos, pref, true);
       } else {
         var datos = _extraerDatosConstancia(txt);
@@ -2563,16 +2578,118 @@ function _extraerDatosINE(txt) {
   return d;
 }
 
+// Confusiones tipicas de Tesseract entre letras y digitos en la fuente OCR-B.
+function _mrzADigitos(x) {
+  return String(x).replace(/[OQD]/g,'0').replace(/[IL]/g,'1').replace(/S/g,'5')
+                  .replace(/B/g,'8').replace(/Z/g,'2').replace(/G/g,'6');
+}
+
 function _extraerMRZReversoINE(tUp) {
   // Se quitan espacios y tabuladores (no saltos de linea): Tesseract los mete
   // dentro de las tiras de digitos de la fuente OCR-B y partia el numero.
   var t = tUp.replace(/[«‹\(\[\{]/g, '<').replace(/[\r]/g, '').replace(/[ \t]+/g, '');
-  var m = t.match(/IDMEX([0-9OIQSBZ]{10})[<K]{1,3}([0-9OIQSBZ]{13})/);
-  if (!m) return null;
-  function num(x){ return x.replace(/[OQ]/g,'0').replace(/I/g,'1').replace(/S/g,'5').replace(/B/g,'8').replace(/Z/g,'2'); }
-  var doc = num(m[1]), ocr = num(m[2]);
-  if (!/^\d{10}$/.test(doc) || !/^\d{13}$/.test(ocr)) return null;
-  return { cic: doc.substring(0, 9), ocr: ocr, id_ciudadano: ocr.substring(4) };
+  var CAR = '[0-9OIQSBZDLG]';
+
+  // Intento 1: la linea completa tal como la imprime el INE.
+  var m = t.match(new RegExp('IDMEX(' + CAR + '{10})[<K]{1,3}(' + CAR + '{13})'));
+  if (m) {
+    var doc = _mrzADigitos(m[1]), ocr = _mrzADigitos(m[2]);
+    if (/^\d{10}$/.test(doc) && /^\d{13}$/.test(ocr))
+      return { cic: doc.substring(0, 9), ocr: ocr, id_ciudadano: ocr.substring(4) };
+  }
+
+  // Intento 2: rescatar cada numero por su cuenta. Con una foto real es comun
+  // que el OCR acierte una tira y estropee la otra; exigir la linea entera
+  // tiraba tambien el numero que si estaba bien leido. Se conservan los conteos
+  // exactos de digitos a proposito: rellenar un numero incompleto seria peor
+  // que dejarlo vacio, porque se consultaria al INE con un dato equivocado.
+  var res = null;
+  var mCic = t.match(new RegExp('IDMEX(' + CAR + '{10})'));
+  if (mCic) {
+    var d = _mrzADigitos(mCic[1]);
+    if (/^\d{10}$/.test(d)) res = { cic: d.substring(0, 9) };
+  }
+  var mOcr = t.match(new RegExp('[<K]{2}(' + CAR + '{13})(?![0-9OIQSBZDLG])'));
+  if (mOcr) {
+    var o = _mrzADigitos(mOcr[1]);
+    if (/^\d{13}$/.test(o)) {
+      res = res || {};
+      res.ocr = o;
+      res.id_ciudadano = o.substring(4);
+    }
+  }
+  return res;
+}
+
+// Segunda pasada, dedicada a la zona de lectura mecanica del reverso.
+// La pasada general no sirve para esto por dos motivos medidos: aplica un
+// umbral duro que borra la tira en cuanto la foto tiene sombras, y lee con el
+// modelo de idioma espanol, que convierte los digitos en palabras (se observo
+// que la cola salia como 'egfgf'). Aqui se recorta la mitad inferior, se
+// amplia, se estira el contraste sin binarizar, y se lee en ingles con el
+// alfabeto restringido a los caracteres que la MRZ puede contener.
+function _ocrReversoINE(source, cb) {
+  function leer(cv) {
+    var w = null;
+    Tesseract.createWorker()
+      .then(function(x){ w = x; return w.load(); })
+      .then(function(){ return w.loadLanguage('eng'); })
+      .then(function(){ return w.initialize('eng'); })
+      .then(function(){ return w.setParameters({
+        tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ<',
+        tessedit_pageseg_mode: (Tesseract.PSM && Tesseract.PSM.SINGLE_BLOCK) || '6'
+      }); })
+      .then(function(){ return w.recognize(cv); })
+      .then(function(r){
+        var t = (r && r.data && r.data.text) || '';
+        console.log('[OCR] segunda pasada sobre el reverso - ' + t.length + ' caracteres:\n' + t);
+        try { w.terminate(); } catch(e){}
+        cb(t);
+      })
+      .catch(function(e){
+        console.warn('[OCR] fallo la segunda pasada del reverso:', e);
+        try { if (w) w.terminate(); } catch(e2){}
+        cb('');
+      });
+  }
+
+  function recortar(cv) {
+    var w = cv.width, h = cv.height;
+    if (!w || !h) { cb(''); return; }
+    var y0 = Math.floor(h * 0.50);            // la MRZ vive en la mitad inferior
+    var escala = Math.max(1, Math.min(3, 1800 / w));
+    var out = document.createElement('canvas');
+    out.width  = Math.round(w * escala);
+    out.height = Math.round((h - y0) * escala);
+    var ctx = out.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(cv, 0, y0, w, h - y0, 0, 0, out.width, out.height);
+    var d = ctx.getImageData(0, 0, out.width, out.height), p = d.data, i, g;
+    var min = 255, max = 0;
+    for (i = 0; i < p.length; i += 4) { g = 0.299*p[i]+0.587*p[i+1]+0.114*p[i+2]; if (g < min) min = g; if (g > max) max = g; }
+    var rango = Math.max(1, max - min);
+    for (i = 0; i < p.length; i += 4) {
+      g = 0.299*p[i]+0.587*p[i+1]+0.114*p[i+2];
+      var v = Math.max(0, Math.min(255, ((g - min) / rango) * 255));
+      p[i] = p[i+1] = p[i+2] = v;
+    }
+    ctx.putImageData(d, 0, 0);
+    leer(out);
+  }
+
+  if (source && source.tagName === 'CANVAS') { recortar(source); return; }
+  var img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = function() {
+    var cv = document.createElement('canvas');
+    cv.width = img.naturalWidth || 0; cv.height = img.naturalHeight || 0;
+    if (!cv.width || !cv.height) { cb(''); return; }
+    cv.getContext('2d').drawImage(img, 0, 0);
+    recortar(cv);
+  };
+  img.onerror = function(){ cb(''); };
+  img.src = source;
 }
 
 function _preRellenarDesdeCURP(datos, pref, soloVacios) {
@@ -2624,7 +2741,15 @@ function _preRellenarDesdeCURP(datos, pref, soloVacios) {
     sinCasilla: sinCampo, yaTenianValor: yaTenian, datos: datos });
 
   if (llenados > 0) {
-    toast('✓ '+llenados+' campos prellenados desde '+fuente, 's');
+    // Con una foto real es comun que salga un numero del reverso y el otro no.
+    var faltaUno = soloVacios
+      && ((datos.ine_cic && !datos.ine_id_ciudadano) || (!datos.ine_cic && datos.ine_id_ciudadano));
+    if (faltaUno) {
+      toast('✓ '+llenados+' campos prellenados. Del reverso solo se pudo leer '
+        + (datos.ine_cic ? 'el CIC' : 'el identificador') + '; captura el otro a mano.', 'w');
+    } else {
+      toast('✓ '+llenados+' campos prellenados desde '+fuente, 's');
+    }
   } else if (sinCampo > 0) {
     // Se leyeron datos pero el formulario no tiene donde ponerlos.
     toast('Se leyeron '+conValor+' datos, pero esta pantalla no tiene esas casillas. '
