@@ -3698,11 +3698,36 @@ function ipmCiclarEstado(el) {
   CFG_EBR.estados_puntaje[el.dataset.estado] = p;
 }
 
+// Restaurar descarta TODOS los puntajes propios, no solo los de esta sesion,
+// asi que antes de hacerlo se dice cuantos y cuales se van a perder. No guarda:
+// el cambio sigue siendo reversible saliendo de la pantalla sin guardar.
 function ipmRestaurar() {
-  CFG_EBR.estados_puntaje = ipmPuntajePorDefecto();
+  var pordef = ipmPuntajePorDefecto();
+  var pts = CFG_EBR.estados_puntaje || pordef;
+  var propios = IPM_ESTADOS.filter(function(x){
+    var p = (pts[x.e] !== undefined) ? Number(pts[x.e]) : pordef[x.e];
+    return p !== pordef[x.e];
+  });
+
+  if (!propios.length) {
+    toast('Los 32 estados ya tienen el puntaje del Indice de Paz; no hay nada que restaurar', 'i');
+    return;
+  }
+
+  var detalle = propios.map(function(x){
+    return '  · ' + x.e + ': ' + pts[x.e] + ' → ' + pordef[x.e];
+  }).join('\n');
+  var msg = 'Se descartaran los puntajes propios de '
+    + propios.length + (propios.length === 1 ? ' estado' : ' estados')
+    + ' y volveran a los del Indice de Paz Mexico:\n\n' + detalle
+    + '\n\nEsto incluye ajustes guardados anteriormente, no solo los de esta sesion.'
+    + '\nNada se guarda hasta que pulses "Guardar cambios".\n\n¿Continuar?';
+  if (!confirm(msg)) return;
+
+  CFG_EBR.estados_puntaje = pordef;
   var cont = document.getElementById('ipm-mapa');
   if (cont && cont.parentNode) cont.parentNode.innerHTML = ipmMapaHtml();
-  toast('Puntajes restaurados a la clasificacion del Indice de Paz', 's');
+  toast('Puntajes restaurados. Pulsa "Guardar cambios" para conservarlos', 's');
 }
 
 function guardarEBR() {
