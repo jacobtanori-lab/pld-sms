@@ -1,0 +1,72 @@
+{
+  "_comentario": "Catalogo de jurisdicciones de riesgo para el modelo EBR. Los paises se identifican por codigo ISO 3166-1 alfa-2, que es lo que devuelve paisISO() en la app. Cada categoria trae su propia fuente y fecha de corte porque se actualizan por separado. Este archivo recoge datos publicos de sus fuentes originales; no reproduce ningun documento reservado.",
+  "actualizado": "2026-09-03",
+  "categorias": {
+    "gafi_contramedidas": {
+      "etiqueta": "GAFI: llamado a aplicar contramedidas",
+      "descripcion": "Jurisdicciones de alto riesgo con deficiencias estrategicas que no han comprometido un plan de accion. El GAFI llama a sus miembros a aplicar contramedidas.",
+      "fuente": "GAFI / FATF, plenaria de junio de 2026",
+      "url": "https://www.fatf-gafi.org/en/countries/black-and-grey-lists.html",
+      "fecha_corte": "2026-06-19",
+      "revision": "Plenarias de febrero, junio y octubre",
+      "paises": ["IR", "KP", "MM"]
+    },
+    "gafi_vigilancia": {
+      "etiqueta": "GAFI: vigilancia intensificada",
+      "descripcion": "Jurisdicciones con deficiencias estrategicas que trabajan un plan de accion acordado con el GAFI. Es la llamada lista gris.",
+      "fuente": "GAFI / FATF, plenaria de junio de 2026",
+      "url": "https://www.fatf-gafi.org/en/countries/black-and-grey-lists.html",
+      "fecha_corte": "2026-06-19",
+      "revision": "Plenarias de febrero, junio y octubre",
+      "paises": ["AO", "BO", "BA", "BG", "CM", "CI", "CD", "HT", "IQ", "KE", "KW", "LA", "LB", "MC", "NP", "PG", "SS", "SY", "VE", "VN", "VG", "YE"]
+    },
+    "csnu_sanciones": {
+      "etiqueta": "Sanciones financieras del Consejo de Seguridad de la ONU",
+      "descripcion": "Paises con un regimen de sanciones financieras dirigidas vigente del Consejo de Seguridad. Guinea-Bissau (resolucion 2048) queda fuera a proposito: ese comite no impone sanciones financieras, asi que sus designaciones no llevan congelamiento de activos.",
+      "fuente": "Resoluciones del Consejo de Seguridad de las Naciones Unidas",
+      "url": "https://main.un.org/securitycouncil/es/sanctions/information",
+      "fecha_corte": "2026-03-31",
+      "revision": "Cuando el Consejo de Seguridad crea o levanta un regimen",
+      "paises": ["AF", "CF", "CD", "HT", "IQ", "IR", "KP", "LY", "SO", "SD", "SS", "YE"],
+      "resoluciones": {
+        "AF": "1988 (2011), Taliban",
+        "CF": "2127 (2013)",
+        "CD": "1533 (2004)",
+        "HT": "2653 (2022)",
+        "IQ": "1518 (2003)",
+        "IR": "1737 (2006), proliferacion",
+        "KP": "1718 (2006), proliferacion",
+        "LY": "1970 (2011)",
+        "SO": "2713 (2023), Al-Shabaab",
+        "SD": "1591 (2005)",
+        "SS": "2206 (2015)",
+        "YE": "2140 (2014)"
+      }
+    },
+    "regimen_fiscal": {
+      "etiqueta": "Regimen fiscal preferente",
+      "descripcion": "Territorios de la fraccion XLII del Articulo Noveno de las Disposiciones Transitorias de la Ley del Impuesto sobre la Renta.",
+      "fuente": "Ley del Impuesto sobre la Renta, Articulo Noveno Transitorio, fraccion XLII",
+      "url": "https://www.gob.mx/cms/uploads/attachment/file/1035629/Listas_de_reg_menes_fiscales_preferentes.pdf",
+      "fecha_corte": "2026-04-08",
+      "revision": "Cuando se reforma la LISR",
+      "paises": ["AI", "AG", "AN", "SJ", "AW", "BB", "BZ", "BM", "BN", "DM", "BS", "AE", "BH", "KW", "QA", "WS", "PR", "GI", "GD", "GL", "GU", "HK", "KY", "CX", "NF", "PM", "IM", "CK", "CC", "GG", "JE", "FK", "SB", "TC", "VG", "VI", "KI", "MO", "MT", "MS", "NU", "PW", "PN", "PF", "AD", "LI", "MC", "SZ", "TO", "JO", "AL", "AO", "CV", "CR", "CY", "DJ", "GY", "HN", "MH", "LR", "MV", "MU", "NR", "PA", "SC", "TT", "TN", "VU", "YE", "UY", "LK", "AS", "KN", "VC", "SH", "LC", "SM", "OM", "TK", "TV"],
+      "territorios_sin_pais": [
+        "Ascension (dependencia de Santa Elena, se cubre con SH)",
+        "Campione d'Italia (enclave italiano)",
+        "Isla Qeshm (Iran)",
+        "Islas Azores (Portugal)",
+        "Islas Canarias (Espana)",
+        "Islas Pacifico (denominacion generica de la LISR)",
+        "Labuan (Malasia)",
+        "Madeira (Portugal)",
+        "Nevis (se cubre con KN, San Cristobal y Nieves)",
+        "Trieste (Italia)",
+        "Tristan de Cunha (dependencia de Santa Elena, se cubre con SH)",
+        "Zona Especial Canaria (Espana)",
+        "Zona Libre Ostrava (Chequia)"
+      ],
+      "_nota_territorios": "La LISR enumera 92 renglones. Los de arriba son subnacionales o zonas francas sin codigo de pais propio, asi que no se pueden puntuar desde el pais del domicilio o la nacionalidad. Quedan anotados para que la omision sea deliberada y no un olvido."
+    }
+  }
+}

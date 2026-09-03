@@ -418,7 +418,7 @@ var PAISES_CAT = [
 {c:'VA',n:"SANTA SEDE / ESTADO DE LA CIUDAD DEL VATICANO"},{c:'ST',n:"SANTO TOME Y PRINCIPE"},{c:'SN',n:"SENEGAL"},{c:'RS',n:"SERBIA"},
 {c:'SC',n:"SEYCHELLES"},{c:'SL',n:"SIERRA LEONA"},{c:'SG',n:"SINGAPUR"},{c:'SY',n:"SIRIA"},
 {c:'SO',n:"SOMALIA"},{c:'LK',n:"SRI LANKA"},{c:'SZ',n:"SUAZILANDIA"},{c:'ZA',n:"SUDAFRICA"},
-{c:'SD',n:"SUDAN"},{c:'SE',n:"SUECIA"},{c:'CH',n:"SUIZA"},{c:'SR',n:"SURINAM"},
+{c:'SD',n:"SUDAN"},{c:'SS',n:"SUDAN DEL SUR"},{c:'SE',n:"SUECIA"},{c:'CH',n:"SUIZA"},{c:'SR',n:"SURINAM"},
 {c:'SJ',n:"SVALBARD Y JAN MAYEN"},{c:'TH',n:"TAILANDIA"},{c:'TW',n:"TAIWAN"},{c:'TZ',n:"TANZANIA"},
 {c:'TJ',n:"TAYIKISTAN"},{c:'IO',n:"TERRITORIO BRITANICO DEL OCEANO INDICO"},{c:'TF',n:"TERRITORIOS AUSTRALES FRANCESES"},{c:'PS',n:"TERRITORIOS PALESTINOS"},
 {c:'TL',n:"TIMOR ORIENTAL"},{c:'TG',n:"TOGO"},{c:'TK',n:"TOKELAU"},{c:'TO',n:"TONGA"},
@@ -3463,7 +3463,8 @@ function pgConfigEBR() {
     +'<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Pais del domicilio</div>'
     +rowIndicador('Mexico','puntaje_pais_dom_mx',e.puntaje_pais_dom_mx||0)
     +rowIndicador('Estados Unidos','puntaje_pais_dom_us',e.puntaje_pais_dom_us||0)
-    +rowIndicador('Resto del mundo (cualquier otro pais)','puntaje_pais_dom_ext',e.puntaje_pais_dom_ext||0)+'</div>'
+    +rowIndicador('Resto del mundo, no listado','puntaje_pais_dom_ext',e.puntaje_pais_dom_ext||0)+'</div>'
+    + jurisdiccionesHtml()
     +'<div style="margin-bottom:4px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Declaracion de Dueño Beneficiario</div>'
     +rowIndicador('Declara dueño beneficiario (SI)','db_SI',e.dueno_beneficiario['SI']||0)
     +rowIndicador('No declara dueño beneficiario (NO)','db_NO',e.dueno_beneficiario['NO']||0)+'</div>'
@@ -3641,6 +3642,83 @@ function ebrSimular() {
 // Opciones del desplegable del simulador: los 32 estados con el puntaje que
 // tienen configurado en ese momento, de mayor a menor para que se vea primero
 // lo que mas pesa.
+// Tarjeta con las cuatro categorias de jurisdiccion de riesgo, sus puntajes
+// editables y la trazabilidad de cada lista: de donde sale, a que fecha y
+// cuando toca revisarla. Un pais que cae en varias categorias puntua por la
+// mas alta, no por la suma.
+function jurisdiccionesHtml() {
+  var e = CFG_EBR;
+  if (!CAT_JURIS) {
+    return '<div style="margin-bottom:18px;padding:10px;border:1px solid var(--brd);border-radius:var(--r);font-size:13px;color:var(--tx2)">'
+      + 'El catalogo de jurisdicciones de riesgo no se pudo cargar. '
+      + 'El pais del domicilio se puntua solo con los tres valores de arriba.</div>';
+  }
+  var pts = e.puntaje_jurisdiccion || {};
+  var meses = mesesDesdeCorteGAFI();
+  var orden = ['gafi_contramedidas','csnu_sanciones','gafi_vigilancia','regimen_fiscal'];
+
+  var filas = orden.map(function(k){
+    var c = CAT_JURIS.categorias[k];
+    if (!c) return '';
+    return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--brd);flex-wrap:wrap">'
+      + '<div style="flex:1;min-width:240px">'
+      + '<div style="font-size:13px;color:var(--tx2)">' + capEsc(c.etiqueta) + '</div>'
+      + '<div style="font-size:11px;color:var(--tx3)">' + (c.paises||[]).length + ' jurisdicciones · '
+      + 'corte ' + capEsc(c.fecha_corte || 's/f') + ' · ' + capEsc(c.revision || '') + '</div>'
+      + '</div>'
+      + '<input class="inp mono" id="ebr-juris_' + k + '" type="number" min="0" max="100" step="1" value="' + (pts[k]||0) + '" style="width:70px;text-align:center">'
+      + '<span style="font-size:12px;color:var(--tx3)">puntos</span></div>';
+  }).join('');
+
+  var aviso = (meses !== null && meses >= 4)
+    ? '<div style="margin-top:10px;padding:8px 10px;border-left:3px solid var(--am);background:var(--am3,transparent);font-size:12px;color:var(--tx2)">'
+      + 'Las listas del GAFI tienen ' + meses + ' meses desde su fecha de corte. '
+      + 'El GAFI revisa en febrero, junio y octubre: conviene comprobar si hubo plenaria y actualizar '
+      + '<code>data/paises_riesgo.json</code>.</div>'
+    : '';
+
+  return '<div style="margin-bottom:18px">'
+    + '<div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Jurisdicciones de riesgo</div>'
+    + '<div style="font-size:12px;color:var(--tx3);margin-bottom:6px;line-height:1.5">'
+    + 'Se aplica al pais del domicilio cuando esta fuera de Mexico. Un pais listado puntua por su '
+    + 'categoria mas alta, y nunca por debajo del valor de "resto del mundo".</div>'
+    + filas + aviso
+    + '<div style="margin-top:8px"><button class="btn btn-sm" onclick="verJurisdicciones()">Ver las jurisdicciones listadas</button></div>'
+    + '<div id="juris-lista" style="margin-top:10px"></div>'
+    + '</div>';
+}
+
+// Lista, por categoria, los paises con su nombre del catalogo de la app, para
+// que se pueda cotejar contra la fuente sin salir de la pantalla. Se despliega
+// en el sitio, que es como muestra las cosas el resto de la app.
+function verJurisdicciones() {
+  var ct = document.getElementById('juris-lista');
+  if (!ct) return;
+  if (ct.innerHTML) { ct.innerHTML = ''; return; }
+  if (!CAT_JURIS) { toast('El catalogo no esta cargado', 'e'); return; }
+  var nombre = {};
+  PAISES_CAT.forEach(function(p){ nombre[p.c] = p.n; });
+  var h = '';
+  ['gafi_contramedidas','csnu_sanciones','gafi_vigilancia','regimen_fiscal'].forEach(function(k){
+    var c = CAT_JURIS.categorias[k];
+    if (!c) return;
+    var lista = (c.paises||[]).map(function(iso){ return nombre[iso] || iso; }).sort();
+    h += '<div style="margin-bottom:16px">'
+      + '<div style="font-weight:600;font-size:13px">' + capEsc(c.etiqueta) + ' (' + lista.length + ')</div>'
+      + '<div style="font-size:11px;color:var(--tx3);margin:2px 0 6px">'
+      + capEsc(c.fuente || '') + ' · corte ' + capEsc(c.fecha_corte || 's/f')
+      + (c.url ? ' · <a href="' + capEsc(c.url) + '" target="_blank" rel="noopener">fuente</a>' : '') + '</div>'
+      + '<div style="font-size:12px;color:var(--tx2);line-height:1.7">' + lista.map(capEsc).join(' · ') + '</div>';
+    if (c.territorios_sin_pais && c.territorios_sin_pais.length) {
+      h += '<div style="font-size:11px;color:var(--tx3);margin-top:6px;line-height:1.6">'
+        + 'Sin codigo de pais propio, no puntuables desde el domicilio: '
+        + c.territorios_sin_pais.map(capEsc).join('; ') + '</div>';
+    }
+    h += '</div>';
+  });
+  ct.innerHTML = '<div style="padding:12px;border:1px solid var(--brd);border-radius:var(--r)">' + h + '</div>';
+}
+
 function ipmOpcionesSimulador() {
   var pts = CFG_EBR.estados_puntaje || ipmPuntajePorDefecto();
   return IPM_ESTADOS.slice().map(function(x){
@@ -3756,7 +3834,11 @@ function guardarEBR() {
   CFG_EBR.nacionalidad_ext         = g('nacionalidad_ext', 15);
   CFG_EBR.puntaje_pais_dom_mx      = g('puntaje_pais_dom_mx', 0);
   CFG_EBR.puntaje_pais_dom_us      = g('puntaje_pais_dom_us', 0);
-  CFG_EBR.puntaje_pais_dom_ext     = g('puntaje_pais_dom_ext', 10);
+  CFG_EBR.puntaje_pais_dom_ext     = g('puntaje_pais_dom_ext', 5);
+  CFG_EBR.puntaje_jurisdiccion = CFG_EBR.puntaje_jurisdiccion || {};
+  ['gafi_contramedidas','csnu_sanciones','gafi_vigilancia','regimen_fiscal'].forEach(function(k){
+    CFG_EBR.puntaje_jurisdiccion[k] = g('juris_' + k, CFG_EBR.puntaje_jurisdiccion[k] || 0);
+  });
   CFG_EBR.dueno_beneficiario['SI'] = g('db_SI', 0);
   CFG_EBR.dueno_beneficiario['NO'] = g('db_NO', 10);
   CFG_EBR.puntaje_actividad        = g('puntaje_actividad', 25);
@@ -4945,10 +5027,14 @@ function calcEBR(d) {
         p += CFG_EBR.puntaje_estado || 0;
       }
     }
-  } else if (paisISO(paisDom) === 'US') {
-    p += CFG_EBR.puntaje_pais_dom_us || 0;
   } else {
-    p += CFG_EBR.puntaje_pais_dom_ext || 0;
+    // Domicilio en el extranjero. Se toma el mayor entre el puntaje base del
+    // pais y el que le corresponde por estar en una lista de riesgo, de modo
+    // que sumar listas nunca puede bajar un puntaje ya asignado.
+    var base = (paisISO(paisDom) === 'US')
+      ? (CFG_EBR.puntaje_pais_dom_us  || 0)
+      : (CFG_EBR.puntaje_pais_dom_ext || 0);
+    p += Math.max(base, puntosJurisdiccion(paisDom));
   }
   // Edad del cliente (solo persona física, a partir de la fecha de nacimiento)
   if (d.tipo === 'PF_MEX' || d.tipo === 'PF_EXT') {
@@ -7215,7 +7301,14 @@ var CFG_EBR = {
   estados_puntaje: null,     // esquema vigente: { 'Nombre del estado': puntos }; se rellena mas abajo
   puntaje_pais_dom_mx: 0,
   puntaje_pais_dom_us: 10,
-  puntaje_pais_dom_ext: 15,
+  puntaje_pais_dom_ext: 5,     // extranjero no listado; las jurisdicciones de
+                               // riesgo puntuan aparte, en puntaje_jurisdiccion
+  puntaje_jurisdiccion: {
+    gafi_contramedidas: 15,
+    csnu_sanciones:     15,
+    gafi_vigilancia:    10,
+    regimen_fiscal:      5
+  },
   edad_min: 20,
   edad_max: 75,
   puntaje_edad_menor: 10,
@@ -7329,6 +7422,22 @@ function migrarEscalaEBR(cargado) {
   return cambios;
 }
 
+// Las configuraciones guardadas antes de que existieran las listas de
+// jurisdicciones traen el extranjero con puntaje unico. Se les instala la tabla
+// por categoria y se baja el puntaje del extranjero no listado, que hasta
+// entonces cargaba con todo el peso del factor.
+function migrarJurisdicciones(cargado) {
+  if (!cargado || cargado.puntaje_jurisdiccion) return null;
+  CFG_EBR.puntaje_jurisdiccion = {
+    gafi_contramedidas: 15, csnu_sanciones: 15, gafi_vigilancia: 10, regimen_fiscal: 5
+  };
+  var antes = CFG_EBR.puntaje_pais_dom_ext;
+  CFG_EBR.puntaje_pais_dom_ext = 5;
+  console.info('[JURIS] configuracion migrada: extranjero no listado ' + antes + ' -> 5, '
+    + 'y se anaden los puntajes por categoria de jurisdiccion');
+  return true;
+}
+
 // Devuelve true si el reescalado sigue solo en memoria, es decir si lo guardado
 // todavia viene en la escala anterior.
 function migracionEBRPendiente() {
@@ -7350,6 +7459,7 @@ function migracionEBRPendiente() {
     CFG_EBR.estados_puntaje = ipmPuntajePorDefecto();
   }
   migrarEscalaEBR(obj);
+  migrarJurisdicciones(obj);
 })();
 
 // ── PERFIL TRANSACCIONAL ──────────────────────────────────────
@@ -7396,6 +7506,73 @@ function _tcGuardar(map, fuente, cb) {
 // Fuente principal: data/tipo_cambio.json, publicado por el GitHub Action que
 // consulta a Banxico. Al servirse desde el MISMO ORIGEN (GitHub Pages) no hay CORS.
 // Respaldo: la lista PLD_TipoCambio de SharePoint, si existe.
+// ── JURISDICCIONES DE RIESGO ──────────────────────────────────
+// Catalogo publicado en data/paises_riesgo.json, con las listas del GAFI, los
+// paises bajo sanciones financieras del Consejo de Seguridad de la ONU y los
+// regimenes fiscales preferentes de la LISR. Se sirve del mismo origen que la
+// app, asi que no hay CORS. Cada categoria trae su fecha de corte porque se
+// actualizan por separado.
+var CAT_JURIS = null;      // el archivo tal cual
+var IDX_JURIS = {};        // { 'IR': ['gafi_contramedidas','csnu_sanciones'] }
+
+function cargarPaisesRiesgo(cb) {
+  fetch('data/paises_riesgo.json?cb=' + Date.now(), {cache:'no-store'})
+    .then(function(r){ if (!r.ok) throw new Error('sin archivo'); return r.json(); })
+    .then(function(j){
+      if (!j || !j.categorias) throw new Error('formato inesperado');
+      CAT_JURIS = j;
+      IDX_JURIS = {};
+      Object.keys(j.categorias).forEach(function(k){
+        (j.categorias[k].paises || []).forEach(function(iso){
+          (IDX_JURIS[iso] = IDX_JURIS[iso] || []).push(k);
+        });
+      });
+      console.info('[JURIS] catalogo cargado: ' + Object.keys(IDX_JURIS).length + ' jurisdicciones');
+      if (cb) cb(true);
+    })
+    .catch(function(e){
+      console.warn('[JURIS] no se pudo cargar el catalogo de paises de riesgo:', e.message);
+      if (cb) cb(false);
+    });
+}
+
+// Categorias en que cae un pais, dado su nombre tal como lo guarda el
+// expediente. Devuelve [] si no esta listado o si el catalogo no cargo.
+function jurisdiccionesDe(nombrePais) {
+  if (!nombrePais) return [];
+  return IDX_JURIS[paisISO(nombrePais)] || [];
+}
+
+// Puntos que aporta un pais por estar listado: el mayor de sus categorias, no
+// la suma, para que un pais que aparece en tres listas no acumule tres veces.
+function puntosJurisdiccion(nombrePais) {
+  var cats = jurisdiccionesDe(nombrePais);
+  if (!cats.length) return 0;
+  var tabla = CFG_EBR.puntaje_jurisdiccion || {};
+  var max = 0;
+  cats.forEach(function(k){ var v = Number(tabla[k]) || 0; if (v > max) max = v; });
+  return max;
+}
+
+// Etiqueta corta para mostrar junto al pais en pantalla.
+function etiquetaJurisdiccion(nombrePais) {
+  var cats = jurisdiccionesDe(nombrePais);
+  if (!cats.length || !CAT_JURIS) return '';
+  return cats.map(function(k){ return CAT_JURIS.categorias[k].etiqueta; }).join(' · ');
+}
+
+// Meses transcurridos desde la fecha de corte mas antigua del GAFI. El GAFI
+// revisa en febrero, junio y octubre, asi que pasados cuatro meses conviene
+// comprobar si hubo plenaria.
+function mesesDesdeCorteGAFI() {
+  if (!CAT_JURIS) return null;
+  var f = (CAT_JURIS.categorias.gafi_contramedidas || {}).fecha_corte;
+  if (!f) return null;
+  var d = new Date(f + 'T00:00:00');
+  if (isNaN(d)) return null;
+  return Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24 * 30.44));
+}
+
 function cargarTipoCambio(cb) {
   fetch('data/tipo_cambio.json?cb=' + Date.now(), {cache:'no-store'})
     .then(function(r){ if (!r.ok) throw new Error('sin archivo'); return r.json(); })
@@ -7468,6 +7645,9 @@ function umbralPesos(fraccion) {
 function cargarConfigUMA() {
   // Tipos de cambio (lista alimentada por Power Automate). Silencioso si aun no existe.
   cargarTipoCambio(function(){});
+  // Listas del GAFI, sanciones del Consejo de Seguridad y regimenes fiscales
+  // preferentes. Si falla, el pais se puntua solo con los tramos base.
+  cargarPaisesRiesgo(function(){});
   spGet('PLD_Config', function(lista) {
     if (!lista || !lista.length) return;
     var cfg = lista[0];
@@ -7483,6 +7663,7 @@ function cargarConfigUMA() {
         for (var k in ebr) if (ebr.hasOwnProperty(k)) CFG_EBR[k] = ebr[k];
         localStorage.setItem('ebr_config', cfg.ebr_config);
         migrarEscalaEBR(ebr);
+        migrarJurisdicciones(ebr);
       } catch(e) { console.warn('EBR config parse error', e); }
     }
     if (cfg.perfil_config) {
