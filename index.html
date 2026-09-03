@@ -3388,9 +3388,26 @@ function ebrActCat() {
   return lista;
 }
 
+// Cual de las dos matrices se esta editando en la pantalla de configuracion.
+var EBR_MATRIZ = 'PF';
+
+// Cambiar de pestana no debe perder lo escrito: primero se recoge lo que hay en
+// pantalla hacia la matriz actual, y luego se vuelve a dibujar con la otra. Un
+// solo "Guardar cambios" guarda las dos.
+function ebrCambiarMatriz(cual) {
+  if (cual === EBR_MATRIZ) return;
+  recogerMatrizEnPantalla();
+  EBR_MATRIZ = cual;
+  pgConfigEBR();
+}
+
 function pgConfigEBR() {
   var e = CFG_EBR;
-  var tipoLabels = { 'PF_MEX':'Persona Física Nacional','PF_EXT':'Persona Física Extranjera','PM_MEX':'Persona Moral Nacional','PM_SIMP':'Persona Moral Simplificada','FIDEICOMISO':'Fideicomiso' };
+  var M = (CFG_EBR.matriz || {})[EBR_MATRIZ] || {};
+  var esPF = (EBR_MATRIZ === 'PF');
+  var tipoLabels = esPF
+    ? { 'PF_MEX':'Persona Física Nacional','PF_EXT':'Persona Física Extranjera' }
+    : { 'PM_SIMP':'Persona Moral Simplificada','PM_MEX':'Persona Moral Nacional','FIDEICOMISO':'Fideicomiso' };
   var pepLabels  = ['NO APLICA','Inactivo','Vencido','Activo','Familiar','Relacionado a PEP'];
 
   function fldNum(id, val, min, max) {
@@ -3450,32 +3467,37 @@ function pgConfigEBR() {
     +'<div style="margin-top:8px"><span class="pill p-vd">Bajo</span></div></div>'
     +'</div></div></div>'
 
-    // — Puntajes por indicador —
+    // — Puntajes por indicador, por matriz —
     +'<div class="card"><div class="card-h"><span class="card-t">Puntajes por indicador</span>'
-    +'<span style="font-size:12px;color:var(--tx3)">Cada factor suma puntos al perfil del cliente</span></div>'
+    +'<span style="font-size:12px;color:var(--tx3)">Tope de esta matriz: '+topeMatriz(EBR_MATRIZ)+' de '+ESCALA_EBR+' puntos</span></div>'
     +'<div class="card-b">'
+    + pestanasMatriz()
     +'<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Tipo de cliente</div>'
-    +Object.keys(tipoLabels).map(function(k){ return rowIndicador(tipoLabels[k],'tipo_'+k,e.tipo_cliente[k]||0); }).join('')+'</div>'
+    +Object.keys(tipoLabels).map(function(k){ return rowIndicador(tipoLabels[k],'tipo_'+k,(M.tipo_cliente||{})[k]||0); }).join('')+'</div>'
     +'<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Estatus PEP</div>'
-    +pepLabels.map(function(k){ return rowIndicador(k,'pep_'+k.replace(/ /g,'_'),e.pep[k]||0); }).join('')+'</div>'
+    +pepLabels.map(function(k){ return rowIndicador(k,'pep_'+k.replace(/ /g,'_'),(M.pep||{})[k]||0); }).join('')+'</div>'
+    +'<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Actividad economica</div>'
+    +rowIndicador('Actividad listada como de alto riesgo','puntaje_actividad',M.puntaje_actividad||0)
+    +'<div style="font-size:11px;color:var(--tx3);margin-top:4px">El catalogo de actividades es comun a las dos matrices; lo que cambia es cuanto pesa. Se edita mas abajo.</div></div>'
     + geografiaHtml()
     +'<div style="margin-bottom:4px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Declaracion de Dueño Beneficiario</div>'
-    +rowIndicador('Declara dueño beneficiario (SI)','db_SI',e.dueno_beneficiario['SI']||0)
-    +rowIndicador('No declara dueño beneficiario (NO)','db_NO',e.dueno_beneficiario['NO']||0)+'</div>'
-    +'<div style="margin-bottom:4px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Edad del cliente (solo persona fisica)</div>'
-    +'<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--brd);flex-wrap:wrap"><span style="font-size:13px;color:var(--tx2)">Menor a</span>'+fldNum('edad_min',e.edad_min||0,0,130)+'<span style="font-size:13px;color:var(--tx2)">a&ntilde;os &rarr; suma</span>'+fldNum('puntaje_edad_menor',e.puntaje_edad_menor||0,0,200)+'<span style="font-size:12px;color:var(--tx3)">puntos</span></div>'
-    +'<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--brd);flex-wrap:wrap"><span style="font-size:13px;color:var(--tx2)">Mayor a</span>'+fldNum('edad_max',e.edad_max||0,0,130)+'<span style="font-size:13px;color:var(--tx2)">a&ntilde;os &rarr; suma</span>'+fldNum('puntaje_edad_mayor',e.puntaje_edad_mayor||0,0,200)+'<span style="font-size:12px;color:var(--tx3)">puntos</span></div>'
-    +'<div style="font-size:11px;color:var(--tx3);margin-top:4px">La edad se calcula de la fecha de nacimiento; aplica solo a personas fisicas.</div></div>'
+    +rowIndicador('Existe dueño beneficiario distinto del cliente (SI)','db_SI',(M.dueno_beneficiario||{})['SI']||0)
+    +rowIndicador('No existe dueño beneficiario distinto (NO)','db_NO',(M.dueno_beneficiario||{})['NO']||0)+'</div>'
+    + (esPF
+      ? '<div style="margin-bottom:4px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Edad del cliente</div>'
+        +'<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--brd);flex-wrap:wrap"><span style="font-size:13px;color:var(--tx2)">Menor a</span>'+fldNum('edad_min',M.edad_min||0,0,130)+'<span style="font-size:13px;color:var(--tx2)">a&ntilde;os &rarr; suma</span>'+fldNum('puntaje_edad_menor',M.puntaje_edad_menor||0,0,200)+'<span style="font-size:12px;color:var(--tx3)">puntos</span></div>'
+        +'<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--brd);flex-wrap:wrap"><span style="font-size:13px;color:var(--tx2)">Mayor a</span>'+fldNum('edad_max',M.edad_max||0,0,130)+'<span style="font-size:13px;color:var(--tx2)">a&ntilde;os &rarr; suma</span>'+fldNum('puntaje_edad_mayor',M.puntaje_edad_mayor||0,0,200)+'<span style="font-size:12px;color:var(--tx3)">puntos</span></div>'
+        +'<div style="font-size:11px;color:var(--tx3);margin-top:4px">La edad se calcula de la fecha de nacimiento.</div></div>'
+      : '<div style="margin-bottom:4px;padding:8px 10px;border-left:3px solid var(--brd);font-size:12px;color:var(--tx3);line-height:1.6">'
+        +'Una persona moral no tiene edad ni pais de nacimiento. Los 17 puntos que esas dos preguntas valen en la matriz de persona fisica se reparten aqui en actividad, dueño beneficiario, pais de constitucion y domicilio, para que las dos matrices lleguen a 100 y el puntaje se lea como porcentaje en ambas.</div>')
     +'</div></div>'
 
     // — Actividades económicas de alto riesgo —
     +'<div class="card"><div class="card-h"><span class="card-t">Actividades economicas de alto riesgo</span>'
     +'<span style="font-size:12px;color:var(--tx3)">Catalogo Persona Fisica (SAT) + Persona Moral (SCIAN) — texto completo</span></div>'
     +'<div class="card-b">'
-    +'<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap">'
-    +'<span style="font-size:13px;color:var(--tx2)">Puntaje por actividad de alto riesgo:</span>'
-    +fldNum('puntaje_actividad',e.puntaje_actividad||0,0,200)
-    +'<span style="font-size:12px;color:var(--tx3)">puntos</span></div>'
+    +'<div style="font-size:12px;color:var(--tx3);margin-bottom:12px;line-height:1.5">'
+    +'Esta lista es comun a las dos matrices. El puntaje que aporta una actividad listada se fija arriba, en cada matriz por separado.</div>'
     +'<input class="inp" id="ebr-act-buscar" placeholder="Buscar por codigo o descripcion..." style="margin-bottom:8px;font-size:12px" oninput="ebrFiltrarAct(this.value)">'
     +'<div id="ebr-act-lista" style="max-height:320px;overflow-y:auto;border:1px solid var(--brd);border-radius:var(--r);font-size:12px"></div>'
     +'<div style="margin-top:10px"><div style="font-size:11px;font-weight:600;color:var(--tx3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Actividades seleccionadas como alto riesgo</div>'
@@ -3637,6 +3659,74 @@ function ebrSimular() {
 // Opciones del desplegable del simulador: los 32 estados con el puntaje que
 // tienen configurado en ese momento, de mayor a menor para que se vea primero
 // lo que mas pesa.
+// Las dos pestanas para elegir que matriz se edita.
+function pestanasMatriz() {
+  var uno = function(clave, etq, sub) {
+    var on = (EBR_MATRIZ === clave);
+    return '<button onclick="ebrCambiarMatriz(\'' + clave + '\')" style="flex:1;min-width:180px;cursor:pointer;text-align:left'
+      + ';padding:10px 12px;border-radius:var(--r);border:1px solid ' + (on ? 'var(--az)' : 'var(--brd)')
+      + ';background:' + (on ? 'var(--az3)' : 'transparent') + '">'
+      + '<div style="font-size:13px;font-weight:600;color:' + (on ? 'var(--az)' : 'var(--tx2)') + '">' + etq + '</div>'
+      + '<div style="font-size:11px;color:var(--tx3)">' + sub + ' · tope ' + topeMatriz(clave) + '</div>'
+      + '</button>';
+  };
+  return '<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">'
+    + uno('PF', 'Persona fisica', 'Nacional y extranjera')
+    + uno('PM', 'Persona moral y fideicomiso', 'Nacional, simplificada y fideicomiso')
+    + '</div>';
+}
+
+// Maximo alcanzable de una matriz: la suma de los topes de sus factores, mas el
+// mejor puntaje por estado, que es comun a las dos y compite con el domicilio
+// extranjero en el mismo factor.
+function topeMatriz(clave) {
+  var M = (CFG_EBR.matriz || {})[clave];
+  if (!M) return 0;
+  var mayor = function(o){
+    var v = Object.keys(o || {}).map(function(k){ return Number(o[k]) || 0; });
+    return v.length ? Math.max.apply(null, v) : 0;
+  };
+  var geo = M.geografia || {};
+  var topeEstados = mayor(CFG_EBR.estados_puntaje);
+  var total = mayor(M.tipo_cliente) + mayor(M.pep) + (Number(M.puntaje_actividad) || 0)
+    + mayor(M.dueno_beneficiario)
+    + Math.max(mayor(geo.domicilio), topeEstados)
+    + mayor(geo.nacionalidad) + mayor(geo.nacimiento)
+    + Math.max(Number(M.puntaje_edad_menor) || 0, Number(M.puntaje_edad_mayor) || 0);
+  return total;
+}
+
+// Recoge en la matriz activa lo que hay escrito en pantalla. Se usa tanto al
+// cambiar de pestana como al guardar, para que ninguna de las dos se pierda.
+function recogerMatrizEnPantalla() {
+  var M = (CFG_EBR.matriz || {})[EBR_MATRIZ];
+  if (!M) return;
+  var g = function(id, def) {
+    var el = document.getElementById('ebr-' + id);
+    if (!el) return def;
+    var n = parseInt(el.value, 10);
+    return isNaN(n) ? def : n;
+  };
+  Object.keys(M.tipo_cliente || {}).forEach(function(k){ M.tipo_cliente[k] = g('tipo_' + k, M.tipo_cliente[k]); });
+  Object.keys(M.pep || {}).forEach(function(k){ M.pep[k] = g('pep_' + k.replace(/ /g,'_'), M.pep[k]); });
+  M.puntaje_actividad = g('puntaje_actividad', M.puntaje_actividad);
+  M.dueno_beneficiario = M.dueno_beneficiario || {};
+  M.dueno_beneficiario['SI'] = g('db_SI', M.dueno_beneficiario['SI'] || 0);
+  M.dueno_beneficiario['NO'] = g('db_NO', M.dueno_beneficiario['NO'] || 0);
+  M.geografia = M.geografia || {};
+  Object.keys(M.geografia).forEach(function(campo){
+    var b = M.geografia[campo] || {};
+    Object.keys(b).forEach(function(k){ b[k] = g('geo_' + campo + '_' + k, b[k]); });
+    M.geografia[campo] = b;
+  });
+  if (M.edad_min !== undefined) {
+    M.edad_min           = g('edad_min', M.edad_min);
+    M.edad_max           = g('edad_max', M.edad_max);
+    M.puntaje_edad_menor = g('puntaje_edad_menor', M.puntaje_edad_menor);
+    M.puntaje_edad_mayor = g('puntaje_edad_mayor', M.puntaje_edad_mayor);
+  }
+}
+
 // Tarjeta de los tres factores geograficos. Cada uno tiene su valor para
 // extranjero no listado y su puntaje por cada categoria de lista, todos
 // editables, con la trazabilidad de cada fuente: de donde sale, a que fecha y
@@ -3644,12 +3734,17 @@ function ebrSimular() {
 // aplique, no la suma; entre factores si se suma, que es justo lo que hace que
 // un vinculo repetido pese mas que uno aislado.
 function geografiaHtml() {
-  var G = CFG_EBR.geografia || {};
-  var campos = [
-    ['domicilio',    'Pais del domicilio',  'Si el cliente vive en Mexico no cuenta aqui: cuenta el puntaje de su estado, mas abajo.'],
-    ['nacionalidad', 'Nacionalidad',        'Persona fisica: campo "pais de nacionalidad". Persona moral y fideicomiso: su pais de constitucion.'],
-    ['nacimiento',   'Pais de nacimiento',  'Solo persona fisica.']
-  ];
+  var G = ((CFG_EBR.matriz || {})[EBR_MATRIZ] || {}).geografia || {};
+  var campos = (EBR_MATRIZ === 'PF')
+    ? [
+        ['domicilio',    'Pais del domicilio', 'Si el cliente vive en Mexico no cuenta aqui: cuenta el puntaje de su estado, en la tarjeta de mas abajo.'],
+        ['nacionalidad', 'Nacionalidad',       'Campo "pais de nacionalidad" del expediente.'],
+        ['nacimiento',   'Pais de nacimiento', 'Campo "pais de nacimiento" del expediente.']
+      ]
+    : [
+        ['domicilio',    'Pais del domicilio',  'Si la entidad tiene domicilio en Mexico no cuenta aqui: cuenta el puntaje de su estado, en la tarjeta de mas abajo.'],
+        ['nacionalidad', 'Pais de constitucion','Campo "pais de nacionalidad" del expediente, que en una persona moral o fideicomiso es donde se constituyo.']
+      ];
   var cats = ['gafi_contramedidas','csnu_sanciones','gafi_vigilancia','regimen_fiscal'];
 
   var num = function(id, val) {
@@ -3850,25 +3945,9 @@ function guardarEBR() {
   };
   CFG_EBR.umbral_alto  = g('umbral_alto',  70);
   CFG_EBR.umbral_medio = g('umbral_medio', 40);
-  var tipoKeys = ['PF_MEX','PF_EXT','PM_MEX','PM_SIMP','FIDEICOMISO'];
-  tipoKeys.forEach(function(k){ CFG_EBR.tipo_cliente[k] = g('tipo_'+k, CFG_EBR.tipo_cliente[k]||0); });
-  var pepKeys = ['NO APLICA','Inactivo','Vencido','Activo','Familiar','Relacionado a PEP'];
-  pepKeys.forEach(function(k){ CFG_EBR.pep[k] = g('pep_'+k.replace(/ /g,'_'), CFG_EBR.pep[k]||0); });
-  CFG_EBR.geografia = CFG_EBR.geografia || {};
-  ['domicilio','nacionalidad','nacimiento'].forEach(function(campo){
-    var b = CFG_EBR.geografia[campo] = CFG_EBR.geografia[campo] || {};
-    ['ext','gafi_contramedidas','csnu_sanciones','gafi_vigilancia','regimen_fiscal'].forEach(function(k){
-      b[k] = g('geo_' + campo + '_' + k, b[k] || 0);
-    });
-    if (campo === 'domicilio') b.us = g('geo_domicilio_us', b.us || 0);
-  });
-  CFG_EBR.dueno_beneficiario['SI'] = g('db_SI', 0);
-  CFG_EBR.dueno_beneficiario['NO'] = g('db_NO', 10);
-  CFG_EBR.puntaje_actividad        = g('puntaje_actividad', 25);
-  CFG_EBR.edad_min                 = g('edad_min', 25);
-  CFG_EBR.edad_max                 = g('edad_max', 65);
-  CFG_EBR.puntaje_edad_menor       = g('puntaje_edad_menor', 0);
-  CFG_EBR.puntaje_edad_mayor       = g('puntaje_edad_mayor', 0);
+  // Solo una de las dos matrices esta en pantalla; la otra conserva en memoria
+  // lo que se le haya editado antes de cambiar de pestana.
+  recogerMatrizEnPantalla();
   // actividades_alto_riesgo ya se mantiene actualizado en memoria por ebrAgregarActividad/ebrQuitarActividad
   // estados: la tabla de puntajes se mantiene al vuelo en ipmCiclarEstado, aqui
   // solo se recoge lo que muestran los mosaicos, que es la fuente de verdad.
@@ -5020,22 +5099,24 @@ function edadDesde(fechaStr) {
 
 function calcEBR(d) {
   var p = 0;
+  var M = matrizEBR(d.tipo);
   // Tipo de cliente
-  p += CFG_EBR.tipo_cliente[d.tipo] !== undefined ? CFG_EBR.tipo_cliente[d.tipo] : 10;
+  p += (M.tipo_cliente && M.tipo_cliente[d.tipo] !== undefined) ? M.tipo_cliente[d.tipo] : 0;
   // Estatus PEP
-  p += CFG_EBR.pep[d.estatus_pep || 'NO APLICA'] || 0;
+  p += (M.pep && M.pep[d.estatus_pep || 'NO APLICA']) || 0;
   // Declaración de dueño beneficiario
   var db = d.tiene_dueno_ben || ((d.beneficiarios && d.beneficiarios.length) ? 'SI' : 'NO');
-  p += (CFG_EBR.dueno_beneficiario[db] !== undefined ? CFG_EBR.dueno_beneficiario[db] : 0);
-  // Actividad económica de alto riesgo (código SCIAN o catálogo PF)
+  p += (M.dueno_beneficiario && M.dueno_beneficiario[db] !== undefined) ? M.dueno_beneficiario[db] : 0;
+  // Actividad económica de alto riesgo (código SCIAN o catálogo PF). El
+  // catalogo es comun a las dos matrices; lo que cambia es cuanto pesa.
   var actCod = String(d.actividad_scian || d.actividad_pf || '');
   if (actCod && CFG_EBR.actividades_alto_riesgo.length && CFG_EBR.actividades_alto_riesgo.indexOf(actCod) >= 0)
-    p += CFG_EBR.puntaje_actividad || 0;
+    p += M.puntaje_actividad || 0;
   // Geografia. Tres factores independientes, como pide el indicador 4.1 de la
   // guia de la UIF: domicilio, nacionalidad y pais de nacimiento. Cada uno
   // suma lo suyo, de modo que un vinculo repetido en varios campos pesa mas que
   // uno aislado.
-  var G = CFG_EBR.geografia || {};
+  var G = M.geografia || {};
   var paises = paisesDePersona(d);
 
   // Domicilio. Ramas excluyentes: viviendo en Mexico cuenta el puntaje del
@@ -5057,12 +5138,14 @@ function calcEBR(d) {
 
   p += puntajeGeo(G.nacionalidad, paises.nacionalidad);
   p += puntajeGeo(G.nacimiento,   paises.nacimiento);
-  // Edad del cliente (solo persona física, a partir de la fecha de nacimiento)
-  if (d.tipo === 'PF_MEX' || d.tipo === 'PF_EXT') {
+  // Edad del cliente. Solo la matriz de persona fisica la tiene: una entidad no
+  // tiene edad, y por eso la matriz de persona moral reparte esos puntos en
+  // otros factores en vez de dejarlos muertos.
+  if (M.edad_min !== undefined || M.edad_max !== undefined) {
     var edad = edadDesde(d.fecha_nac);
     if (edad !== null) {
-      if (CFG_EBR.edad_min && edad < CFG_EBR.edad_min) p += CFG_EBR.puntaje_edad_menor || 0;
-      else if (CFG_EBR.edad_max && edad > CFG_EBR.edad_max) p += CFG_EBR.puntaje_edad_mayor || 0;
+      if (M.edad_min && edad < M.edad_min) p += M.puntaje_edad_menor || 0;
+      else if (M.edad_max && edad > M.edad_max) p += M.puntaje_edad_mayor || 0;
     }
   }
   // Red de seguridad: con los pesos vigentes el maximo alcanzable es la escala,
@@ -7308,43 +7391,67 @@ var CFG_UMA = {
 // puntos de su estado (0 a 10); si vive fuera, los de su pais (10 EE.UU., 15
 // resto). Nunca se cobran los dos, que era el defecto que subia el techo a 130.
 var ESCALA_EBR = 100;
+// Hay DOS matrices de riesgo, una por naturaleza de cliente, porque no se les
+// pueden hacer las mismas preguntas. A una persona moral no se le puede medir
+// la edad ni el pais de nacimiento: con una sola matriz esos 17 puntos quedaban
+// muertos y una persona moral necesitaba el 88% de todo lo que podia sumar para
+// clasificar como Alto, contra el 70% de una persona fisica. Los 17 se
+// redistribuyen en lo que si distingue a una estructura juridica: la opacidad
+// de su propiedad y su giro.
+//
+// Las dos matrices llegan a 100, asi que el puntaje se lee como porcentaje en
+// ambas y los umbrales pueden ser los mismos.
+//
+// Dentro de la geografia, cada factor toma el mayor entre su valor base y el
+// que le toque por jurisdiccion, nunca la suma, de modo que su tope es su valor
+// mas alto. Entre factores si se suma: un vinculo repetido en varios campos
+// pesa mas que uno aislado, que es lo que pide el indicador 4.1 de la guia.
 var CFG_EBR = {
-  tipo_cliente: { 'PF_MEX': 0, 'PF_EXT': 15, 'PM_MEX': 12, 'PM_SIMP': 8, 'FIDEICOMISO': 15 },
-  pep: { 'NO APLICA': 0, 'Inactivo': 12, 'Vencido': 4, 'Activo': 25, 'Familiar': 25, 'Relacionado a PEP': 25 },
-  // Los tres factores geograficos que pide el indicador 4.1 de la guia de la
-  // UIF. Cada uno puntua por separado: el vinculo con una jurisdiccion pesa mas
-  // cuando se repite en varios campos que cuando aparece en uno solo.
-  //
-  // Dentro de un factor se toma el mayor entre su valor base y el que le toque
-  // por jurisdiccion, nunca la suma, de modo que el tope del factor es su valor
-  // mas alto. Domicilio 10, nacionalidad 8, pais de nacimiento 7: suman 25, que
-  // es lo que la geografia valia antes entre el domicilio y la nacionalidad.
-  //
-  // El orden no es arbitrario. El domicilio es donde el cliente opera de hecho
-  // y ademas carga con los puntajes por estado; la nacionalidad es un vinculo
-  // juridico con un Estado, al que se atan sanciones y regimenes PEP; el pais
-  // de nacimiento es el vinculo mas debil, porque alguien pudo dejarlo de nino.
-  geografia: {
-    domicilio:    { ext: 3, us: 3, gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 },
-    nacionalidad: { ext: 3,        gafi_contramedidas:  8, csnu_sanciones:  8, gafi_vigilancia: 6, regimen_fiscal: 3 },
-    nacimiento:   { ext: 2,        gafi_contramedidas:  7, csnu_sanciones:  7, gafi_vigilancia: 5, regimen_fiscal: 3 }
+  matriz: {
+    // Persona fisica: tipo 15, PEP 25, actividad 15, domicilio 10,
+    // nacionalidad 8, nacimiento 7, edad 10, dueno beneficiario 10.
+    PF: {
+      tipo_cliente: { 'PF_MEX': 0, 'PF_EXT': 15 },
+      pep: { 'NO APLICA': 0, 'Inactivo': 12, 'Vencido': 4, 'Activo': 25, 'Familiar': 25, 'Relacionado a PEP': 25 },
+      puntaje_actividad: 15,
+      dueno_beneficiario: { 'SI': 10, 'NO': 0 },
+      geografia: {
+        domicilio:    { ext: 3, us: 3, gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 },
+        nacionalidad: { ext: 3,        gafi_contramedidas:  8, csnu_sanciones:  8, gafi_vigilancia: 6, regimen_fiscal: 3 },
+        nacimiento:   { ext: 2,        gafi_contramedidas:  7, csnu_sanciones:  7, gafi_vigilancia: 5, regimen_fiscal: 3 }
+      },
+      edad_min: 20, edad_max: 75, puntaje_edad_menor: 10, puntaje_edad_mayor: 7
+    },
+    // Persona moral y fideicomiso: tipo 15, PEP 25, actividad 20,
+    // dueno beneficiario 15, domicilio 13, pais de constitucion 12.
+    // No hay edad ni pais de nacimiento: no existen para una entidad.
+    PM: {
+      tipo_cliente: { 'PM_SIMP': 8, 'PM_MEX': 12, 'FIDEICOMISO': 15 },
+      pep: { 'NO APLICA': 0, 'Inactivo': 12, 'Vencido': 4, 'Activo': 25, 'Familiar': 25, 'Relacionado a PEP': 25 },
+      puntaje_actividad: 20,
+      dueno_beneficiario: { 'SI': 15, 'NO': 0 },
+      geografia: {
+        domicilio:    { ext: 4, us: 4, gafi_contramedidas: 13, csnu_sanciones: 13, gafi_vigilancia: 9, regimen_fiscal: 5 },
+        nacionalidad: { ext: 4,        gafi_contramedidas: 12, csnu_sanciones: 12, gafi_vigilancia: 9, regimen_fiscal: 5 }
+      }
+    }
   },
-  // SI = existe un dueno beneficiario distinto del cliente, es decir una capa
-  // de propiedad detras. Eso suma riesgo; que no exista no suma nada.
-  dueno_beneficiario: { 'SI': 10, 'NO': 0 },
+  // Lo que comparten las dos matrices: el catalogo de actividades, el mapa de
+  // estados y los umbrales. Son la misma realidad para cualquier cliente.
   actividades_alto_riesgo: [],
-  puntaje_actividad: 15,
   estados_alto_riesgo: [],   // esquema anterior; se conserva para configuraciones guardadas antes del cambio
   puntaje_estado: 10,        // idem
   estados_puntaje: null,     // esquema vigente: { 'Nombre del estado': puntos }; se rellena mas abajo
-  edad_min: 20,
-  edad_max: 75,
-  puntaje_edad_menor: 10,
-  puntaje_edad_mayor: 7,
   umbral_alto: 70,
   umbral_medio: 40,
   escala: 100                // marca de que los pesos ya estan reescalados
 };
+
+// La matriz que le toca a un cliente por su naturaleza.
+function matrizEBR(tipo) {
+  var esFisica = (tipo === 'PF_MEX' || tipo === 'PF_EXT');
+  return ((CFG_EBR.matriz || {})[esFisica ? 'PF' : 'PM']) || {};
+}
 
 // ── ÍNDICE DE PAZ MÉXICO ──────────────────────────────────────
 // Clasificación general del IPM 2026 (datos de 2025), publicada por el
@@ -7452,6 +7559,51 @@ function migrarEscalaEBR(cargado) {
 // jurisdicciones traen el extranjero con puntaje unico. Se les instala la tabla
 // por categoria y se baja el puntaje del extranjero no listado, que hasta
 // entonces cargaba con todo el peso del factor.
+// Las configuraciones guardadas antes de esta separacion traen una sola matriz
+// plana. Se parte en dos: la de persona fisica hereda los valores tal cual, y
+// la de persona moral reparte en actividad, dueno beneficiario, pais de
+// constitucion y domicilio los 17 puntos que antes quedaban muertos por no
+// poder medirle la edad ni el pais de nacimiento.
+function migrarMatrices(cargado) {
+  if (!cargado || cargado.matriz) return null;
+  var t = CFG_EBR.tipo_cliente || {};
+  var pep = CFG_EBR.pep || {};
+  var geo = CFG_EBR.geografia || {};
+  var copia = function(o){ return JSON.parse(JSON.stringify(o || {})); };
+
+  CFG_EBR.matriz = {
+    PF: {
+      tipo_cliente: { 'PF_MEX': t.PF_MEX || 0, 'PF_EXT': t.PF_EXT || 0 },
+      pep: copia(pep),
+      puntaje_actividad: CFG_EBR.puntaje_actividad || 15,
+      dueno_beneficiario: copia(CFG_EBR.dueno_beneficiario),
+      geografia: {
+        domicilio:    copia(geo.domicilio),
+        nacionalidad: copia(geo.nacionalidad),
+        nacimiento:   copia(geo.nacimiento)
+      },
+      edad_min: CFG_EBR.edad_min, edad_max: CFG_EBR.edad_max,
+      puntaje_edad_menor: CFG_EBR.puntaje_edad_menor, puntaje_edad_mayor: CFG_EBR.puntaje_edad_mayor
+    },
+    PM: {
+      tipo_cliente: { 'PM_SIMP': t.PM_SIMP || 8, 'PM_MEX': t.PM_MEX || 12, 'FIDEICOMISO': t.FIDEICOMISO || 15 },
+      pep: copia(pep),
+      puntaje_actividad: 20,
+      dueno_beneficiario: { 'SI': 15, 'NO': 0 },
+      geografia: {
+        domicilio:    { ext: 4, us: 4, gafi_contramedidas: 13, csnu_sanciones: 13, gafi_vigilancia: 9, regimen_fiscal: 5 },
+        nacionalidad: { ext: 4,        gafi_contramedidas: 12, csnu_sanciones: 12, gafi_vigilancia: 9, regimen_fiscal: 5 }
+      }
+    }
+  };
+  ['tipo_cliente','pep','dueno_beneficiario','puntaje_actividad','geografia',
+   'edad_min','edad_max','puntaje_edad_menor','puntaje_edad_mayor'].forEach(function(k){
+    delete CFG_EBR[k];
+  });
+  console.info('[EBR] matriz separada en persona fisica y persona moral');
+  return true;
+}
+
 function migrarJurisdicciones(cargado) {
   if (!cargado || cargado.geografia) return null;
   CFG_EBR.geografia = {
@@ -7492,6 +7644,7 @@ function migracionEBRPendiente() {
   }
   migrarEscalaEBR(obj);
   migrarJurisdicciones(obj);
+  migrarMatrices(obj);
 })();
 
 // ── PERFIL TRANSACCIONAL ──────────────────────────────────────
@@ -7617,6 +7770,8 @@ function puntajeGeo(bloque, nombrePais) {
 // tiene pais de nacimiento. Distinguirlo evita contar dos veces el mismo dato.
 function paisesDePersona(d) {
   var esFisica = (d.tipo === 'PF_MEX' || d.tipo === 'PF_EXT');
+  // Para la persona moral y el fideicomiso, pais_nac es el pais de
+  // constitucion. No hay pais de nacimiento, y su matriz tampoco lo define.
   if (!esFisica) return { nacionalidad: d.pais_nac || 'MEXICO', nacimiento: '' };
   return {
     nacimiento:   d.pais_nac  || 'MEXICO',
@@ -7744,6 +7899,7 @@ function cargarConfigUMA() {
         localStorage.setItem('ebr_config', cfg.ebr_config);
         migrarEscalaEBR(ebr);
         migrarJurisdicciones(ebr);
+        migrarMatrices(ebr);
       } catch(e) { console.warn('EBR config parse error', e); }
     }
     if (cfg.perfil_config) {
