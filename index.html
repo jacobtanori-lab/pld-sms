@@ -3488,8 +3488,9 @@ function pgConfigEBR() {
         +'<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--brd);flex-wrap:wrap"><span style="font-size:13px;color:var(--tx2)">Menor a</span>'+fldNum('edad_min',M.edad_min||0,0,130)+'<span style="font-size:13px;color:var(--tx2)">a&ntilde;os &rarr; suma</span>'+fldNum('puntaje_edad_menor',M.puntaje_edad_menor||0,0,200)+'<span style="font-size:12px;color:var(--tx3)">puntos</span></div>'
         +'<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--brd);flex-wrap:wrap"><span style="font-size:13px;color:var(--tx2)">Mayor a</span>'+fldNum('edad_max',M.edad_max||0,0,130)+'<span style="font-size:13px;color:var(--tx2)">a&ntilde;os &rarr; suma</span>'+fldNum('puntaje_edad_mayor',M.puntaje_edad_mayor||0,0,200)+'<span style="font-size:12px;color:var(--tx3)">puntos</span></div>'
         +'<div style="font-size:11px;color:var(--tx3);margin-top:4px">La edad se calcula de la fecha de nacimiento.</div></div>'
-      : '<div style="margin-bottom:4px;padding:8px 10px;border-left:3px solid var(--brd);font-size:12px;color:var(--tx3);line-height:1.6">'
-        +'Una persona moral no tiene edad ni pais de nacimiento. Los 17 puntos que esas dos preguntas valen en la matriz de persona fisica se reparten aqui en actividad, dueño beneficiario, pais de constitucion y domicilio, para que las dos matrices lleguen a 100 y el puntaje se lea como porcentaje en ambas.</div>')
+      : '<div style="margin-bottom:4px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Antigüedad de la entidad</div>'
+        +'<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--brd);flex-wrap:wrap"><span style="font-size:13px;color:var(--tx2)">Constituida hace menos de</span>'+fldNum('antiguedad_min',M.antiguedad_min||0,0,100)+'<span style="font-size:13px;color:var(--tx2)">a&ntilde;os &rarr; suma</span>'+fldNum('puntaje_antiguedad',M.puntaje_antiguedad||0,0,200)+'<span style="font-size:12px;color:var(--tx3)">puntos</span></div>'
+        +'<div style="font-size:11px;color:var(--tx3);margin-top:4px;line-height:1.6">Se calcula de la fecha de constitucion del expediente. Es el espejo de la edad en persona fisica: una entidad recien constituida es la se&ntilde;al clasica de empresa de fachada. Los 7 puntos del pais de nacimiento, que una entidad no tiene, estan repartidos en actividad y due&ntilde;o beneficiario.</div></div>')
     +'</div></div>'
 
     // — Actividades económicas de alto riesgo —
@@ -3535,6 +3536,7 @@ function pgConfigEBR() {
     +'<div class="fg"><label class="lbl">Dueño Beneficiario</label><select class="sel" id="sim-db">'
     +'<option value="NO">No declarado (NO)</option><option value="SI">Declarado (SI)</option></select></div>'
     +'<div class="fg"><label class="lbl">Edad (si persona fisica)</label><input class="inp mono" id="sim-edad" type="number" min="0" max="130" value="35" style="width:90px"></div>'
+    +'<div class="fg"><label class="lbl">Antig&uuml;edad en a&ntilde;os (si persona moral)</label><input class="inp mono" id="sim-antig" type="number" min="0" max="200" value="10" style="width:90px"></div>'
     +'</div>'
     +'<div style="margin-top:16px;text-align:center">'
     +'<button class="btn btn-p" onclick="ebrSimular()">Calcular nivel de riesgo</button>'
@@ -3639,10 +3641,12 @@ function ebrSimular() {
   // cual: paisISO() los reconoce y las listas de jurisdicciones tambien.
   var edadSim = parseInt(v('sim-edad'), 10);
   var fechaNacSim = isNaN(edadSim) ? '' : ((new Date().getFullYear() - edadSim) + '-06-15');
+  var antigSim = parseInt(v('sim-antig'), 10);
+  var fechaConstSim = isNaN(antigSim) ? '' : ((new Date().getFullYear() - antigSim) + '-06-15');
   var mock = { tipo: tipo, estatus_pep: pep,
     pais_nac: v('sim-pnacim') || 'MEXICO', pais_nac2: nac || 'MEXICO',
     actividad_scian: actCod, actividad_pf: actCod, tiene_dueno_ben: db, estado: estVal,
-    pais_dom: pdom || 'MEXICO', fecha_nac: fechaNacSim };
+    pais_dom: pdom || 'MEXICO', fecha_nac: fechaNacSim, fecha_const: fechaConstSim };
   var res = calcEBR(mock);
   var color = res.nivel === 'Alto' ? 'var(--rj)' : res.nivel === 'Medio' ? 'var(--am)' : 'var(--vd,#16a34a)';
   var ct = document.getElementById('ebr-sim-result');
@@ -3692,7 +3696,8 @@ function topeMatriz(clave) {
     + mayor(M.dueno_beneficiario)
     + Math.max(mayor(geo.domicilio), topeEstados)
     + mayor(geo.nacionalidad) + mayor(geo.nacimiento)
-    + Math.max(Number(M.puntaje_edad_menor) || 0, Number(M.puntaje_edad_mayor) || 0);
+    + Math.max(Number(M.puntaje_edad_menor) || 0, Number(M.puntaje_edad_mayor) || 0)
+    + (Number(M.puntaje_antiguedad) || 0);
   return total;
 }
 
@@ -3724,6 +3729,10 @@ function recogerMatrizEnPantalla() {
     M.edad_max           = g('edad_max', M.edad_max);
     M.puntaje_edad_menor = g('puntaje_edad_menor', M.puntaje_edad_menor);
     M.puntaje_edad_mayor = g('puntaje_edad_mayor', M.puntaje_edad_mayor);
+  }
+  if (M.antiguedad_min !== undefined) {
+    M.antiguedad_min     = g('antiguedad_min', M.antiguedad_min);
+    M.puntaje_antiguedad = g('puntaje_antiguedad', M.puntaje_antiguedad);
   }
 }
 
@@ -5183,6 +5192,13 @@ function calcEBR(d) {
       if (M.edad_min && edad < M.edad_min) p += M.puntaje_edad_menor || 0;
       else if (M.edad_max && edad > M.edad_max) p += M.puntaje_edad_mayor || 0;
     }
+  }
+  // Antiguedad de la entidad. Solo la matriz de persona moral la tiene. Se
+  // calcula con la misma rutina que la edad, a partir de la fecha de
+  // constitucion; una entidad con menos anos que el umbral suma.
+  if (M.antiguedad_min !== undefined) {
+    var anios = edadDesde(d.fecha_const);
+    if (anios !== null && M.antiguedad_min && anios < M.antiguedad_min) p += M.puntaje_antiguedad || 0;
   }
   // Red de seguridad: con los pesos vigentes el maximo alcanzable es la escala,
   // pero unos pesos editados a mano podrian pasarse y el puntaje dejaria de
@@ -7458,18 +7474,22 @@ var CFG_EBR = {
       },
       edad_min: 20, edad_max: 75, puntaje_edad_menor: 10, puntaje_edad_mayor: 7
     },
-    // Persona moral y fideicomiso: tipo 15, PEP 25, actividad 20,
-    // dueno beneficiario 15, domicilio 13, pais de constitucion 12.
-    // No hay edad ni pais de nacimiento: no existen para una entidad.
+    // Persona moral y fideicomiso: tipo 15, PEP 25, actividad 17,
+    // dueno beneficiario 13, domicilio 10, pais de constitucion 10,
+    // antiguedad 10. No hay pais de nacimiento, y en lugar de la edad de una
+    // persona esta la antiguedad de la entidad: una recien constituida es la
+    // senal clasica de empresa de fachada, y pesa lo mismo que la edad en la
+    // matriz de persona fisica.
     PM: {
       tipo_cliente: { 'PM_SIMP': 8, 'PM_MEX': 12, 'FIDEICOMISO': 15 },
       pep: { 'NO APLICA': 0, 'Inactivo': 12, 'Vencido': 4, 'Activo': 25, 'Familiar': 25, 'Relacionado a PEP': 25 },
-      puntaje_actividad: 20,
-      dueno_beneficiario: { 'SI': 15, 'NO': 0 },
+      puntaje_actividad: 17,
+      dueno_beneficiario: { 'SI': 13, 'NO': 0 },
       geografia: {
-        domicilio:    { ext: 4, us: 4, gafi_contramedidas: 13, csnu_sanciones: 13, gafi_vigilancia: 9, regimen_fiscal: 5 },
-        nacionalidad: { ext: 4,        gafi_contramedidas: 12, csnu_sanciones: 12, gafi_vigilancia: 9, regimen_fiscal: 5 }
-      }
+        domicilio:    { ext: 3, us: 3, gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 },
+        nacionalidad: { ext: 3,        gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 }
+      },
+      antiguedad_min: 3, puntaje_antiguedad: 10
     }
   },
   // Lo que comparten las dos matrices: el catalogo de actividades, el mapa de
@@ -7665,12 +7685,13 @@ function migrarMatrices(cargado) {
     PM: {
       tipo_cliente: { 'PM_SIMP': t.PM_SIMP || 8, 'PM_MEX': t.PM_MEX || 12, 'FIDEICOMISO': t.FIDEICOMISO || 15 },
       pep: copia(pep),
-      puntaje_actividad: 20,
-      dueno_beneficiario: { 'SI': 15, 'NO': 0 },
+      puntaje_actividad: 17,
+      dueno_beneficiario: { 'SI': 13, 'NO': 0 },
       geografia: {
-        domicilio:    { ext: 4, us: 4, gafi_contramedidas: 13, csnu_sanciones: 13, gafi_vigilancia: 9, regimen_fiscal: 5 },
-        nacionalidad: { ext: 4,        gafi_contramedidas: 12, csnu_sanciones: 12, gafi_vigilancia: 9, regimen_fiscal: 5 }
-      }
+        domicilio:    { ext: 3, us: 3, gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 },
+        nacionalidad: { ext: 3,        gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 }
+      },
+      antiguedad_min: 3, puntaje_antiguedad: 10
     }
   };
   ['tipo_cliente','pep','dueno_beneficiario','puntaje_actividad','geografia',
@@ -7678,6 +7699,25 @@ function migrarMatrices(cargado) {
     delete CFG_EBR[k];
   });
   console.info('[EBR] matriz separada en persona fisica y persona moral');
+  return true;
+}
+
+// Una matriz de persona moral guardada antes de que existiera la antiguedad se
+// completa con ese factor, y se le recortan los mismos diez puntos que a los
+// valores por omision para que siga llegando a 100.
+function migrarAntiguedad(cargado) {
+  var PMc = cargado && cargado.matriz && cargado.matriz.PM;
+  if (!PMc || PMc.antiguedad_min !== undefined) return null;
+  var PM = CFG_EBR.matriz.PM;
+  PM.puntaje_actividad = 17;
+  PM.dueno_beneficiario = { 'SI': 13, 'NO': 0 };
+  PM.geografia = {
+    domicilio:    { ext: 3, us: 3, gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 },
+    nacionalidad: { ext: 3,        gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 }
+  };
+  PM.antiguedad_min = 3;
+  PM.puntaje_antiguedad = 10;
+  console.info('[EBR] matriz de persona moral completada con antiguedad de la entidad');
   return true;
 }
 
@@ -7722,6 +7762,7 @@ function migracionEBRPendiente() {
   migrarEscalaEBR(obj);
   migrarJurisdicciones(obj);
   migrarMatrices(obj);
+  migrarAntiguedad(obj);
 })();
 
 // ── PERFIL TRANSACCIONAL ──────────────────────────────────────
@@ -7977,6 +8018,7 @@ function cargarConfigUMA() {
         migrarEscalaEBR(ebr);
         migrarJurisdicciones(ebr);
         migrarMatrices(ebr);
+        migrarAntiguedad(ebr);
       } catch(e) { console.warn('EBR config parse error', e); }
     }
     if (cfg.perfil_config) {
