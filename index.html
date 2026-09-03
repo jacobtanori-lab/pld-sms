@@ -3458,13 +3458,7 @@ function pgConfigEBR() {
     +Object.keys(tipoLabels).map(function(k){ return rowIndicador(tipoLabels[k],'tipo_'+k,e.tipo_cliente[k]||0); }).join('')+'</div>'
     +'<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Estatus PEP</div>'
     +pepLabels.map(function(k){ return rowIndicador(k,'pep_'+k.replace(/ /g,'_'),e.pep[k]||0); }).join('')+'</div>'
-    +'<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Nacionalidad</div>'
-    +rowIndicador('Nacionalidad extranjera (pais de nacimiento)','nacionalidad_ext',e.nacionalidad_ext||0)+'</div>'
-    +'<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Pais del domicilio</div>'
-    +rowIndicador('Mexico','puntaje_pais_dom_mx',e.puntaje_pais_dom_mx||0)
-    +rowIndicador('Estados Unidos','puntaje_pais_dom_us',e.puntaje_pais_dom_us||0)
-    +rowIndicador('Resto del mundo, no listado','puntaje_pais_dom_ext',e.puntaje_pais_dom_ext||0)+'</div>'
-    + jurisdiccionesHtml()
+    + geografiaHtml()
     +'<div style="margin-bottom:4px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Declaracion de Dueño Beneficiario</div>'
     +rowIndicador('Declara dueño beneficiario (SI)','db_SI',e.dueno_beneficiario['SI']||0)
     +rowIndicador('No declara dueño beneficiario (NO)','db_NO',e.dueno_beneficiario['NO']||0)+'</div>'
@@ -3503,8 +3497,10 @@ function pgConfigEBR() {
     +Object.keys(tipoLabels).map(function(k){return '<option value="'+k+'">'+tipoLabels[k]+'</option>';}).join('')+'</select></div>'
     +'<div class="fg"><label class="lbl">Estatus PEP</label><select class="sel" id="sim-pep">'
     +pepLabels.map(function(k){return '<option value="'+k+'">'+k+'</option>';}).join('')+'</select></div>'
-    +'<div class="fg"><label class="lbl">Nacionalidad y pais de nacimiento</label>'
+    +'<div class="fg"><label class="lbl">Nacionalidad</label>'
     +'<select class="sel" id="sim-nac">'+optsPais('MEXICO')+'</select></div>'
+    +'<div class="fg"><label class="lbl">Pais de nacimiento</label>'
+    +'<select class="sel" id="sim-pnacim">'+optsPais('MEXICO')+'</select></div>'
     +'<div class="fg"><label class="lbl">Actividad economica</label><select class="sel" id="sim-act">'
     +'<option value="">Normal (no listada como alto riesgo)</option>'
     +'<option value="__alto__">En lista de alto riesgo</option></select></div>'
@@ -3622,7 +3618,7 @@ function ebrSimular() {
   var edadSim = parseInt(v('sim-edad'), 10);
   var fechaNacSim = isNaN(edadSim) ? '' : ((new Date().getFullYear() - edadSim) + '-06-15');
   var mock = { tipo: tipo, estatus_pep: pep,
-    pais_nac: nac || 'MEXICO', pais_nac2: nac || 'MEXICO',
+    pais_nac: v('sim-pnacim') || 'MEXICO', pais_nac2: nac || 'MEXICO',
     actividad_scian: actCod, actividad_pf: actCod, tiene_dueno_ben: db, estado: estVal,
     pais_dom: pdom || 'MEXICO', fecha_nac: fechaNacSim };
   var res = calcEBR(mock);
@@ -3641,49 +3637,75 @@ function ebrSimular() {
 // Opciones del desplegable del simulador: los 32 estados con el puntaje que
 // tienen configurado en ese momento, de mayor a menor para que se vea primero
 // lo que mas pesa.
-// Tarjeta con las cuatro categorias de jurisdiccion de riesgo, sus puntajes
-// editables y la trazabilidad de cada lista: de donde sale, a que fecha y
-// cuando toca revisarla. Un pais que cae en varias categorias puntua por la
-// mas alta, no por la suma.
-function jurisdiccionesHtml() {
-  var e = CFG_EBR;
-  if (!CAT_JURIS) {
-    return '<div style="margin-bottom:18px;padding:10px;border:1px solid var(--brd);border-radius:var(--r);font-size:13px;color:var(--tx2)">'
-      + 'El catalogo de jurisdicciones de riesgo no se pudo cargar. '
-      + 'El pais del domicilio se puntua solo con los tres valores de arriba.</div>';
-  }
-  var pts = e.puntaje_jurisdiccion || {};
-  var meses = mesesDesdeCorteGAFI();
-  var orden = ['gafi_contramedidas','csnu_sanciones','gafi_vigilancia','regimen_fiscal'];
+// Tarjeta de los tres factores geograficos. Cada uno tiene su valor para
+// extranjero no listado y su puntaje por cada categoria de lista, todos
+// editables, con la trazabilidad de cada fuente: de donde sale, a que fecha y
+// cuando toca revisarla. Dentro de un factor cuenta la categoria mas alta que
+// aplique, no la suma; entre factores si se suma, que es justo lo que hace que
+// un vinculo repetido pese mas que uno aislado.
+function geografiaHtml() {
+  var G = CFG_EBR.geografia || {};
+  var campos = [
+    ['domicilio',    'Pais del domicilio',  'Si el cliente vive en Mexico no cuenta aqui: cuenta el puntaje de su estado, mas abajo.'],
+    ['nacionalidad', 'Nacionalidad',        'Persona fisica: campo "pais de nacionalidad". Persona moral y fideicomiso: su pais de constitucion.'],
+    ['nacimiento',   'Pais de nacimiento',  'Solo persona fisica.']
+  ];
+  var cats = ['gafi_contramedidas','csnu_sanciones','gafi_vigilancia','regimen_fiscal'];
 
-  var filas = orden.map(function(k){
-    var c = CAT_JURIS.categorias[k];
-    if (!c) return '';
-    return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--brd);flex-wrap:wrap">'
-      + '<div style="flex:1;min-width:240px">'
-      + '<div style="font-size:13px;color:var(--tx2)">' + capEsc(c.etiqueta) + '</div>'
-      + '<div style="font-size:11px;color:var(--tx3)">' + (c.paises||[]).length + ' jurisdicciones · '
-      + 'corte ' + capEsc(c.fecha_corte || 's/f') + ' · ' + capEsc(c.revision || '') + '</div>'
-      + '</div>'
-      + '<input class="inp mono" id="ebr-juris_' + k + '" type="number" min="0" max="100" step="1" value="' + (pts[k]||0) + '" style="width:70px;text-align:center">'
-      + '<span style="font-size:12px;color:var(--tx3)">puntos</span></div>';
+  var num = function(id, val) {
+    return '<input class="inp mono" id="ebr-' + id + '" type="number" min="0" max="100" step="1" value="'
+      + (val || 0) + '" style="width:62px;text-align:center">';
+  };
+  var etiqueta = function(k) {
+    return (CAT_JURIS && CAT_JURIS.categorias[k]) ? CAT_JURIS.categorias[k].etiqueta : k;
+  };
+  var cuantos = function(k) {
+    return (CAT_JURIS && CAT_JURIS.categorias[k]) ? (CAT_JURIS.categorias[k].paises || []).length : 0;
+  };
+
+  var bloques = campos.map(function(c){
+    var clave = c[0], b = G[clave] || {};
+    var tope = Math.max.apply(null, [Number(b.ext)||0, Number(b.us)||0].concat(cats.map(function(k){ return Number(b[k])||0; })));
+    var fila = function(etq, sub, id, val) {
+      return '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--brd);flex-wrap:wrap">'
+        + '<div style="flex:1;min-width:230px"><div style="font-size:13px;color:var(--tx2)">' + etq + '</div>'
+        + (sub ? '<div style="font-size:11px;color:var(--tx3)">' + sub + '</div>' : '') + '</div>'
+        + num(id, val) + '<span style="font-size:12px;color:var(--tx3)">puntos</span></div>';
+    };
+    var filas = fila('Extranjero, no listado', '', 'geo_' + clave + '_ext', b.ext);
+    if (clave === 'domicilio') filas += fila('Estados Unidos', '', 'geo_domicilio_us', b.us);
+    filas += cats.map(function(k){
+      return fila(capEsc(etiqueta(k)), cuantos(k) + ' jurisdicciones', 'geo_' + clave + '_' + k, b[k]);
+    }).join('');
+
+    return '<div style="margin-bottom:14px">'
+      + '<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">'
+      + '<span style="font-size:13px;font-weight:600;color:var(--tx1)">' + c[1] + '</span>'
+      + '<span style="font-size:11px;color:var(--tx3)">tope ' + tope + ' puntos</span></div>'
+      + '<div style="font-size:11px;color:var(--tx3);margin:2px 0 4px">' + c[2] + '</div>'
+      + filas + '</div>';
   }).join('');
 
+  var meses = mesesDesdeCorteGAFI();
   var aviso = (meses !== null && meses >= 4)
-    ? '<div style="margin-top:10px;padding:8px 10px;border-left:3px solid var(--am);background:var(--am3,transparent);font-size:12px;color:var(--tx2)">'
+    ? '<div style="margin-top:10px;padding:8px 10px;border-left:3px solid var(--am);font-size:12px;color:var(--tx2)">'
       + 'Las listas del GAFI tienen ' + meses + ' meses desde su fecha de corte. '
       + 'El GAFI revisa en febrero, junio y octubre: conviene comprobar si hubo plenaria y actualizar '
       + '<code>data/paises_riesgo.json</code>.</div>'
     : '';
 
+  var sinCat = CAT_JURIS ? '' :
+    '<div style="padding:8px 10px;border-left:3px solid var(--rj);font-size:12px;color:var(--tx2);margin-bottom:8px">'
+    + 'El catalogo de jurisdicciones no se pudo cargar, asi que por ahora solo se aplican los valores '
+    + 'de "extranjero, no listado".</div>';
+
   return '<div style="margin-bottom:18px">'
-    + '<div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Jurisdicciones de riesgo</div>'
-    + '<div style="font-size:12px;color:var(--tx3);margin-bottom:6px;line-height:1.5">'
-    + 'Se revisan los tres campos que pide la guia de la UIF: nacionalidad, pais de nacimiento y '
-    + 'pais del domicilio. Basta con que uno de ellos apunte a una jurisdiccion listada. Cuenta la '
-    + 'categoria mas alta de las que apliquen, nunca la suma, y nunca por debajo del puntaje que ya '
-    + 'daba el domicilio por si solo.</div>'
-    + filas + aviso
+    + '<div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Geografia</div>'
+    + '<div style="font-size:12px;color:var(--tx3);margin-bottom:8px;line-height:1.5">'
+    + 'Los tres campos que pide el indicador 4.1 de la guia de la UIF puntuan por separado, de modo '
+    + 'que un vinculo repetido en varios campos pesa mas que uno aislado. Dentro de cada campo cuenta '
+    + 'la categoria mas alta que aplique, nunca la suma.</div>'
+    + sinCat + bloques + aviso
     + '<div style="margin-top:8px"><button class="btn btn-sm" onclick="verJurisdicciones()">Ver las jurisdicciones listadas</button></div>'
     + '<div id="juris-lista" style="margin-top:10px"></div>'
     + '</div>';
@@ -3832,13 +3854,13 @@ function guardarEBR() {
   tipoKeys.forEach(function(k){ CFG_EBR.tipo_cliente[k] = g('tipo_'+k, CFG_EBR.tipo_cliente[k]||0); });
   var pepKeys = ['NO APLICA','Inactivo','Vencido','Activo','Familiar','Relacionado a PEP'];
   pepKeys.forEach(function(k){ CFG_EBR.pep[k] = g('pep_'+k.replace(/ /g,'_'), CFG_EBR.pep[k]||0); });
-  CFG_EBR.nacionalidad_ext         = g('nacionalidad_ext', 15);
-  CFG_EBR.puntaje_pais_dom_mx      = g('puntaje_pais_dom_mx', 0);
-  CFG_EBR.puntaje_pais_dom_us      = g('puntaje_pais_dom_us', 0);
-  CFG_EBR.puntaje_pais_dom_ext     = g('puntaje_pais_dom_ext', 5);
-  CFG_EBR.puntaje_jurisdiccion = CFG_EBR.puntaje_jurisdiccion || {};
-  ['gafi_contramedidas','csnu_sanciones','gafi_vigilancia','regimen_fiscal'].forEach(function(k){
-    CFG_EBR.puntaje_jurisdiccion[k] = g('juris_' + k, CFG_EBR.puntaje_jurisdiccion[k] || 0);
+  CFG_EBR.geografia = CFG_EBR.geografia || {};
+  ['domicilio','nacionalidad','nacimiento'].forEach(function(campo){
+    var b = CFG_EBR.geografia[campo] = CFG_EBR.geografia[campo] || {};
+    ['ext','gafi_contramedidas','csnu_sanciones','gafi_vigilancia','regimen_fiscal'].forEach(function(k){
+      b[k] = g('geo_' + campo + '_' + k, b[k] || 0);
+    });
+    if (campo === 'domicilio') b.us = g('geo_domicilio_us', b.us || 0);
   });
   CFG_EBR.dueno_beneficiario['SI'] = g('db_SI', 0);
   CFG_EBR.dueno_beneficiario['NO'] = g('db_NO', 10);
@@ -5002,15 +5024,6 @@ function calcEBR(d) {
   p += CFG_EBR.tipo_cliente[d.tipo] !== undefined ? CFG_EBR.tipo_cliente[d.tipo] : 10;
   // Estatus PEP
   p += CFG_EBR.pep[d.estatus_pep || 'NO APLICA'] || 0;
-  // Origen extranjero. El expediente guarda dos campos distintos: pais_nac es
-  // el pais de nacimiento y pais_nac2 la nacionalidad. Antes solo se miraba el
-  // primero, y el respaldo apuntaba a pais_nacionalidad, que no es un campo del
-  // expediente sino una etiqueta del XML de los Avisos: la nacionalidad no
-  // entraba nunca en el calculo. Basta con que uno de los dos sea extranjero.
-  var paisNacim = d.pais_nac  || 'MEXICO';
-  var paisNacio = d.pais_nac2 || d.pais_nac || 'MEXICO';
-  if (normPais(paisNacim) !== 'MEXICO' || normPais(paisNacio) !== 'MEXICO')
-    p += CFG_EBR.nacionalidad_ext || 0;
   // Declaración de dueño beneficiario
   var db = d.tiene_dueno_ben || ((d.beneficiarios && d.beneficiarios.length) ? 'SI' : 'NO');
   p += (CFG_EBR.dueno_beneficiario[db] !== undefined ? CFG_EBR.dueno_beneficiario[db] : 0);
@@ -5018,36 +5031,32 @@ function calcEBR(d) {
   var actCod = String(d.actividad_scian || d.actividad_pf || '');
   if (actCod && CFG_EBR.actividades_alto_riesgo.length && CFG_EBR.actividades_alto_riesgo.indexOf(actCod) >= 0)
     p += CFG_EBR.puntaje_actividad || 0;
-  // Riesgo geografico. Un solo factor que resuelve donde esta el cliente y con
-  // que jurisdicciones tiene vinculo. El puntaje base sale del domicilio, con
-  // ramas excluyentes: viviendo en Mexico cuenta el estado, segun la
-  // clasificacion del Indice de Paz Mexico, y viviendo fuera cuenta el pais.
-  // Antes se sumaban los dos, de modo que un expediente con estado mexicano y
-  // pais extranjero cobraba dos veces por vivir en un solo sitio.
-  //
-  // Encima de esa base se aplica el vinculo con jurisdicciones de riesgo, que
-  // la guia de la UIF pide mirar en los tres campos: nacionalidad, pais de
-  // nacimiento y domicilio. Se toma el mayor de base y jurisdiccion, nunca la
-  // suma, para que el factor conserve su tope y para que anadir listas no pueda
-  // bajar un puntaje ya asignado.
+  // Geografia. Tres factores independientes, como pide el indicador 4.1 de la
+  // guia de la UIF: domicilio, nacionalidad y pais de nacimiento. Cada uno
+  // suma lo suyo, de modo que un vinculo repetido en varios campos pesa mas que
+  // uno aislado.
+  var G = CFG_EBR.geografia || {};
+  var paises = paisesDePersona(d);
+
+  // Domicilio. Ramas excluyentes: viviendo en Mexico cuenta el puntaje del
+  // estado, sembrado con la clasificacion del Indice de Paz Mexico; viviendo
+  // fuera cuenta el pais. Nunca los dos, que era el defecto de sumar ambos.
   var paisDom = d.pais_dom || 'MEXICO';
-  var baseGeo = 0;
   if (normPais(paisDom) === 'MEXICO') {
-    baseGeo = CFG_EBR.puntaje_pais_dom_mx || 0;
     var estDom = d.estado || '';
     if (estDom) {
       if (CFG_EBR.estados_puntaje && Object.keys(CFG_EBR.estados_puntaje).length) {
-        baseGeo += Number(CFG_EBR.estados_puntaje[estDom]) || 0;
+        p += Number(CFG_EBR.estados_puntaje[estDom]) || 0;
       } else if (CFG_EBR.estados_alto_riesgo.length && CFG_EBR.estados_alto_riesgo.indexOf(estDom) >= 0) {
-        baseGeo += CFG_EBR.puntaje_estado || 0;
+        p += CFG_EBR.puntaje_estado || 0;
       }
     }
   } else {
-    baseGeo = (paisISO(paisDom) === 'US')
-      ? (CFG_EBR.puntaje_pais_dom_us  || 0)
-      : (CFG_EBR.puntaje_pais_dom_ext || 0);
+    p += puntajeGeo(G.domicilio, paisDom);
   }
-  p += Math.max(baseGeo, puntosJurisdiccionVarios([paisDom, paisNacim, paisNacio]));
+
+  p += puntajeGeo(G.nacionalidad, paises.nacionalidad);
+  p += puntajeGeo(G.nacimiento,   paises.nacimiento);
   // Edad del cliente (solo persona física, a partir de la fecha de nacimiento)
   if (d.tipo === 'PF_MEX' || d.tipo === 'PF_EXT') {
     var edad = edadDesde(d.fecha_nac);
@@ -7302,7 +7311,24 @@ var ESCALA_EBR = 100;
 var CFG_EBR = {
   tipo_cliente: { 'PF_MEX': 0, 'PF_EXT': 15, 'PM_MEX': 12, 'PM_SIMP': 8, 'FIDEICOMISO': 15 },
   pep: { 'NO APLICA': 0, 'Inactivo': 12, 'Vencido': 4, 'Activo': 25, 'Familiar': 25, 'Relacionado a PEP': 25 },
-  nacionalidad_ext: 10,
+  // Los tres factores geograficos que pide el indicador 4.1 de la guia de la
+  // UIF. Cada uno puntua por separado: el vinculo con una jurisdiccion pesa mas
+  // cuando se repite en varios campos que cuando aparece en uno solo.
+  //
+  // Dentro de un factor se toma el mayor entre su valor base y el que le toque
+  // por jurisdiccion, nunca la suma, de modo que el tope del factor es su valor
+  // mas alto. Domicilio 10, nacionalidad 8, pais de nacimiento 7: suman 25, que
+  // es lo que la geografia valia antes entre el domicilio y la nacionalidad.
+  //
+  // El orden no es arbitrario. El domicilio es donde el cliente opera de hecho
+  // y ademas carga con los puntajes por estado; la nacionalidad es un vinculo
+  // juridico con un Estado, al que se atan sanciones y regimenes PEP; el pais
+  // de nacimiento es el vinculo mas debil, porque alguien pudo dejarlo de nino.
+  geografia: {
+    domicilio:    { ext: 3, us: 3, gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 },
+    nacionalidad: { ext: 3,        gafi_contramedidas:  8, csnu_sanciones:  8, gafi_vigilancia: 6, regimen_fiscal: 3 },
+    nacimiento:   { ext: 2,        gafi_contramedidas:  7, csnu_sanciones:  7, gafi_vigilancia: 5, regimen_fiscal: 3 }
+  },
   // SI = existe un dueno beneficiario distinto del cliente, es decir una capa
   // de propiedad detras. Eso suma riesgo; que no exista no suma nada.
   dueno_beneficiario: { 'SI': 10, 'NO': 0 },
@@ -7311,16 +7337,6 @@ var CFG_EBR = {
   estados_alto_riesgo: [],   // esquema anterior; se conserva para configuraciones guardadas antes del cambio
   puntaje_estado: 10,        // idem
   estados_puntaje: null,     // esquema vigente: { 'Nombre del estado': puntos }; se rellena mas abajo
-  puntaje_pais_dom_mx: 0,
-  puntaje_pais_dom_us: 10,
-  puntaje_pais_dom_ext: 5,     // extranjero no listado; las jurisdicciones de
-                               // riesgo puntuan aparte, en puntaje_jurisdiccion
-  puntaje_jurisdiccion: {
-    gafi_contramedidas: 15,
-    csnu_sanciones:     15,
-    gafi_vigilancia:    10,
-    regimen_fiscal:      5
-  },
   edad_min: 20,
   edad_max: 75,
   puntaje_edad_menor: 10,
@@ -7400,10 +7416,8 @@ function ipmDato(estado) {
 var PESOS_EBR_100 = {
   tipo_cliente: { 'PF_MEX': 0, 'PF_EXT': 15, 'PM_MEX': 12, 'PM_SIMP': 8, 'FIDEICOMISO': 15 },
   pep: { 'NO APLICA': 0, 'Inactivo': 12, 'Vencido': 4, 'Activo': 25, 'Familiar': 25, 'Relacionado a PEP': 25 },
-  nacionalidad_ext: 10,
   dueno_beneficiario: { 'SI': 10, 'NO': 0 },
   puntaje_actividad: 15,
-  puntaje_pais_dom_mx: 0, puntaje_pais_dom_us: 10, puntaje_pais_dom_ext: 15,
   puntaje_edad_menor: 10, puntaje_edad_mayor: 7
 };
 var MIGRACION_EBR = null;   // resumen de lo que cambio, o null si no hubo nada
@@ -7439,14 +7453,20 @@ function migrarEscalaEBR(cargado) {
 // por categoria y se baja el puntaje del extranjero no listado, que hasta
 // entonces cargaba con todo el peso del factor.
 function migrarJurisdicciones(cargado) {
-  if (!cargado || cargado.puntaje_jurisdiccion) return null;
-  CFG_EBR.puntaje_jurisdiccion = {
-    gafi_contramedidas: 15, csnu_sanciones: 15, gafi_vigilancia: 10, regimen_fiscal: 5
+  if (!cargado || cargado.geografia) return null;
+  CFG_EBR.geografia = {
+    domicilio:    { ext: 3, us: 3, gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 },
+    nacionalidad: { ext: 3,        gafi_contramedidas:  8, csnu_sanciones:  8, gafi_vigilancia: 6, regimen_fiscal: 3 },
+    nacimiento:   { ext: 2,        gafi_contramedidas:  7, csnu_sanciones:  7, gafi_vigilancia: 5, regimen_fiscal: 3 }
   };
-  var antes = CFG_EBR.puntaje_pais_dom_ext;
-  CFG_EBR.puntaje_pais_dom_ext = 5;
-  console.info('[JURIS] configuracion migrada: extranjero no listado ' + antes + ' -> 5, '
-    + 'y se anaden los puntajes por categoria de jurisdiccion');
+  // Claves del esquema anterior, en que la geografia era un factor unico de 15
+  // puntos mas una casilla de nacionalidad extranjera de 10. Se borran para que
+  // no queden arrastrandose en el JSON guardado sin que nadie las lea.
+  ['nacionalidad_ext','puntaje_pais_dom_mx','puntaje_pais_dom_us','puntaje_pais_dom_ext',
+   'puntaje_jurisdiccion','paises_dom_alto_riesgo','puntaje_pais_dom'].forEach(function(k){
+    delete CFG_EBR[k];
+  });
+  console.info('[JURIS] geografia migrada a tres factores: domicilio 10, nacionalidad 8, nacimiento 7');
   return true;
 }
 
@@ -7573,17 +7593,35 @@ function etiquetaJurisdiccion(nombrePais) {
   return cats.map(function(k){ return CAT_JURIS.categorias[k].etiqueta; }).join(' · ');
 }
 
-// La guia de la UIF pide mirar la nacionalidad, el pais de nacimiento y el
-// domicilio, no solo este ultimo. Estas dos funciones resuelven el conjunto:
-// se toma el peor de los tres, porque el vinculo con una jurisdiccion de riesgo
-// existe aunque sea por uno solo de los campos.
-function puntosJurisdiccionVarios(paises) {
-  var max = 0;
-  (paises || []).forEach(function(p){
-    var v = puntosJurisdiccion(p);
-    if (v > max) max = v;
+
+// Puntaje de uno de los tres factores geograficos. Mexico no suma. Para
+// cualquier otro pais se toma el mayor entre el valor base del factor y el que
+// le corresponda por las listas en que aparezca, de forma que un pais en varias
+// listas cuenta por la mas alta y nunca por debajo del valor base.
+function puntajeGeo(bloque, nombrePais) {
+  if (!bloque || !nombrePais) return 0;
+  if (normPais(nombrePais) === 'MEXICO') return 0;
+  var mayor = (paisISO(nombrePais) === 'US' && bloque.us !== undefined)
+    ? Number(bloque.us) || 0
+    : Number(bloque.ext) || 0;
+  jurisdiccionesDe(nombrePais).forEach(function(k){
+    var v = Number(bloque[k]) || 0;
+    if (v > mayor) mayor = v;
   });
-  return max;
+  return mayor;
+}
+
+// Los dos campos de pais de una persona: el expediente de persona fisica guarda
+// pais_nac como pais de nacimiento y pais_nac2 como nacionalidad, mientras que
+// el de persona moral y fideicomiso usa pais_nac para la nacionalidad y no
+// tiene pais de nacimiento. Distinguirlo evita contar dos veces el mismo dato.
+function paisesDePersona(d) {
+  var esFisica = (d.tipo === 'PF_MEX' || d.tipo === 'PF_EXT');
+  if (!esFisica) return { nacionalidad: d.pais_nac || 'MEXICO', nacimiento: '' };
+  return {
+    nacimiento:   d.pais_nac  || 'MEXICO',
+    nacionalidad: d.pais_nac2 || d.pais_nac || 'MEXICO'
+  };
 }
 
 // Que campos vinculan al cliente con una jurisdiccion de riesgo, para poder
