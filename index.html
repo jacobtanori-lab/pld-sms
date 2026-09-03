@@ -3421,9 +3421,20 @@ function pgConfigEBR() {
   // La lista de actividades se renderiza dinámicamente por ebrRenderActLista()
 
 
+  var avisoEsc = migracionEBRPendiente()
+    ? '<div class="card" style="border-left:4px solid var(--am)"><div class="card-b">'
+      + '<div style="font-weight:600;margin-bottom:6px">Los pesos se reescalaron a 0-100</div>'
+      + '<div style="font-size:13px;color:var(--tx2);line-height:1.6">La configuracion guardada venia en una escala que llegaba a 130 puntos. '
+      + 'Se ajusto para que el maximo sea 100 y el puntaje se lea como porcentaje. '
+      + 'El cambio esta solo en pantalla: pulsa <strong>Guardar cambios</strong> para conservarlo. '
+      + 'El detalle de los ' + MIGRACION_EBR.length + ' valores ajustados esta en la consola del navegador.</div>'
+      + '</div></div>'
+    : '';
+
   setMain('<div class="phdr"><div><div class="ptit">Nivel de Riesgo de clientes</div>'
     +'<div class="psub">Parametros del calculo de nivel de riesgo de clientes</div></div>'
     +'<button class="btn btn-p" onclick="guardarEBR()">Guardar cambios</button></div>'
+    + avisoEsc
 
     // — Umbrales —
     +'<div class="card"><div class="card-h"><span class="card-t">Umbrales de clasificacion</span></div>'
@@ -4918,21 +4929,22 @@ function calcEBR(d) {
   var actCod = String(d.actividad_scian || d.actividad_pf || '');
   if (actCod && CFG_EBR.actividades_alto_riesgo.length && CFG_EBR.actividades_alto_riesgo.indexOf(actCod) >= 0)
     p += CFG_EBR.puntaje_actividad || 0;
-  // Estado del domicilio. Cada entidad tiene su propio puntaje, sembrado con la
-  // clasificacion del Indice de Paz Mexico. Si una configuracion guardada antes
-  // del cambio no trae la tabla, se respeta el esquema anterior de lista unica.
-  var estDom = d.estado || '';
-  if (estDom) {
-    if (CFG_EBR.estados_puntaje && Object.keys(CFG_EBR.estados_puntaje).length) {
-      p += Number(CFG_EBR.estados_puntaje[estDom]) || 0;
-    } else if (CFG_EBR.estados_alto_riesgo.length && CFG_EBR.estados_alto_riesgo.indexOf(estDom) >= 0) {
-      p += CFG_EBR.puntaje_estado || 0;
-    }
-  }
-  // País del domicilio — 3 tramos: México / EE.UU. / Resto del mundo
+  // Domicilio: un solo factor con ramas excluyentes. Si el cliente vive en
+  // Mexico cuenta el puntaje de su estado, sembrado con la clasificacion del
+  // Indice de Paz Mexico; si vive fuera, el de su pais. Antes se sumaban los
+  // dos, de modo que un expediente con estado mexicano y pais extranjero
+  // cobraba dos veces por vivir en un solo sitio.
   var paisDom = d.pais_dom || 'MEXICO';
   if (normPais(paisDom) === 'MEXICO') {
     p += CFG_EBR.puntaje_pais_dom_mx || 0;
+    var estDom = d.estado || '';
+    if (estDom) {
+      if (CFG_EBR.estados_puntaje && Object.keys(CFG_EBR.estados_puntaje).length) {
+        p += Number(CFG_EBR.estados_puntaje[estDom]) || 0;
+      } else if (CFG_EBR.estados_alto_riesgo.length && CFG_EBR.estados_alto_riesgo.indexOf(estDom) >= 0) {
+        p += CFG_EBR.puntaje_estado || 0;
+      }
+    }
   } else if (paisISO(paisDom) === 'US') {
     p += CFG_EBR.puntaje_pais_dom_us || 0;
   } else {
@@ -4946,6 +4958,10 @@ function calcEBR(d) {
       else if (CFG_EBR.edad_max && edad > CFG_EBR.edad_max) p += CFG_EBR.puntaje_edad_mayor || 0;
     }
   }
+  // Red de seguridad: con los pesos vigentes el maximo alcanzable es la escala,
+  // pero unos pesos editados a mano podrian pasarse y el puntaje dejaria de
+  // leerse como porcentaje.
+  if (p > ESCALA_EBR) p = ESCALA_EBR;
   var uA = CFG_EBR.umbral_alto  || 70;
   var uM = CFG_EBR.umbral_medio || 40;
   return { nivel: p >= uA ? 'Alto' : p >= uM ? 'Medio' : 'Bajo', puntaje: p };
@@ -7176,25 +7192,37 @@ var CFG_UMA = {
 };
 
 // Configuración del modelo EBR (se sobreescribe al cargar desde SharePoint)
+// Los pesos suman 100 como maximo alcanzable, de modo que el puntaje de un
+// cliente se lee directamente como porcentaje de riesgo. El reparto por factor
+// es: PEP 25, tipo de cliente 15, actividad 15, domicilio 15, edad 10,
+// nacionalidad 10 y dueno beneficiario 10.
+//
+// El domicilio es UN solo factor: si el cliente vive en Mexico cuentan los
+// puntos de su estado (0 a 10); si vive fuera, los de su pais (10 EE.UU., 15
+// resto). Nunca se cobran los dos, que era el defecto que subia el techo a 130.
+var ESCALA_EBR = 100;
 var CFG_EBR = {
-  tipo_cliente: { 'PF_MEX': 10, 'PF_EXT': 20, 'PM_MEX': 20, 'PM_SIMP': 20, 'FIDEICOMISO': 35 },
-  pep: { 'NO APLICA': 0, 'Inactivo': 15, 'Vencido': 5, 'Activo': 40, 'Familiar': 40, 'Relacionado a PEP': 40 },
-  nacionalidad_ext: 15,
-  dueno_beneficiario: { 'SI': 0, 'NO': 10 },
+  tipo_cliente: { 'PF_MEX': 0, 'PF_EXT': 15, 'PM_MEX': 12, 'PM_SIMP': 8, 'FIDEICOMISO': 15 },
+  pep: { 'NO APLICA': 0, 'Inactivo': 12, 'Vencido': 4, 'Activo': 25, 'Familiar': 25, 'Relacionado a PEP': 25 },
+  nacionalidad_ext: 10,
+  // SI = existe un dueno beneficiario distinto del cliente, es decir una capa
+  // de propiedad detras. Eso suma riesgo; que no exista no suma nada.
+  dueno_beneficiario: { 'SI': 10, 'NO': 0 },
   actividades_alto_riesgo: [],
-  puntaje_actividad: 25,
+  puntaje_actividad: 15,
   estados_alto_riesgo: [],   // esquema anterior; se conserva para configuraciones guardadas antes del cambio
   puntaje_estado: 10,        // idem
   estados_puntaje: null,     // esquema vigente: { 'Nombre del estado': puntos }; se rellena mas abajo
   puntaje_pais_dom_mx: 0,
-  puntaje_pais_dom_us: 0,
-  puntaje_pais_dom_ext: 10,
-  edad_min: 25,
-  edad_max: 65,
-  puntaje_edad_menor: 0,
-  puntaje_edad_mayor: 0,
+  puntaje_pais_dom_us: 10,
+  puntaje_pais_dom_ext: 15,
+  edad_min: 20,
+  edad_max: 75,
+  puntaje_edad_menor: 10,
+  puntaje_edad_mayor: 7,
   umbral_alto: 70,
-  umbral_medio: 40
+  umbral_medio: 40,
+  escala: 100                // marca de que los pesos ya estan reescalados
 };
 
 // ── ÍNDICE DE PAZ MÉXICO ──────────────────────────────────────
@@ -7259,15 +7287,69 @@ function ipmDato(estado) {
   return null;
 }
 
+// Las configuraciones guardadas antes del reescalado llegan en una escala que
+// alcanzaba 130 puntos. Se convierten a la de 100 una sola vez, y queda anotado
+// que cambio para poder avisarlo en pantalla. La migracion no escribe nada:
+// solo ajusta la configuracion en memoria, y se conserva cuando el usuario
+// pulsa "Guardar cambios".
+var PESOS_EBR_100 = {
+  tipo_cliente: { 'PF_MEX': 0, 'PF_EXT': 15, 'PM_MEX': 12, 'PM_SIMP': 8, 'FIDEICOMISO': 15 },
+  pep: { 'NO APLICA': 0, 'Inactivo': 12, 'Vencido': 4, 'Activo': 25, 'Familiar': 25, 'Relacionado a PEP': 25 },
+  nacionalidad_ext: 10,
+  dueno_beneficiario: { 'SI': 10, 'NO': 0 },
+  puntaje_actividad: 15,
+  puntaje_pais_dom_mx: 0, puntaje_pais_dom_us: 10, puntaje_pais_dom_ext: 15,
+  puntaje_edad_menor: 10, puntaje_edad_mayor: 7
+};
+var MIGRACION_EBR = null;   // resumen de lo que cambio, o null si no hubo nada
+
+function migrarEscalaEBR(cargado) {
+  // Sin configuracion guardada no hay nada que convertir: los valores por
+  // omision ya vienen en la escala vigente.
+  if (!cargado || Number(cargado.escala) === ESCALA_EBR) return null;
+  var cambios = [];
+  var anota = function(etq, de, a) { if (Number(de) !== Number(a)) cambios.push(etq + ': ' + de + ' -> ' + a); };
+
+  Object.keys(PESOS_EBR_100).forEach(function(k) {
+    var nuevo = PESOS_EBR_100[k];
+    if (typeof nuevo === 'object') {
+      CFG_EBR[k] = CFG_EBR[k] || {};
+      Object.keys(nuevo).forEach(function(sub) {
+        anota(k + '.' + sub, CFG_EBR[k][sub] !== undefined ? CFG_EBR[k][sub] : 0, nuevo[sub]);
+        CFG_EBR[k][sub] = nuevo[sub];
+      });
+    } else {
+      anota(k, CFG_EBR[k] !== undefined ? CFG_EBR[k] : 0, nuevo);
+      CFG_EBR[k] = nuevo;
+    }
+  });
+  CFG_EBR.escala = ESCALA_EBR;
+  MIGRACION_EBR = cambios;
+  if (cambios.length) console.info('[EBR] pesos reescalados a 0-' + ESCALA_EBR + ':\n  ' + cambios.join('\n  '));
+  return cambios;
+}
+
+// Devuelve true si el reescalado sigue solo en memoria, es decir si lo guardado
+// todavia viene en la escala anterior.
+function migracionEBRPendiente() {
+  if (!MIGRACION_EBR || !MIGRACION_EBR.length) return false;
+  try {
+    var g = JSON.parse(localStorage.getItem('ebr_config') || '{}');
+    return Number(g.escala) !== ESCALA_EBR;
+  } catch (e) { return true; }
+}
+
 // Al iniciar, cargar EBR desde localStorage primero (rápido)
 (function() {
   var cached = localStorage.getItem('ebr_config');
-  if (cached) { try { var obj = JSON.parse(cached); for (var k in obj) if (obj.hasOwnProperty(k)) CFG_EBR[k]=obj[k]; } catch(e){} }
+  var obj = null;
+  if (cached) { try { obj = JSON.parse(cached); for (var k in obj) if (obj.hasOwnProperty(k)) CFG_EBR[k]=obj[k]; } catch(e){} }
   // Si no hay tabla de puntajes por estado (instalacion nueva o configuracion
   // anterior al cambio), se siembra con la clasificacion del IPM.
   if (!CFG_EBR.estados_puntaje || !Object.keys(CFG_EBR.estados_puntaje).length) {
     CFG_EBR.estados_puntaje = ipmPuntajePorDefecto();
   }
+  migrarEscalaEBR(obj);
 })();
 
 // ── PERFIL TRANSACCIONAL ──────────────────────────────────────
@@ -7400,6 +7482,7 @@ function cargarConfigUMA() {
         var ebr = JSON.parse(cfg.ebr_config);
         for (var k in ebr) if (ebr.hasOwnProperty(k)) CFG_EBR[k] = ebr[k];
         localStorage.setItem('ebr_config', cfg.ebr_config);
+        migrarEscalaEBR(ebr);
       } catch(e) { console.warn('EBR config parse error', e); }
     }
     if (cfg.perfil_config) {
