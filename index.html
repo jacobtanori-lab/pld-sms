@@ -3420,16 +3420,6 @@ function pgConfigEBR() {
 
   // La lista de actividades se renderiza dinámicamente por ebrRenderActLista()
 
-  // Chips de estados
-  function estadosChips() {
-    var selE = e.estados_alto_riesgo || [];
-    return ENTIDADES_FED.map(function(s) {
-      var on = selE.indexOf(s.desc) >= 0;
-      return '<span class="ebr-chip'+(on?' on':'')+'" data-cod="'+s.desc+'" onclick="ebrToggleChip(this)" '
-        +'style="cursor:pointer;display:inline-block;padding:3px 10px;margin:2px;border-radius:10px;font-size:12px;border:1px solid '+(on?'var(--az)':'var(--brd)')+';background:'+(on?'var(--az3)':'transparent')+';color:'+(on?'var(--az)':'var(--tx3)')+'">'
-        +s.desc+'</span>';
-    }).join('');
-  }
 
   setMain('<div class="phdr"><div><div class="ptit">Nivel de Riesgo de clientes</div>'
     +'<div class="psub">Parametros del calculo de nivel de riesgo de clientes</div></div>'
@@ -3486,16 +3476,11 @@ function pgConfigEBR() {
     +'<div id="ebr-act-tags" style="min-height:28px">'+actTagsHtml()+'</div></div>'
     +'</div></div>'
 
-    // — Estados del domicilio de alto riesgo —
-    +'<div class="card"><div class="card-h"><span class="card-t">Estados del domicilio de alto riesgo</span>'
-    +'<span style="font-size:12px;color:var(--tx3)">Entidades federativas con mayor exposicion</span></div>'
+    // — Estado del domicilio, segun el Indice de Paz Mexico —
+    +'<div class="card"><div class="card-h"><span class="card-t">Estado del domicilio</span>'
+    +'<span style="font-size:12px;color:var(--tx3)">Puntaje por entidad federativa</span></div>'
     +'<div class="card-b">'
-    +'<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">'
-    +'<span style="font-size:13px;color:var(--tx2)">Puntaje por estado de alto riesgo:</span>'
-    +fldNum('puntaje_estado',e.puntaje_estado||0,0,200)
-    +'<span style="font-size:12px;color:var(--tx3)">puntos</span>'
-    +'<button class="btn btn-sm" onclick="ebrLimpiarEstados()">Limpiar seleccion</button></div>'
-    +'<div id="est-chips" style="padding:8px;border:1px solid var(--brd);border-radius:var(--r)">'+estadosChips()+'</div>'
+    + ipmMapaHtml()
     +'</div></div>'
 
     // — Simulador —
@@ -3512,8 +3497,9 @@ function pgConfigEBR() {
     +'<option value="">Normal (no listada como alto riesgo)</option>'
     +'<option value="__alto__">En lista de alto riesgo</option></select></div>'
     +'<div class="fg"><label class="lbl">Estado del domicilio</label><select class="sel" id="sim-est">'
-    +'<option value="">Normal (no listado como alto riesgo)</option>'
-    +'<option value="__alto__">En lista de alto riesgo</option></select></div>'
+    +'<option value="">Sin especificar (0 puntos)</option>'
+    + ipmOpcionesSimulador()
+    +'</select></div>'
     +'<div class="fg"><label class="lbl">Pais del domicilio</label><select class="sel" id="sim-pdom">'
     +'<option value="MEXICO">Mexico</option>'
     +'<option value="US">Estados Unidos</option>'
@@ -3614,18 +3600,13 @@ function ebrToggleChip(el) {
   el.style.color       = on ? 'var(--tx3)' : 'var(--az)';
 }
 
-function ebrLimpiarEstados() {
-  var ct = document.getElementById('est-chips');
-  if (!ct) return;
-  ct.querySelectorAll('.ebr-chip.on').forEach(function(el) { ebrToggleChip(el); });
-}
 
 function ebrSimular() {
   var v = function(id){ return (document.getElementById(id)||{}).value || ''; };
   var tipo = v('sim-tipo'), pep = v('sim-pep'), nac = v('sim-nac');
   var act  = v('sim-act'), est = v('sim-est'), pdom = v('sim-pdom'), db = v('sim-db');
   var actCod = (act === '__alto__' && CFG_EBR.actividades_alto_riesgo.length) ? CFG_EBR.actividades_alto_riesgo[0] : '';
-  var estVal = (est === '__alto__' && CFG_EBR.estados_alto_riesgo.length)      ? CFG_EBR.estados_alto_riesgo[0]      : '';
+  var estVal = est;
   // Mapear selección de país a nombre de país que paisISO() reconoce
   var paisDomNombre = pdom === 'MEXICO' ? 'MEXICO' : pdom === 'US' ? 'ESTADOS UNIDOS' : 'CANADA';
   var edadSim = parseInt(v('sim-edad'), 10);
@@ -3638,6 +3619,90 @@ function ebrSimular() {
   var ct = document.getElementById('ebr-sim-result');
   if (ct) ct.innerHTML = '<span style="color:'+color+'">'+res.nivel+'</span>'
     +' <span style="font-size:14px;color:var(--tx2);font-weight:400">— Puntaje total: '+res.puntaje+' puntos</span>';
+}
+
+// ── Mapa de estados en la configuracion ───────────────────────
+// Rejilla de mosaicos con los 32 estados, coloreada con las bandas del Indice
+// de Paz Mexico. El color es el de la fuente y no cambia; lo editable es el
+// puntaje, que se muestra en cada mosaico y se cicla 0 → 5 → 10 al pulsarlo.
+// Un mosaico cuyo puntaje difiera del que corresponde a su banda se marca con
+// un borde, para que las decisiones propias se distingan de la clasificacion.
+// Opciones del desplegable del simulador: los 32 estados con el puntaje que
+// tienen configurado en ese momento, de mayor a menor para que se vea primero
+// lo que mas pesa.
+function ipmOpcionesSimulador() {
+  var pts = CFG_EBR.estados_puntaje || ipmPuntajePorDefecto();
+  return IPM_ESTADOS.slice().map(function(x){
+      return { e: x.e, p: (pts[x.e] !== undefined) ? Number(pts[x.e]) : IPM_BANDAS[x.banda].pts };
+    })
+    .sort(function(a,b){ return (b.p - a.p) || a.e.localeCompare(b.e); })
+    .map(function(x){ return '<option value="'+capEsc(x.e)+'">'+capEsc(x.e)+' ('+x.p+' pts)</option>'; })
+    .join('');
+}
+
+function ipmMapaHtml() {
+  var pts = CFG_EBR.estados_puntaje || ipmPuntajePorDefecto();
+  var celdas = {};
+  IPM_ESTADOS.forEach(function(x){ celdas[x.fila + '-' + x.col] = x; });
+
+  var rejilla = '';
+  for (var fila = 1; fila <= 7; fila++) {
+    for (var col = 1; col <= 9; col++) {
+      var x = celdas[fila + '-' + col];
+      if (!x) { rejilla += '<div></div>'; continue; }
+      var b = IPM_BANDAS[x.banda];
+      var p = (pts[x.e] !== undefined) ? Number(pts[x.e]) : b.pts;
+      var propio = (p !== b.pts);
+      rejilla += '<div data-estado="' + capEsc(x.e) + '" data-pts="' + p + '" data-banda="' + x.banda + '"'
+        + ' onclick="ipmCiclarEstado(this)" title="' + capEsc(x.e) + ' · lugar ' + x.lugar + ' de 32 · calificacion '
+        + x.cal.toFixed(3) + ' · ' + b.nom + '"'
+        + ' style="cursor:pointer;user-select:none;background:' + b.color + ';color:' + b.tx
+        + ';border-radius:5px;padding:6px 2px;text-align:center;line-height:1.15'
+        + ';box-shadow:' + (propio ? 'inset 0 0 0 2.5px var(--tx1)' : 'none') + '">'
+        + '<div style="font-size:10px;font-weight:700;letter-spacing:.02em">' + x.cod + '</div>'
+        + '<div class="ipm-pts" style="font-size:12px;font-weight:700;margin-top:1px">' + p + '</div>'
+        + '</div>';
+    }
+  }
+
+  var leyenda = '';
+  ['verde','verde2','amarillo','naranja','rojo'].forEach(function(k){
+    var b = IPM_BANDAS[k];
+    leyenda += '<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--tx2)">'
+      + '<span style="width:13px;height:13px;border-radius:3px;background:' + b.color + ';display:inline-block"></span>'
+      + b.nom + ' · ' + b.pts + ' pts</span>';
+  });
+
+  return '<p style="font-size:13px;color:var(--tx2);margin:0 0 10px;line-height:1.6">'
+    + 'Cada entidad aporta puntos segun su lugar en el <strong>' + IPM_EDICION + '</strong>. '
+    + 'Los colores son los de la fuente; el numero es el puntaje que suma al expediente. '
+    + 'Pulsa un estado para cambiarlo entre 0, 5 y 10 puntos.</p>'
+    + '<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:12px">' + leyenda + '</div>'
+    + '<div id="ipm-mapa" style="display:grid;grid-template-columns:repeat(9,minmax(32px,1fr));gap:4px;max-width:470px">'
+    + rejilla + '</div>'
+    + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px">'
+    + '<button class="btn btn-sm" onclick="ipmRestaurar()">Restaurar valores del Indice de Paz</button>'
+    + '<a href="https://indicedepazmexico.org/#mapa" target="_blank" rel="noopener" style="font-size:12px">Ver el mapa en la fuente</a>'
+    + '</div>';
+}
+
+function ipmCiclarEstado(el) {
+  var p = Number(el.dataset.pts) || 0;
+  p = (p === 0) ? 5 : (p === 5 ? 10 : 0);
+  el.dataset.pts = p;
+  var n = el.querySelector('.ipm-pts');
+  if (n) n.textContent = p;
+  var b = IPM_BANDAS[el.dataset.banda];
+  el.style.boxShadow = (b && p !== b.pts) ? 'inset 0 0 0 2.5px var(--tx1)' : 'none';
+  CFG_EBR.estados_puntaje = CFG_EBR.estados_puntaje || {};
+  CFG_EBR.estados_puntaje[el.dataset.estado] = p;
+}
+
+function ipmRestaurar() {
+  CFG_EBR.estados_puntaje = ipmPuntajePorDefecto();
+  var cont = document.getElementById('ipm-mapa');
+  if (cont && cont.parentNode) cont.parentNode.innerHTML = ipmMapaHtml();
+  toast('Puntajes restaurados a la clasificacion del Indice de Paz', 's');
 }
 
 function guardarEBR() {
@@ -3659,18 +3724,20 @@ function guardarEBR() {
   CFG_EBR.dueno_beneficiario['SI'] = g('db_SI', 0);
   CFG_EBR.dueno_beneficiario['NO'] = g('db_NO', 10);
   CFG_EBR.puntaje_actividad        = g('puntaje_actividad', 25);
-  CFG_EBR.puntaje_estado           = g('puntaje_estado', 10);
   CFG_EBR.edad_min                 = g('edad_min', 25);
   CFG_EBR.edad_max                 = g('edad_max', 65);
   CFG_EBR.puntaje_edad_menor       = g('puntaje_edad_menor', 0);
   CFG_EBR.puntaje_edad_mayor       = g('puntaje_edad_mayor', 0);
   // actividades_alto_riesgo ya se mantiene actualizado en memoria por ebrAgregarActividad/ebrQuitarActividad
-  // estados: leer chips
-  var ct = document.getElementById('est-chips');
-  if (ct) {
-    var arr = [];
-    ct.querySelectorAll('.ebr-chip.on').forEach(function(el){ arr.push(el.dataset.cod); });
-    CFG_EBR.estados_alto_riesgo = arr;
+  // estados: la tabla de puntajes se mantiene al vuelo en ipmCiclarEstado, aqui
+  // solo se recoge lo que muestran los mosaicos, que es la fuente de verdad.
+  var mapa = document.getElementById('ipm-mapa');
+  if (mapa) {
+    var tabla = {};
+    mapa.querySelectorAll('[data-estado]').forEach(function(el){
+      tabla[el.dataset.estado] = Number(el.dataset.pts) || 0;
+    });
+    if (Object.keys(tabla).length) CFG_EBR.estados_puntaje = tabla;
   }
   var json = JSON.stringify(CFG_EBR);
   localStorage.setItem('ebr_config', json);
@@ -4826,10 +4893,17 @@ function calcEBR(d) {
   var actCod = String(d.actividad_scian || d.actividad_pf || '');
   if (actCod && CFG_EBR.actividades_alto_riesgo.length && CFG_EBR.actividades_alto_riesgo.indexOf(actCod) >= 0)
     p += CFG_EBR.puntaje_actividad || 0;
-  // Estado del domicilio de alto riesgo
+  // Estado del domicilio. Cada entidad tiene su propio puntaje, sembrado con la
+  // clasificacion del Indice de Paz Mexico. Si una configuracion guardada antes
+  // del cambio no trae la tabla, se respeta el esquema anterior de lista unica.
   var estDom = d.estado || '';
-  if (estDom && CFG_EBR.estados_alto_riesgo.length && CFG_EBR.estados_alto_riesgo.indexOf(estDom) >= 0)
-    p += CFG_EBR.puntaje_estado || 0;
+  if (estDom) {
+    if (CFG_EBR.estados_puntaje && Object.keys(CFG_EBR.estados_puntaje).length) {
+      p += Number(CFG_EBR.estados_puntaje[estDom]) || 0;
+    } else if (CFG_EBR.estados_alto_riesgo.length && CFG_EBR.estados_alto_riesgo.indexOf(estDom) >= 0) {
+      p += CFG_EBR.puntaje_estado || 0;
+    }
+  }
   // País del domicilio — 3 tramos: México / EE.UU. / Resto del mundo
   var paisDom = d.pais_dom || 'MEXICO';
   if (normPais(paisDom) === 'MEXICO') {
@@ -7084,8 +7158,9 @@ var CFG_EBR = {
   dueno_beneficiario: { 'SI': 0, 'NO': 10 },
   actividades_alto_riesgo: [],
   puntaje_actividad: 25,
-  estados_alto_riesgo: [],
-  puntaje_estado: 10,
+  estados_alto_riesgo: [],   // esquema anterior; se conserva para configuraciones guardadas antes del cambio
+  puntaje_estado: 10,        // idem
+  estados_puntaje: null,     // esquema vigente: { 'Nombre del estado': puntos }; se rellena mas abajo
   puntaje_pais_dom_mx: 0,
   puntaje_pais_dom_us: 0,
   puntaje_pais_dom_ext: 10,
@@ -7097,10 +7172,77 @@ var CFG_EBR = {
   umbral_medio: 40
 };
 
+// ── ÍNDICE DE PAZ MÉXICO ──────────────────────────────────────
+// Clasificación general del IPM 2026 (datos de 2025), publicada por el
+// Institute for Economics and Peace en indicedepazmexico.org. El mapa agrupa a
+// los 32 estados en cinco bandas de color por su calificación; aquí se guarda
+// la calificación y el lugar de cada uno, y de ahí salen los puntos.
+//
+// Puntos acordados: banda roja 10, naranja y amarilla 5, las dos verdes 0.
+// Menor calificación significa más paz: el lugar 1 es el estado más pacífico.
+// `fila` y `col` colocan cada estado en la rejilla del mapa de la pantalla de
+// configuración; es una aproximación geográfica, no un mapa a escala.
+var IPM_EDICION = 'Índice de Paz México 2026 (datos 2025)';
+var IPM_ESTADOS = [
+  { e:'Yucatan',             cod:'YUC',  cal:1.279, lugar:1,  banda:'verde',    fila:5, col:9 },
+  { e:'Chiapas',             cod:'CHS',  cal:1.708, lugar:2,  banda:'verde',    fila:7, col:6 },
+  { e:'Tlaxcala',            cod:'TLA',  cal:1.728, lugar:3,  banda:'verde',    fila:4, col:6 },
+  { e:'Durango',             cod:'DUR',  cal:1.868, lugar:4,  banda:'verde',    fila:2, col:3 },
+  { e:'Campeche',            cod:'CAM',  cal:1.930, lugar:5,  banda:'verde',    fila:6, col:8 },
+  { e:'Coahuila',            cod:'COA',  cal:2.051, lugar:6,  banda:'verde2',   fila:1, col:4 },
+  { e:'Nayarit',             cod:'NAY',  cal:2.253, lugar:7,  banda:'verde2',   fila:3, col:2 },
+  { e:'Oaxaca',              cod:'OAX',  cal:2.293, lugar:8,  banda:'verde2',   fila:6, col:5 },
+  { e:'Hidalgo',             cod:'HGO',  cal:2.296, lugar:9,  banda:'verde2',   fila:3, col:6 },
+  { e:'Tamaulipas',          cod:'TAM',  cal:2.298, lugar:10, banda:'verde2',   fila:1, col:6 },
+  { e:'Zacatecas',           cod:'ZAC',  cal:2.315, lugar:11, banda:'verde2',   fila:2, col:4 },
+  { e:'Aguascalientes',      cod:'AGS',  cal:2.318, lugar:12, banda:'verde2',   fila:3, col:3 },
+  { e:'Puebla',              cod:'PUE',  cal:2.371, lugar:13, banda:'amarillo', fila:5, col:6 },
+  { e:'Veracruz',            cod:'VER',  cal:2.384, lugar:14, banda:'amarillo', fila:4, col:7 },
+  { e:'Jalisco',             cod:'JAL',  cal:2.546, lugar:15, banda:'amarillo', fila:4, col:2 },
+  { e:'Queretaro',           cod:'QRO',  cal:2.788, lugar:16, banda:'amarillo', fila:3, col:5 },
+  { e:'Estado de Mexico',    cod:'MEX',  cal:2.867, lugar:17, banda:'amarillo', fila:4, col:4 },
+  { e:'San Luis Potosi',     cod:'SLP',  cal:2.906, lugar:18, banda:'amarillo', fila:2, col:5 },
+  { e:'Ciudad de Mexico',    cod:'CMX',  cal:2.908, lugar:19, banda:'amarillo', fila:4, col:5 },
+  { e:'Michoacan',           cod:'MIC',  cal:2.924, lugar:20, banda:'amarillo', fila:4, col:3 },
+  { e:'Nuevo Leon',          cod:'NL',   cal:3.030, lugar:21, banda:'naranja',  fila:1, col:5 },
+  { e:'Guerrero',            cod:'GRO',  cal:3.097, lugar:22, banda:'naranja',  fila:5, col:4 },
+  { e:'Sonora',              cod:'SON',  cal:3.098, lugar:23, banda:'naranja',  fila:1, col:2 },
+  { e:'Tabasco',             cod:'TAB',  cal:3.159, lugar:24, banda:'naranja',  fila:6, col:7 },
+  { e:'Baja California Sur', cod:'BCS',  cal:3.172, lugar:25, banda:'naranja',  fila:2, col:1 },
+  { e:'Chihuahua',           cod:'CHH',  cal:3.450, lugar:26, banda:'naranja',  fila:1, col:3 },
+  { e:'Quintana Roo',        cod:'QROO', cal:3.496, lugar:27, banda:'naranja',  fila:6, col:9 },
+  { e:'Baja California',     cod:'BC',   cal:3.712, lugar:28, banda:'rojo',     fila:1, col:1 },
+  { e:'Morelos',             cod:'MOR',  cal:4.142, lugar:29, banda:'rojo',     fila:5, col:5 },
+  { e:'Guanajuato',          cod:'GTO',  cal:4.269, lugar:30, banda:'rojo',     fila:3, col:4 },
+  { e:'Sinaloa',             cod:'SIN',  cal:4.364, lugar:31, banda:'rojo',     fila:2, col:2 },
+  { e:'Colima',              cod:'COL',  cal:4.579, lugar:32, banda:'rojo',     fila:5, col:2 }
+];
+var IPM_BANDAS = {
+  verde:    { pts:0,  color:'#1B4D4D', tx:'#FFFFFF', nom:'Más pacífico' },
+  verde2:   { pts:0,  color:'#3A8C7E', tx:'#FFFFFF', nom:'Pacífico' },
+  amarillo: { pts:5,  color:'#E8E8A0', tx:'#4A4A20', nom:'Intermedio' },
+  naranja:  { pts:5,  color:'#E8B080', tx:'#5A3410', nom:'Deteriorado' },
+  rojo:     { pts:10, color:'#D03030', tx:'#FFFFFF', nom:'Menos pacífico' }
+};
+function ipmPuntajePorDefecto() {
+  var m = {};
+  IPM_ESTADOS.forEach(function(x){ m[x.e] = IPM_BANDAS[x.banda].pts; });
+  return m;
+}
+function ipmDato(estado) {
+  for (var i = 0; i < IPM_ESTADOS.length; i++) if (IPM_ESTADOS[i].e === estado) return IPM_ESTADOS[i];
+  return null;
+}
+
 // Al iniciar, cargar EBR desde localStorage primero (rápido)
 (function() {
   var cached = localStorage.getItem('ebr_config');
   if (cached) { try { var obj = JSON.parse(cached); for (var k in obj) if (obj.hasOwnProperty(k)) CFG_EBR[k]=obj[k]; } catch(e){} }
+  // Si no hay tabla de puntajes por estado (instalacion nueva o configuracion
+  // anterior al cambio), se siembra con la clasificacion del IPM.
+  if (!CFG_EBR.estados_puntaje || !Object.keys(CFG_EBR.estados_puntaje).length) {
+    CFG_EBR.estados_puntaje = ipmPuntajePorDefecto();
+  }
 })();
 
 // ── PERFIL TRANSACCIONAL ──────────────────────────────────────
