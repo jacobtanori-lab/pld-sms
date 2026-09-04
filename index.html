@@ -5419,11 +5419,17 @@ function toggleDuenoBen(val) {
 function htmlArrendamiento(d) {
   var esArr = (d.es_arrendamiento === 'SI');
   var vis = esArr ? '' : 'display:none';
+  var visCV = esArr ? 'display:none' : '';
+  // La respuesta decide la fraccion: SI es arrendamiento (Fr. XV) y NO es
+  // compraventa de inmueble (Fr. V). Cada rama pide lo suyo, y el perfil
+  // transaccional de mas abajo tambien cambia con ella.
   return fg('Cliente de arrendamiento',null,false)
     +'<select class="sel" name="es_arrendamiento" onchange="toggleArrendamiento(this.value)">'
-    +'<option value="NO"'+(!esArr?' selected':'')+'>NO</option>'
-    +'<option value="SI"'+(esArr?' selected':'')+'>SI - Cliente de arrendamiento</option>'
+    +'<option value="NO"'+(!esArr?' selected':'')+'>NO - Compraventa de inmueble (Fr. V)</option>'
+    +'<option value="SI"'+(esArr?' selected':'')+'>SI - Cliente de arrendamiento (Fr. XV)</option>'
     +'</select></div>'
+    +'<div class="fg full cv-campo" style="'+visCV+'"><label class="lbl">Nombre del fraccionamiento o bien inmueble</label>'
+    +'<input class="inp" name="nombre_fraccionamiento" value="'+capEsc(d.nombre_fraccionamiento||'')+'" placeholder="Ej: FRACCIONAMIENTO LAS PALMAS, LOTE 12" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>'
     +'<div class="fg full arr-campo" style="'+vis+'"><label class="lbl">Inmueble arrendado / nombre del establecimiento</label>'
     +'<input class="inp" name="inmueble_arrendado" value="'+(d.inmueble_arrendado||'')+'" placeholder="Ej: LOCAL 4, PLAZA NORTE" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>'
     +'<div class="fg arr-campo" style="'+vis+'"><label class="lbl">Monto mensual de la renta</label>'
@@ -5435,8 +5441,118 @@ function htmlArrendamiento(d) {
     +'</select></div>';
 }
 function toggleArrendamiento(val) {
-  var vis = (val === 'SI') ? '' : 'none';
-  document.querySelectorAll('.arr-campo').forEach(function(el){ el.style.display = vis; });
+  var arr = (val === 'SI');
+  document.querySelectorAll('.arr-campo, .ptx-arr').forEach(function(el){ el.style.display = arr ? '' : 'none'; });
+  document.querySelectorAll('.cv-campo, .ptx-cv').forEach(function(el){ el.style.display = arr ? 'none' : ''; });
+}
+
+// ── PERFIL TRANSACCIONAL DECLARADO ────────────────────────────
+// Lo que el cliente declara al abrir el expediente sobre como va a operar:
+// forma de pago, cuantas operaciones, con que frecuencia, por cuanto, cuanto
+// efectivo y de donde salen los recursos. Es lo que la guia de la UIF pide
+// conocer para el perfil transaccional, y lo que despues se compara contra lo
+// observado en las operaciones. Hay dos variantes porque un arrendatario y un
+// comprador de inmueble no operan igual; la respuesta a "cliente de
+// arrendamiento" decide cual aplica. Se guarda plano en el expediente, con
+// prefijo ptx_, como el resto de campos.
+var PTX_ARR_PAGO   = [['TRANSF_PROPIA','Transferencia electronica de cuentas propias'],['TRANSF_TERCEROS','Transferencia electronica de terceros'],['OTRO','Otro']];
+var PTX_ARR_NUMOPS = [['UNA','En una sola exhibicion'],['VARIAS','Mas de una operacion por periodo']];
+var PTX_FREC       = [['UNICA','Unica'],['MENSUAL','Mensual'],['TRIMESTRAL','Trimestral'],['SEMESTRAL','Semestral'],['ANUAL','Anual']];
+var PTX_EFECTIVO   = [['NUNCA','Nunca'],['OCASIONAL','Ocasional'],['HABITUAL','Habitual']];
+var PTX_ORIGEN     = [['ACTIVIDAD','Ingresos por actividad'],['AHORRO','Ahorro'],['VENTA_BIENES','Venta de bienes'],['HERENCIA','Herencia o donacion'],['PRESTAMO','Prestamo'],['OTRO','Otro']];
+var PTX_CV_PAGO    = [['CONTADO_PROPIOS','Contado con recursos propios'],['CONTADO_PARCIAL','Contado en parcialidades'],['CREDITO_BANCO','Credito bancario'],['CREDITO_OTRO','Credito de otra entidad u organismo de vivienda'],['MIXTO','Mixto']];
+var PTX_CV_NUMOPS  = [['1','Una operacion'],['2_5','Entre 2 y 5 operaciones'],['5_MAS','Mas de 5 operaciones']];
+
+function ptxEtiqueta(cat, v) {
+  for (var i = 0; i < cat.length; i++) if (cat[i][0] === v) return cat[i][1];
+  return v || '';
+}
+
+// Pesos con separador de miles y dos decimales, o guion si no hay valor.
+function fmtMXN(v) {
+  var n = parseFloat(v);
+  return isNaN(n) ? '-' : '$' + n.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// El campo de texto de "Otro" solo tiene sentido cuando se elige Otro.
+function ptxOtro(sel, cls) {
+  document.querySelectorAll('.' + cls).forEach(function(el){ el.style.display = (sel.value === 'OTRO') ? '' : 'none'; });
+}
+
+function htmlPerfilTx(d) {
+  var esArr = (d.es_arrendamiento === 'SI');
+  var sel = function(name, cat, v, extra) {
+    var h = '<select class="sel" name="' + name + '"' + (extra || '') + '><option value=""' + (!v ? ' selected' : '') + '>-- Seleccionar --</option>';
+    cat.forEach(function(o){ h += '<option value="' + o[0] + '"' + (v === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; });
+    return h + '</select></div>';
+  };
+  var num = function(name, v, ph) {
+    return '<input class="inp mono" type="number" min="0" step="0.01" name="' + name + '" value="' + capEsc(v || '') + '" placeholder="' + ph + '"></div>';
+  };
+  var otro = function(name, v, cls, vis) {
+    return '<div class="fg full ' + cls + '" style="' + vis + '"><label class="lbl">Especifique el origen</label>'
+      + '<input class="inp" name="' + name + '" value="' + capEsc(v || '') + '" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>';
+  };
+
+  var arr = '<div class="fgrid ptx-arr" style="' + (esArr ? '' : 'display:none') + '">'
+    + fg('Tipo de pago', null, false) + sel('ptx_arr_pago', PTX_ARR_PAGO, d.ptx_arr_pago)
+    + fg('Numero de operaciones esperadas en el periodo', null, false) + sel('ptx_arr_numops', PTX_ARR_NUMOPS, d.ptx_arr_numops)
+    + fg('Frecuencia esperada', null, false) + sel('ptx_arr_frec', PTX_FREC, d.ptx_arr_frec)
+    + fg('Monto esperado de la operacion (valor de la renta, MXN)', null, false) + num('ptx_arr_monto', d.ptx_arr_monto, '0.00')
+    + fg('Uso de efectivo', null, false) + sel('ptx_arr_efectivo', PTX_EFECTIVO, d.ptx_arr_efectivo)
+    + fg('Origen de los recursos', null, false) + sel('ptx_arr_origen', PTX_ORIGEN, d.ptx_arr_origen, ' onchange="ptxOtro(this,\'ptx-arr-otro\')"')
+    + otro('ptx_arr_origen_otro', d.ptx_arr_origen_otro, 'ptx-arr-otro', d.ptx_arr_origen === 'OTRO' ? '' : 'display:none')
+    + '</div>';
+
+  var cv = '<div class="fgrid ptx-cv" style="' + (esArr ? 'display:none' : '') + '">'
+    + fg('Tipo de pago', null, false) + sel('ptx_cv_pago', PTX_CV_PAGO, d.ptx_cv_pago)
+    + fg('Numero de operaciones', null, false) + sel('ptx_cv_numops', PTX_CV_NUMOPS, d.ptx_cv_numops)
+    + fg('Monto que se pagara en efectivo (MXN)', null, false) + num('ptx_cv_efectivo_mxn', d.ptx_cv_efectivo_mxn, '0.00')
+    + fg('Origen de los recursos', null, false) + sel('ptx_cv_origen', PTX_ORIGEN, d.ptx_cv_origen, ' onchange="ptxOtro(this,\'ptx-cv-otro\')"')
+    + otro('ptx_cv_origen_otro', d.ptx_cv_origen_otro, 'ptx-cv-otro', d.ptx_cv_origen === 'OTRO' ? '' : 'display:none')
+    + '<div class="fg full" style="font-size:11px;color:var(--tx3)">Frecuencia y monto esperado no aplican en compraventa: cada operacion se registra con su propio importe.</div>'
+    + '</div>';
+
+  return '<div class="card"><div class="card-h"><span class="card-t">Perfil transaccional</span>'
+    + '<span style="font-size:12px;color:var(--tx3)">Lo que el cliente declara sobre como va a operar</span></div>'
+    + '<div class="card-b" style="padding-bottom:0"><div style="font-size:12px;color:var(--tx3);margin-bottom:8px;line-height:1.5">'
+    + 'Las preguntas cambian segun la respuesta a "Cliente de arrendamiento", en Datos generales.</div></div>'
+    + arr + cv + '</div>';
+}
+
+// Pestana "Perfil transaccional" de la ficha: la decision de arrendamiento, el
+// inmueble y las seis respuestas de la variante que aplique.
+function renderPerfilTx(c) {
+  var esArr = (c.es_arrendamiento === 'SI');
+  var cab = fgHtml(
+    fcHtml('Tipo de cliente por fraccion', esArr ? 'Arrendamiento (Fr. XV)' : 'Compraventa de inmueble (Fr. V)')
+    + (esArr
+        ? fcHtml('Inmueble arrendado', capEsc(c.inmueble_arrendado)) + fcHtml('Renta mensual (MXN)', c.renta_monto ? fmtMXN(c.renta_monto) : '-')
+        : fcHtml('Fraccionamiento o bien inmueble', capEsc(c.nombre_fraccionamiento)))
+  );
+  var filas;
+  if (esArr) {
+    filas = fcHtml('Tipo de pago', ptxEtiqueta(PTX_ARR_PAGO, c.ptx_arr_pago))
+      + fcHtml('Operaciones esperadas en el periodo', ptxEtiqueta(PTX_ARR_NUMOPS, c.ptx_arr_numops))
+      + fcHtml('Frecuencia esperada', ptxEtiqueta(PTX_FREC, c.ptx_arr_frec))
+      + fcHtml('Monto esperado por operacion', c.ptx_arr_monto ? fmtMXN(c.ptx_arr_monto) : '-')
+      + fcHtml('Uso de efectivo', ptxEtiqueta(PTX_EFECTIVO, c.ptx_arr_efectivo))
+      + fcHtml('Origen de los recursos', ptxEtiqueta(PTX_ORIGEN, c.ptx_arr_origen) + (c.ptx_arr_origen === 'OTRO' && c.ptx_arr_origen_otro ? ': ' + capEsc(c.ptx_arr_origen_otro) : ''));
+  } else {
+    filas = fcHtml('Tipo de pago', ptxEtiqueta(PTX_CV_PAGO, c.ptx_cv_pago))
+      + fcHtml('Numero de operaciones', ptxEtiqueta(PTX_CV_NUMOPS, c.ptx_cv_numops))
+      + fcHtml('Frecuencia', 'No aplica')
+      + fcHtml('Monto esperado por operacion', 'No aplica')
+      + fcHtml('Monto a pagar en efectivo', c.ptx_cv_efectivo_mxn ? fmtMXN(c.ptx_cv_efectivo_mxn) : '-')
+      + fcHtml('Origen de los recursos', ptxEtiqueta(PTX_ORIGEN, c.ptx_cv_origen) + (c.ptx_cv_origen === 'OTRO' && c.ptx_cv_origen_otro ? ': ' + capEsc(c.ptx_cv_origen_otro) : ''));
+  }
+  var vacio = esArr
+    ? !(c.ptx_arr_pago || c.ptx_arr_numops || c.ptx_arr_frec || c.ptx_arr_monto || c.ptx_arr_efectivo || c.ptx_arr_origen)
+    : !(c.ptx_cv_pago || c.ptx_cv_numops || c.ptx_cv_efectivo_mxn || c.ptx_cv_origen);
+  var aviso = vacio
+    ? '<div style="margin:0 0 10px;padding:8px 10px;border-left:3px solid var(--am);font-size:12px;color:var(--tx2)">Este expediente no tiene perfil transaccional capturado. Se llena al editar el expediente, en la seccion del final.</div>'
+    : '';
+  return aviso + cab + '<div class="sec-hdr" style="margin-top:14px">Perfil declarado</div>' + fgHtml(filas);
 }
 
 // ================================================================
@@ -5474,6 +5590,7 @@ function htmlFormPF_MEX(d) {
     +'</div></div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Observaciones</span></div>'
     +'<div class="fgrid">'+ftxt('Observaciones generales','observaciones',d.observaciones||'')+'</div></div>'
+    +htmlPerfilTx(d)
     +btnGuardar(d.id,'PF_MEX')+'</form>';
 }
 
@@ -5526,6 +5643,7 @@ function htmlFormPF_EXT(d) {
     +'</div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Observaciones</span></div>'
     +'<div class="fgrid">'+ftxt('Observaciones generales','observaciones',d.observaciones||'')+'</div></div>'
+    +htmlPerfilTx(d)
     +btnGuardar(d.id,'PF_EXT')+'</form>';
 }
 
@@ -5589,6 +5707,7 @@ function htmlFormPM_MEX(d) {
     +'</div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Observaciones</span></div>'
     +'<div class="fgrid">'+ftxt('Observaciones generales','observaciones',d.observaciones||'')+'</div></div>'
+    +htmlPerfilTx(d)
     +btnGuardar(d.id,'PM_MEX')+'</form>';
 }
 
@@ -5636,6 +5755,7 @@ function htmlFormPM_SIMP(d) {
     +'<div class="card"><div class="card-h"><span class="card-t">Fundamento del regimen simplificado</span></div>'
     +'<div class="fgrid">'+ftxt('Justificacion de aplicacion del Anexo 7 (por que califica para regimen simplificado)','justificacion_simp',d.justificacion_simp||'')
     +ftxt('Observaciones generales','observaciones',d.observaciones||'')+'</div></div>'
+    +htmlPerfilTx(d)
     +btnGuardar(d.id,'PM_SIMP')+'</form>';
 }
 
@@ -5699,6 +5819,7 @@ function htmlFormFIDEICOMISO(d) {
     +'</div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Observaciones</span></div>'
     +'<div class="fgrid">'+ftxt('Observaciones generales','observaciones',d.observaciones||'')+'</div></div>'
+    +htmlPerfilTx(d)
     +btnGuardar(d.id,'FIDEICOMISO')+'</form>';
 }
 
@@ -6137,6 +6258,7 @@ function renderFicha(c) {
     +'<div class="ftab" onclick="fichaTab(this,\'fd-duen\')">Dueno beneficiario</div>'
     +'<div class="ftab" onclick="fichaTab(this,\'fd-docs\');renderDocs()">Documentos</div>'
     +'<div class="ftab" onclick="fichaTab(this,\'fd-ops\');renderOpsCliente()">Operaciones</div>'
+    +'<div class="ftab" onclick="fichaTab(this,\'fd-ptx\')">Perfil transaccional</div>'
     +'</div>'
     +'<div class="card" style="border-radius:0 0 var(--rl) var(--rl)">'
     +'<div id="fd-datos" class="card-b">'+renderDatosGenerales(c)+'</div>'
@@ -6149,13 +6271,14 @@ function renderFicha(c) {
     +'<div id="fd-duen" class="card-b" style="display:none">'+renderDuenBen(c)+'</div>'
     +'<div id="fd-docs" class="card-b" style="display:none"><div class="empty"><div class="spin" style="margin:0 auto"></div></div></div>'
     +'<div id="fd-ops" class="card-b" style="display:none"><div class="empty"><div class="spin" style="margin:0 auto"></div></div></div>'
+    +'<div id="fd-ptx" class="card-b" style="display:none">'+renderPerfilTx(c)+'</div>'
     +'</div>';
   setMain(html);
 }
 
 function fichaTab(el,id) {
   document.querySelectorAll('.ftab').forEach(function(t){t.classList.remove('on');}); el.classList.add('on');
-  ['fd-datos','fd-dom','fd-rl','fd-bcs','fd-fid','fd-df','fd-dom-ext','fd-duen','fd-docs','fd-ops'].forEach(function(i){
+  ['fd-datos','fd-dom','fd-rl','fd-bcs','fd-fid','fd-df','fd-dom-ext','fd-duen','fd-docs','fd-ops','fd-ptx'].forEach(function(i){
     var e=document.getElementById(i); if(e) e.style.display='none';
   });
   var t=document.getElementById(id); if(t) t.style.display='block';
