@@ -200,6 +200,52 @@ tbody tr:hover td{background:#f4f3ef}
 .empty{text-align:center;padding:40px;color:var(--tx3);font-size:13px}
 .alerta-banner{display:flex;align-items:flex-start;gap:10px;padding:10px 14px;border-radius:var(--r);font-size:12.5px;margin-bottom:12px;background:var(--am3);color:var(--am);border:1px solid rgba(133,79,11,.15)}
 @media(max-width:900px){.mets{grid-template-columns:1fr 1fr}}
+
+/* ── Movil y tableta angosta ─────────────────────────────────── */
+#sb-toggle{display:none;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;width:38px;height:38px;border-radius:6px;font-size:20px;line-height:1;cursor:pointer;flex-shrink:0}
+#sb-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:190}
+@media(max-width:768px){
+  html,body{height:auto;overflow:auto;-webkit-text-size-adjust:100%}
+  /* barra superior: marca y usuario en la primera fila, navegacion en una tira deslizable debajo */
+  #topbar{position:sticky;top:0;height:auto;min-height:var(--th);flex-wrap:wrap;padding-bottom:0}
+  .brand{width:auto;flex:1;min-width:0;border-right:0;padding:8px 12px}
+  #brand-title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;max-width:60vw}
+  .nav-right{padding:0 10px;gap:8px}
+  #nav-nombre{display:none}
+  #sb-toggle{display:inline-flex;align-items:center;justify-content:center}
+  #nav-bar{order:3;flex:0 0 100%;width:100%;height:auto;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  #nav-bar::-webkit-scrollbar{display:none}
+  .nav-item{height:40px;padding:0 12px;white-space:nowrap;font-size:13px}
+  /* el esqueleto deja de ser fijo: la pagina entera se desplaza */
+  #layout{position:static;display:block;top:auto}
+  #main{padding:12px;overflow:visible;min-height:60vh}
+  /* barra lateral como cajon */
+  #sidebar{display:none;position:fixed;top:0;left:0;bottom:0;width:min(280px,85vw);z-index:200;box-shadow:4px 0 24px rgba(0,0,0,.18);padding-top:12px}
+  body.sb-open #sidebar{display:block}
+  body.sb-open #sb-backdrop{display:block}
+  .sb-item{padding:12px 16px;font-size:14px}
+  /* formularios y fichas a una columna */
+  .fgrid{grid-template-columns:1fr;padding:12px;gap:10px}
+  .fg2{grid-template-columns:1fr}
+  .card{margin-bottom:12px}
+  .card-b{padding:12px}
+  .phdr{flex-direction:column;align-items:stretch;gap:10px}
+  .phdr .btn{width:100%;justify-content:center}
+  .mets{grid-template-columns:1fr 1fr;gap:8px}
+  /* controles del tamano de un dedo; 16px evita que iOS haga zoom al enfocar */
+  .inp,.sel,.txa{font-size:16px;min-height:42px}
+  .btn{min-height:40px}
+  .btn-xs,.btn-sm{min-height:34px}
+  /* pestanas de la ficha: se acomodan en dos filas, asi se ven todas sin deslizar */
+  .ftab{white-space:nowrap;padding:10px 12px}
+  /* tablas: se desplazan de lado dentro de su tarjeta */
+  .card-b{overflow-x:auto}
+  table{min-width:560px}
+  /* modales y login */
+  .mo{width:auto;max-width:100vw;max-height:100vh;border-radius:0}
+  .login-box{width:auto;margin:0 14px;padding:28px 18px}
+  #login-screen{padding:16px 0}
+}
 </style>
 </head>
 <body>
@@ -231,12 +277,14 @@ tbody tr:hover td{background:#f4f3ef}
   </div>
   <div id="nav-bar"></div>
   <div class="nav-right">
+    <button id="sb-toggle" type="button" onclick="toggleSB()" aria-label="Abrir menu de la seccion" title="Menu de la seccion">&#9776;</button>
     <span id="nav-nombre" style="font-size:12px;color:rgba(255,255,255,.65)"></span>
     <div class="avatar" id="nav-avatar">?</div>
     <button onclick="cerrarSesion()" style="background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;padding:4px 10px;border-radius:6px;font-size:12px;cursor:pointer;font-family:var(--f)">Salir</button>
   </div>
 </div>
 
+<div id="sb-backdrop" onclick="toggleSB()"></div>
 <div id="layout" style="display:none">
   <div id="sidebar"><div id="sb-ct"></div></div>
   <div id="main"></div>
@@ -1922,7 +1970,14 @@ function renderNav() {
   });
   document.getElementById('nav-bar').innerHTML = html;
 }
+// El cajon de la barra lateral solo existe en movil; en escritorio la barra
+// siempre esta a la vista y este boton ni se muestra.
+function toggleSB() {
+  document.body.classList.toggle('sb-open');
+}
+
 function irA(sec) {
+  document.body.classList.remove('sb-open');
   document.querySelectorAll('.nav-item').forEach(function(e){e.classList.remove('on');});
   var el=document.getElementById('nav-'+sec); if(el) el.classList.add('on');
   ({dashboard:pgDash,clientes:pgClientes,alertas:pgAlertas,avisos:pgAvisos,operaciones:pgOps,reportes:pgReportes,screening:pgScreening,capacitacion:pgCapacitacion,config:pgConfig})[sec]();
