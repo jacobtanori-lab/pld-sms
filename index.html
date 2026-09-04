@@ -5431,14 +5431,7 @@ function htmlArrendamiento(d) {
     +'<div class="fg full cv-campo" style="'+visCV+'"><label class="lbl">Nombre del fraccionamiento o bien inmueble</label>'
     +'<input class="inp" name="nombre_fraccionamiento" value="'+capEsc(d.nombre_fraccionamiento||'')+'" placeholder="Ej: FRACCIONAMIENTO LAS PALMAS, LOTE 12" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>'
     +'<div class="fg full arr-campo" style="'+vis+'"><label class="lbl">Inmueble arrendado / nombre del establecimiento</label>'
-    +'<input class="inp" name="inmueble_arrendado" value="'+(d.inmueble_arrendado||'')+'" placeholder="Ej: LOCAL 4, PLAZA NORTE" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>'
-    +'<div class="fg arr-campo" style="'+vis+'"><label class="lbl">Monto mensual de la renta</label>'
-    +'<input class="inp" name="renta_monto" value="'+(d.renta_monto||'')+'" placeholder="0.00"></div>'
-    +'<div class="fg arr-campo" style="'+vis+'"><label class="lbl">Moneda de la renta</label>'
-    +'<select class="sel" name="renta_moneda">'
-    +'<option value="MXN"'+(d.renta_moneda!=='USD'?' selected':'')+'>MXN - Pesos</option>'
-    +'<option value="USD"'+(d.renta_moneda==='USD'?' selected':'')+'>USD - Dolares</option>'
-    +'</select></div>';
+    +'<input class="inp" name="inmueble_arrendado" value="'+(d.inmueble_arrendado||'')+'" placeholder="Ej: LOCAL 4, PLAZA NORTE" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>';
 }
 function toggleArrendamiento(val) {
   var arr = (val === 'SI');
@@ -5498,7 +5491,12 @@ function htmlPerfilTx(d) {
     + fg('Tipo de pago', null, false) + sel('ptx_arr_pago', PTX_ARR_PAGO, d.ptx_arr_pago)
     + fg('Numero de operaciones esperadas en el periodo', null, false) + sel('ptx_arr_numops', PTX_ARR_NUMOPS, d.ptx_arr_numops)
     + fg('Frecuencia esperada', null, false) + sel('ptx_arr_frec', PTX_FREC, d.ptx_arr_frec)
-    + fg('Monto esperado de la operacion (valor de la renta, MXN)', null, false) + num('ptx_arr_monto', d.ptx_arr_monto, '0.00')
+    + fg('Monto esperado de la operacion (valor de la renta)', null, false) + num('renta_monto', d.renta_monto, '0.00')
+    + fg('Moneda de la renta', null, false)
+    + '<select class="sel" name="renta_moneda">'
+    + '<option value="MXN"' + (d.renta_moneda !== 'USD' ? ' selected' : '') + '>MXN - Pesos</option>'
+    + '<option value="USD"' + (d.renta_moneda === 'USD' ? ' selected' : '') + '>USD - Dolares</option>'
+    + '</select></div>'
     + fg('Uso de efectivo', null, false) + sel('ptx_arr_efectivo', PTX_EFECTIVO, d.ptx_arr_efectivo)
     + fg('Origen de los recursos', null, false) + sel('ptx_arr_origen', PTX_ORIGEN, d.ptx_arr_origen, ' onchange="ptxOtro(this,\'ptx-arr-otro\')"')
     + otro('ptx_arr_origen_otro', d.ptx_arr_origen_otro, 'ptx-arr-otro', d.ptx_arr_origen === 'OTRO' ? '' : 'display:none')
@@ -5527,7 +5525,7 @@ function renderPerfilTx(c) {
   var cab = fgHtml(
     fcHtml('Tipo de cliente por fraccion', esArr ? 'Arrendamiento (Fr. XV)' : 'Compraventa de inmueble (Fr. V)')
     + (esArr
-        ? fcHtml('Inmueble arrendado', capEsc(c.inmueble_arrendado)) + fcHtml('Renta mensual (MXN)', c.renta_monto ? fmtMXN(c.renta_monto) : '-')
+        ? fcHtml('Inmueble arrendado', capEsc(c.inmueble_arrendado))
         : fcHtml('Fraccionamiento o bien inmueble', capEsc(c.nombre_fraccionamiento)))
   );
   var filas;
@@ -5535,7 +5533,7 @@ function renderPerfilTx(c) {
     filas = fcHtml('Tipo de pago', ptxEtiqueta(PTX_ARR_PAGO, c.ptx_arr_pago))
       + fcHtml('Operaciones esperadas en el periodo', ptxEtiqueta(PTX_ARR_NUMOPS, c.ptx_arr_numops))
       + fcHtml('Frecuencia esperada', ptxEtiqueta(PTX_FREC, c.ptx_arr_frec))
-      + fcHtml('Monto esperado por operacion', c.ptx_arr_monto ? fmtMXN(c.ptx_arr_monto) : '-')
+      + fcHtml('Monto esperado por operacion (renta)', c.renta_monto ? fmtMXN(c.renta_monto) + (c.renta_moneda === 'USD' ? ' USD' : ' MXN') : '-')
       + fcHtml('Uso de efectivo', ptxEtiqueta(PTX_EFECTIVO, c.ptx_arr_efectivo))
       + fcHtml('Origen de los recursos', ptxEtiqueta(PTX_ORIGEN, c.ptx_arr_origen) + (c.ptx_arr_origen === 'OTRO' && c.ptx_arr_origen_otro ? ': ' + capEsc(c.ptx_arr_origen_otro) : ''));
   } else {
@@ -5547,7 +5545,7 @@ function renderPerfilTx(c) {
       + fcHtml('Origen de los recursos', ptxEtiqueta(PTX_ORIGEN, c.ptx_cv_origen) + (c.ptx_cv_origen === 'OTRO' && c.ptx_cv_origen_otro ? ': ' + capEsc(c.ptx_cv_origen_otro) : ''));
   }
   var vacio = esArr
-    ? !(c.ptx_arr_pago || c.ptx_arr_numops || c.ptx_arr_frec || c.ptx_arr_monto || c.ptx_arr_efectivo || c.ptx_arr_origen)
+    ? !(c.ptx_arr_pago || c.ptx_arr_numops || c.ptx_arr_frec || c.renta_monto || c.ptx_arr_efectivo || c.ptx_arr_origen)
     : !(c.ptx_cv_pago || c.ptx_cv_numops || c.ptx_cv_efectivo_mxn || c.ptx_cv_origen);
   var aviso = vacio
     ? '<div style="margin:0 0 10px;padding:8px 10px;border-left:3px solid var(--am);font-size:12px;color:var(--tx2)">Este expediente no tiene perfil transaccional capturado. Se llena al editar el expediente, en la seccion del final.</div>'
