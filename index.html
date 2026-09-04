@@ -1492,6 +1492,7 @@ function seleccionarEntidad(id) {
   for (var i=0;i<ENTIDADES.length;i++) {
     if (ENTIDADES[i].id === id) { App.entidadActual = ENTIDADES[i]; break; }
   }
+  try { localStorage.setItem('entidad_ultima', id); } catch(e) {}
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('topbar').style.display = 'flex';
   document.getElementById('layout').style.display = 'flex';
@@ -1580,7 +1581,13 @@ function iniciarApp() {
     if (_respaldo) { clearTimeout(_respaldo); _respaldo = null; }
     if (porRespaldo) console.warn('[iniciarApp] carga lenta; enrutando por respaldo');
     if (App.esGlobal) {
-      mostrarSelectorEntidad();
+      // Con varias entidades, se entra directo a la ultima usada si sigue
+      // existiendo y permitida; si no, al selector de siempre.
+      var ultima = null;
+      try { ultima = localStorage.getItem('entidad_ultima'); } catch(e) {}
+      var valida = ultima && ENTIDADES.some(function(e){ return e.id === ultima; })
+        && (!App.entidadesPermitidas || App.entidadesPermitidas.indexOf(ultima) >= 0);
+      if (valida) seleccionarEntidad(ultima); else mostrarSelectorEntidad();
     } else {
       App.entidadActual = ENTIDADES[0];
       var be2 = document.getElementById('brand-entidad');
@@ -5326,10 +5333,10 @@ function htmlIdPF(d, pref, esMexicana) {
       +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
       +'onchange="iniciarLecturaCURP(this,\''+pref+'\',\'\')"></label>'
       +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap">🪪 INE anverso'
-      +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
+      +'<input type="file" accept="image/*" capture="environment" style="display:none" '
       +'onchange="iniciarLecturaCURP(this,\''+pref+'\',\'anverso\')"></label>'
       +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap">🔄 INE reverso'
-      +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
+      +'<input type="file" accept="image/*" capture="environment" style="display:none" '
       +'onchange="iniciarLecturaCURP(this,\''+pref+'\',\'reverso\')"></label>'
       +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap">🧾 Const. SAT'
       +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
@@ -6864,6 +6871,9 @@ function renderDocs() {
         +'<span class="doc-bdg'+(tiene?'':' pend')+'">'+(tiene?(files.length+' archivo'+(files.length>1?'s':'')):'Pendiente')+'</span>'
         +'<label class="btn btn-xs btn-p" style="cursor:pointer">Subir'
         +'<input type="file" multiple style="display:none" onchange="subirDoc(this,\''+td+'\',\''+carpeta+'\')">'
+        +'</label>'
+        +'<label class="btn btn-xs" style="cursor:pointer" title="Fotografiar el documento con la camara">📷'
+        +'<input type="file" accept="image/*" capture="environment" style="display:none" onchange="subirDoc(this,\''+td+'\',\''+carpeta+'\')">'
         +'</label>'
         +'</div></div>'
         // Debajo de la Constancia CURP: verificacion RENAPO (solo PF Mexicana)
