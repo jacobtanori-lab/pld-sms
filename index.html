@@ -283,7 +283,9 @@ body.cam-abierta{overflow:hidden}
   /* modales y login */
   .mo{width:auto;max-width:100vw;max-height:100vh;border-radius:0}
   .login-box{width:auto;margin:0 14px;padding:28px 18px}
-  #login-screen{padding:16px 0}
+  #login-screen{padding:16px 0;align-items:flex-start;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .ent-box{width:calc(100vw - 24px) !important;max-width:520px;margin:0 12px;padding:22px 16px !important}
+  .ent-card img{max-width:100%}
 }
 </style>
 </head>
@@ -1355,7 +1357,7 @@ function mostrarSelectorEntidad() {
 
   document.getElementById('login-screen').style.display = 'flex';
   document.getElementById('login-ct').innerHTML =
-    '<div style="background:#fff;border-radius:var(--rl);padding:36px 40px;width:520px;box-shadow:0 4px 20px rgba(0,0,0,.08)">'
+    '<div class="ent-box" style="background:#fff;border-radius:var(--rl);padding:36px 40px;width:min(520px,100%);box-sizing:border-box;box-shadow:0 4px 20px rgba(0,0,0,.08)">'
     +'<div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">'
     +'<div style="width:40px;height:40px;border-radius:var(--r);background:var(--az);display:flex;align-items:center;justify-content:center"><svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="white" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/></svg></div>'
     +'<div><div style="font-size:16px;font-weight:700">PLD Corporativo SMS</div>'

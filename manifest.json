@@ -4,7 +4,7 @@
   "description": "Programa de Cumplimiento PLD/FT, Corporativo Industrial Nexxus",
   "lang": "es",
   "start_url": "/pld-sms/",
-  "scope": "/pld-sms/",
+  "scope": "/pld-sms",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#f4f3ef",
