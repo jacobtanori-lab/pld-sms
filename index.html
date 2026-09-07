@@ -1286,13 +1286,26 @@ window.onload = function() {
 function loginMicrosoft() {
   if (!initMsal()) return;
   document.getElementById('login-ct').innerHTML = '<div class="login-box"><div class="spin" style="margin:0 auto 10px"></div><p style="font-size:13px;color:var(--tx2)">Redirigiendo a Microsoft...</p></div>';
-  msalApp.loginRedirect({scopes:SCOPES});
+  msalApp.loginRedirect({scopes:SCOPES, prompt:'select_account'});
 }
 
 function cerrarSesion() {
-  localStorage.clear(); sessionStorage.clear();
-  if (msalApp && App.cuenta) msalApp.logoutRedirect({account:App.cuenta, postLogoutRedirectUri:window.location.origin});
-  else window.location.reload();
+  var limpiar = function(){ try { localStorage.clear(); sessionStorage.clear(); } catch(e) {} };
+  var cuenta = App.cuenta || (msalApp && msalApp.getAllAccounts && msalApp.getAllAccounts()[0]) || null;
+  if (msalApp && cuenta) {
+    msalApp.logoutRedirect({
+      account: cuenta,
+      postLogoutRedirectUri: MSAL_CONFIG.auth.redirectUri,
+      // Se ejecuta cuando MSAL ya limpio su cache y esta a punto de navegar al
+      // cierre de Microsoft: aqui si se puede borrar todo lo demas.
+      onRedirectNavigate: function(){ limpiar(); return true; }
+    }).catch(function(e){
+      console.warn('[sesion] no se pudo cerrar en Microsoft:', e && e.message);
+      limpiar(); window.location.replace(MSAL_CONFIG.auth.redirectUri);
+    });
+  } else {
+    limpiar(); window.location.replace(MSAL_CONFIG.auth.redirectUri);
+  }
 }
 
 // ================================================================
