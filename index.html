@@ -201,6 +201,15 @@ tbody tr:hover td{background:#f4f3ef}
 .alerta-banner{display:flex;align-items:flex-start;gap:10px;padding:10px 14px;border-radius:var(--r);font-size:12.5px;margin-bottom:12px;background:var(--am3);color:var(--am);border:1px solid rgba(133,79,11,.15)}
 @media(max-width:900px){.mets{grid-template-columns:1fr 1fr}}
 
+/* ── Camara en pagina con marco guia ─────────────────────────── */
+#cam-ov{display:none;position:fixed;inset:0;z-index:700;background:#000}
+#cam-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#cam-marco{position:absolute;left:50%;top:45%;transform:translate(-50%,-50%);width:min(92vw,calc(70vh * 1.586),700px);aspect-ratio:1.586;border:3px solid #ffd54a;border-radius:10px;box-shadow:0 0 0 9999px rgba(0,0,0,.55);pointer-events:none}
+#cam-texto{position:absolute;left:0;right:0;top:12px;padding:0 16px;text-align:center;color:#fff;font-size:14px;line-height:1.4;text-shadow:0 1px 3px rgba(0,0,0,.8)}
+#cam-botones{position:absolute;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));display:flex;justify-content:center;gap:14px;padding:0 16px}
+#cam-botones .btn{min-height:48px;padding:0 22px;font-size:15px}
+body.cam-abierta{overflow:hidden}
+
 /* ── Movil y tableta angosta ─────────────────────────────────── */
 #sb-toggle{display:none;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;width:38px;height:38px;border-radius:6px;font-size:20px;line-height:1;cursor:pointer;flex-shrink:0}
 #sb-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:190}
@@ -2382,11 +2391,125 @@ function iniciarLecturaCURP(input, pref, cara) {
   var file = input.files[0];
   input.value = '';
   if (!file) return;
-  // Guardar archivo para subirlo al expediente tras crear el cliente
+  procesarArchivoINE(file, pref, cara);
+}
+
+// Lo comun a las dos formas de conseguir la imagen (archivo elegido o foto
+// tomada dentro de la app): guardarla para subirla al expediente cuando se
+// cree el cliente, y arrancar el OCR.
+function procesarArchivoINE(file, pref, cara) {
   App._docsPendientes = App._docsPendientes || [];
   App._docsPendientes.push({file: file, tipo: cara ? 'INE_IFE' : 'Constancia_CURP'});
   toast('Cargando librería OCR...', 'i');
   cargarOCRLibs(function(){ leerConstanciaCURP(file, pref||'', cara || ''); });
+}
+
+// ── CAMARA EN PAGINA CON MARCO GUIA ───────────────────────────
+// Con el boton de archivo se abre la camara del sistema, y ahi la pagina no
+// puede dibujar nada encima. Para guiar el encuadre hay que mostrar la camara
+// dentro de la propia pagina, con un rectangulo de la proporcion exacta de la
+// credencial (85.6 x 54 mm) y capturar recortando a ese rectangulo. Asi al OCR
+// le llega siempre la credencial acostada y llenando la imagen, que es la
+// condicion en que sabemos que lee bien, y ya no depende de como sostenga el
+// telefono el usuario ni de etiquetas de orientacion.
+//
+// Solo se usa en dispositivos tactiles con acceso a camara; en escritorio el
+// boton sigue abriendo el selector de archivos.
+var CAM_PROPORCION = 85.6 / 53.98;
+var _cam = { stream: null, pref: '', cara: '' };
+
+function camaraDisponible() {
+  return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+    && window.matchMedia && window.matchMedia('(pointer:coarse)').matches;
+}
+
+function abrirCamaraINE(ev, pref, cara) {
+  if (!camaraDisponible()) return true;      // deja que el <label> abra el archivo
+  if (ev && ev.preventDefault) ev.preventDefault();
+  _cam.pref = pref || ''; _cam.cara = cara || '';
+  var ov = document.getElementById('cam-ov');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'cam-ov';
+    ov.innerHTML = '<video id="cam-video" autoplay playsinline muted></video>'
+      + '<div id="cam-marco"></div>'
+      + '<div id="cam-texto"></div>'
+      + '<div id="cam-botones">'
+      + '<button type="button" class="btn" onclick="camCerrar()">Cancelar</button>'
+      + '<button type="button" class="btn btn-p" id="cam-disparo" onclick="camCapturar()">Capturar</button>'
+      + '</div>';
+    document.body.appendChild(ov);
+  }
+  document.getElementById('cam-texto').textContent = 'Coloca el ' + (cara === 'reverso' ? 'reverso' : 'anverso')
+    + ' de la credencial dentro del marco, acostada, y pulsa Capturar';
+  ov.style.display = 'block';
+  document.body.classList.add('cam-abierta');
+  var video = document.getElementById('cam-video');
+  // Se pide la resolucion mas alta que de el telefono. Con el telefono en
+  // vertical el video se escala por la altura y el marco abarca apenas una
+  // cuarta parte del ancho real: a 1920 px eso son ~460 px de credencial,
+  // poco para el OCR; a 4K son ~920. El navegador da lo mas cercano que
+  // soporte la camara.
+  navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: 'environment' }, width: { ideal: 4096 }, height: { ideal: 2160 } },
+    audio: false
+  }).then(function(stream){
+    _cam.stream = stream;
+    video.srcObject = stream;
+    return video.play && video.play();
+  }).catch(function(e){
+    console.warn('[CAM] no se pudo abrir la camara:', e && e.name, e && e.message);
+    camCerrar();
+    toast('No se pudo abrir la camara (' + ((e && e.name) || 'error') + '). Usa el boton para elegir una foto.', 'w');
+    // respaldo: abrir el selector de archivos del mismo boton
+    var lbl = ev && ev.currentTarget;
+    var inp = lbl && lbl.querySelector && lbl.querySelector('input[type=file]');
+    if (inp) inp.click();
+  });
+  return false;
+}
+
+function camCerrar() {
+  if (_cam.stream) { _cam.stream.getTracks().forEach(function(t){ t.stop(); }); _cam.stream = null; }
+  var video = document.getElementById('cam-video');
+  if (video) video.srcObject = null;
+  var ov = document.getElementById('cam-ov');
+  if (ov) ov.style.display = 'none';
+  document.body.classList.remove('cam-abierta');
+}
+
+// El video llena la pantalla con object-fit: cover, asi que la parte visible
+// es un recorte centrado del cuadro real. Se calcula que rectangulo del cuadro
+// corresponde al marco en pantalla y se dibuja solo eso.
+function camCapturar() {
+  var video = document.getElementById('cam-video');
+  var marco = document.getElementById('cam-marco');
+  if (!video || !marco || !video.videoWidth) { toast('La camara aun no esta lista', 'w'); return; }
+  var vw = video.videoWidth, vh = video.videoHeight;
+  var rv = video.getBoundingClientRect(), rm = marco.getBoundingClientRect();
+  var esc = Math.max(rv.width / vw, rv.height / vh);          // escala de cover
+  var visW = vw * esc, visH = vh * esc;                        // tamano del video ya escalado
+  var offX = (visW - rv.width) / 2, offY = (visH - rv.height) / 2; // lo que cover recorta por lado
+  var sx = (rm.left - rv.left + offX) / esc, sy = (rm.top - rv.top + offY) / esc;
+  var sw = rm.width / esc, sh = rm.height / esc;
+  sx = Math.max(0, Math.min(vw - 1, sx)); sy = Math.max(0, Math.min(vh - 1, sy));
+  sw = Math.max(1, Math.min(vw - sx, sw)); sh = Math.max(1, Math.min(vh - sy, sh));
+
+  var c = document.createElement('canvas');
+  c.width = Math.round(sw); c.height = Math.round(sh);
+  c.getContext('2d').drawImage(video, sx, sy, sw, sh, 0, 0, c.width, c.height);
+  var cara = _cam.cara, pref = _cam.pref;
+  var disparo = document.getElementById('cam-disparo');
+  if (disparo) disparo.disabled = true;
+  c.toBlob(function(blob){
+    if (disparo) disparo.disabled = false;
+    camCerrar();
+    if (!blob) { toast('No se pudo capturar la imagen', 'e'); return; }
+    var nombre = 'INE_' + (cara || 'documento') + '_' + Date.now() + '.jpg';
+    var file = new File([blob], nombre, { type: 'image/jpeg' });
+    console.log('[CAM] captura ' + c.width + 'x' + c.height + ' recortada al marco');
+    procesarArchivoINE(file, pref, cara);
+  }, 'image/jpeg', 0.92);
 }
 
 function leerConstanciaCURP(file, pref, esINE) {
@@ -2472,19 +2595,42 @@ function _preprocesarImagen(source, cb, binarizar) {
     copia.getContext('2d').drawImage(source, 0, 0);
     procesarCanvas(copia);
   } else {
-    // URL de imagen
-    var img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = function() {
-      var escala = Math.min(4, 2400 / Math.max(img.naturalWidth || 800, img.naturalHeight || 600));
+    // URL de imagen. Se dibuja en un canvas a lo sumo de 2400 px por lado, ya
+    // derecha segun su etiqueta de orientacion y acostada si venia de pie.
+    var aCanvas = function(bmp, w, h) {
+      var escala = Math.min(4, 2400 / Math.max(w || 800, h || 600));
+      var vertical = h > w;
       var canvas = document.createElement('canvas');
-      canvas.width  = img.naturalWidth  * escala;
-      canvas.height = img.naturalHeight * escala;
-      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      if (vertical) {
+        canvas.width  = Math.round(h * escala);
+        canvas.height = Math.round(w * escala);
+        var cx = canvas.getContext('2d');
+        cx.translate(canvas.width, 0);
+        cx.rotate(Math.PI / 2);
+        cx.drawImage(bmp, 0, 0, Math.round(w * escala), Math.round(h * escala));
+        console.log('[OCR] imagen vertical (' + w + 'x' + h + '): se gira a horizontal');
+      } else {
+        canvas.width  = Math.round(w * escala);
+        canvas.height = Math.round(h * escala);
+        canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+      }
       procesarCanvas(canvas);
     };
-    img.onerror = function(){ cb(source); }; // fallback sin preprocesar
-    img.src = source;
+    var porImagen = function() {
+      var img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = function(){ aCanvas(img, img.naturalWidth, img.naturalHeight); };
+      img.onerror = function(){ cb(source); }; // fallback sin preprocesar
+      img.src = source;
+    };
+    if (window.createImageBitmap && typeof fetch === 'function') {
+      fetch(source).then(function(r){ return r.blob(); })
+        .then(function(b){ return createImageBitmap(b, { imageOrientation: 'from-image' }); })
+        .then(function(bmp){ aCanvas(bmp, bmp.width, bmp.height); if (bmp.close) bmp.close(); })
+        .catch(function(e){ console.warn('[OCR] createImageBitmap fallo, se usa Image():', e && e.message); porImagen(); });
+    } else {
+      porImagen();
+    }
   }
 }
 
@@ -5387,10 +5533,10 @@ function htmlIdPF(d, pref, esMexicana) {
       +'<label class="btn btn-p" style="cursor:pointer;font-size:12px;white-space:nowrap">📋 Constancia CURP'
       +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
       +'onchange="iniciarLecturaCURP(this,\''+pref+'\',\'\')"></label>'
-      +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap">🪪 INE anverso'
+      +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap" onclick="return abrirCamaraINE(event,\''+pref+'\',\'anverso\')">🪪 INE anverso'
       +'<input type="file" accept="image/*" capture="environment" style="display:none" '
       +'onchange="iniciarLecturaCURP(this,\''+pref+'\',\'anverso\')"></label>'
-      +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap">🔄 INE reverso'
+      +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap" onclick="return abrirCamaraINE(event,\''+pref+'\',\'reverso\')">🔄 INE reverso'
       +'<input type="file" accept="image/*" capture="environment" style="display:none" '
       +'onchange="iniciarLecturaCURP(this,\''+pref+'\',\'reverso\')"></label>'
       +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap">🧾 Const. SAT'
