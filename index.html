@@ -7,6 +7,7 @@
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0C447C">
 <meta name="application-name" content="PLD SMS">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="PLD SMS">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -224,6 +225,8 @@ body.cam-abierta{overflow:hidden}
 #sb-toggle{display:none;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;width:38px;height:38px;border-radius:6px;font-size:20px;line-height:1;cursor:pointer;flex-shrink:0}
 #sb-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:190}
 #sb-pie{display:none}
+#aviso-version{display:flex;position:fixed;left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));z-index:800;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-radius:var(--rl);background:#1a1a18;color:#fff;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.25)}
+#aviso-version .btn{background:#fff;color:#1a1a18;border-color:#fff;white-space:nowrap}
 @media(max-width:768px){
   html,body{height:auto;overflow:auto;-webkit-text-size-adjust:100%}
   /* barra superior: marca y usuario en la primera fila, navegacion en una tira deslizable debajo */
@@ -2031,6 +2034,45 @@ function renderNav() {
 }
 // El cajon de la barra lateral solo existe en movil; en escritorio la barra
 // siempre esta a la vista y este boton ni se muestra.
+var _versionRef = null, _versionUltima = 0;
+function comprobarVersion(forzar) {
+  if (!window.fetch) return;
+  var ahora = Date.now();
+  if (!forzar && ahora - _versionUltima < 5 * 60 * 1000) return;
+  _versionUltima = ahora;
+  var ruta = location.pathname;
+  var marca = function(r) {
+    var e = r.headers.get('ETag') || r.headers.get('Last-Modified') || '';
+    return e.replace(/^W\//, '');
+  };
+  fetch(ruta, { method: 'HEAD', cache: 'no-store' }).then(function(r) {
+    if (!r.ok) return;
+    var publicada = marca(r);
+    if (!publicada) return;
+    // La copia en cache es la que se esta ejecutando; si el navegador no la
+    // entrega, se usa como referencia la primera marca vista en esta sesion.
+    return fetch(ruta, { cache: 'only-if-cached', mode: 'same-origin' })
+      .then(function(rc){ return rc.ok ? marca(rc) : ''; }, function(){ return ''; })
+      .then(function(cargada) {
+        if (_versionRef === null) _versionRef = cargada || publicada;
+        var ref = cargada || _versionRef;
+        if (publicada !== ref) mostrarAvisoVersion();
+      });
+  }).catch(function(){ /* sin red: no se avisa nada */ });
+}
+function mostrarAvisoVersion() {
+  var av = document.getElementById('aviso-version');
+  if (av) { av.style.display = 'flex'; return; }
+  av = document.createElement('div');
+  av.id = 'aviso-version';
+  av.innerHTML = '<span>Hay una version nueva de la aplicacion.</span>'
+    + '<button type="button" class="btn btn-sm" onclick="location.reload()">Actualizar</button>';
+  document.body.appendChild(av);
+}
+document.addEventListener('DOMContentLoaded', function(){ comprobarVersion(true); });
+document.addEventListener('visibilitychange', function(){ if (!document.hidden) comprobarVersion(false); });
+window.addEventListener('focus', function(){ comprobarVersion(false); });
+
 function toggleSB() {
   document.body.classList.toggle('sb-open');
 }
