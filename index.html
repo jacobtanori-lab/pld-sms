@@ -247,9 +247,22 @@ body.cam-abierta{overflow:hidden}
   .btn-xs,.btn-sm{min-height:34px}
   /* pestanas de la ficha: se acomodan en dos filas, asi se ven todas sin deslizar */
   .ftab{white-space:nowrap;padding:10px 12px}
-  /* tablas: se desplazan de lado dentro de su tarjeta */
+  /* tablas con encabezado: cada fila se vuelve una tarjeta de pares etiqueta/valor.
+     Las que no tienen encabezado siguen desplazandose de lado dentro de su tarjeta. */
   .card-b{overflow-x:auto}
-  table{min-width:560px}
+  table:not([data-movil]){min-width:560px}
+  .twrap:has(> table[data-movil]){overflow:visible}
+  table[data-movil]{min-width:0;width:100%;border-collapse:separate;border-spacing:0}
+  table[data-movil] thead{display:none}
+  table[data-movil] tbody,table[data-movil] tfoot,table[data-movil] tr,table[data-movil] td{display:block;width:100%;box-sizing:border-box}
+  table[data-movil] tr{border:1px solid var(--brd);border-radius:var(--r);padding:6px 12px;margin:0 0 8px;background:#fff}
+  table[data-movil] tr[onclick]{cursor:pointer}
+  table[data-movil] td{display:grid;grid-template-columns:minmax(88px,36%) 1fr;gap:8px;padding:5px 0;border:0;font-size:13px;line-height:1.35;align-items:baseline;text-align:left;white-space:normal}
+  table[data-movil] td::before{content:attr(data-label);font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--tx3)}
+  table[data-movil] td[data-label=""]{grid-template-columns:1fr}
+  table[data-movil] td[data-label=""]::before{content:none}
+  table[data-movil] td:empty{display:none}
+  table[data-movil] tfoot tr{background:var(--bg);font-weight:600}
   /* modales y login */
   .mo{width:auto;max-width:100vw;max-height:100vh;border-radius:0}
   .login-box{width:auto;margin:0 14px;padding:28px 18px}
@@ -1992,7 +2005,41 @@ function irA(sec) {
   ({dashboard:pgDash,clientes:pgClientes,alertas:pgAlertas,avisos:pgAvisos,operaciones:pgOps,reportes:pgReportes,screening:pgScreening,capacitacion:pgCapacitacion,config:pgConfig})[sec]();
 }
 function setSB(h){document.getElementById('sb-ct').innerHTML=h;}
-function setMain(h){document.getElementById('main').innerHTML=h;}
+function setMain(h){document.getElementById('main').innerHTML=h; etiquetarTablasMovil();}
+
+function etiquetarTablasMovil(root) {
+  root = root || document.getElementById('main');
+  if (!root || !root.querySelectorAll) return;
+  root.querySelectorAll('table').forEach(function(t) {
+    var filaEnc = t.querySelector('thead tr') || t.querySelector('tr');
+    if (!filaEnc || !filaEnc.querySelector('th')) return;   // sin encabezado: se deja como esta
+    var enc = [];
+    filaEnc.querySelectorAll('th').forEach(function(th){ enc.push(th.textContent.replace(/\s+/g,' ').trim()); });
+    t.querySelectorAll('tr').forEach(function(tr) {
+      if (tr === filaEnc || tr.querySelector('th')) return;
+      var i = 0;
+      tr.querySelectorAll(':scope > td').forEach(function(td) {
+        var span = parseInt(td.getAttribute('colspan') || '1', 10) || 1;
+        if (span > 1) { td.setAttribute('data-label', ''); i += span; return; }
+        if (!td.hasAttribute('data-label')) td.setAttribute('data-label', enc[i] || '');
+        i += 1;
+      });
+    });
+    t.setAttribute('data-movil', '1');
+  });
+}
+
+// Muchos listados se pintan despues, cuando llegan los datos, en un innerHTML
+// que no pasa por setMain. El observador cubre esos casos.
+document.addEventListener('DOMContentLoaded', function() {
+  var main = document.getElementById('main');
+  if (!main || !window.MutationObserver) return;
+  var pendiente = null;
+  new MutationObserver(function() {
+    if (pendiente) return;
+    pendiente = setTimeout(function(){ pendiente = null; etiquetarTablasMovil(main); }, 60);
+  }).observe(main, { childList: true, subtree: true });
+});
 function cerrarMo(id){document.getElementById(id).classList.remove('open');}
 function abrirMo(id){document.getElementById(id).classList.add('open');}
 // Un solo temporizador compartido. Sin esto el aviso viejo apagaba al nuevo: en
