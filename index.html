@@ -204,8 +204,25 @@ tbody tr:hover td{background:#f4f3ef}
 .mo-b{padding:18px}
 .tipo-card{border:1px solid var(--brd2);border-radius:var(--rl);padding:16px;cursor:pointer;text-align:center;transition:all .15s}
 .tipo-card:hover{border-color:var(--az2);background:var(--az3)}
-#login-screen{position:fixed;inset:0;background:#f4f3ef;display:flex;align-items:center;justify-content:center;z-index:500}
+#login-screen{position:fixed;inset:0;background:#f4f3ef;display:flex;align-items:flex-start;justify-content:center;z-index:500;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:24px 16px;box-sizing:border-box}
+#login-ct{margin:auto;width:100%;display:flex;justify-content:center}
 .login-box{background:#fff;border-radius:var(--rl);padding:36px 40px;width:420px;box-shadow:0 4px 20px rgba(0,0,0,.08);text-align:center}
+/* Selector de entidad: tarjetas en rejilla, con logotipo o monograma */
+.ent-box{background:#fff;border-radius:var(--rl);padding:32px 36px;width:min(780px,100%);box-sizing:border-box;box-shadow:0 4px 20px rgba(0,0,0,.08)}
+.ent-cab{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+.ent-cab .inp{margin-left:auto;width:220px;max-width:40%}
+.ent-grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));margin-bottom:18px}
+.ent-card{display:flex;flex-direction:column;gap:8px;border:1px solid var(--brd2);border-radius:var(--rl);padding:16px;cursor:pointer;background:#fff;transition:border-color .15s,box-shadow .15s,transform .15s}
+.ent-card:hover,.ent-card:focus-visible{border-color:var(--az2);box-shadow:0 3px 12px rgba(0,0,0,.09);transform:translateY(-1px);outline:none}
+.ent-card[hidden]{display:none}
+.ent-logo{height:36px;display:flex;align-items:center}
+.ent-logo img{height:36px;max-width:160px;object-fit:contain;display:block}
+.ent-mono{width:36px;height:36px;border-radius:var(--r);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;letter-spacing:.04em;color:#fff;background:var(--az)}
+.ent-nombre{font-size:13px;font-weight:600;line-height:1.3}
+.ent-meta{font-size:11px;color:var(--tx3)}
+.ent-pie{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-top:1px solid var(--brd);padding-top:16px}
+.ent-pie .ent-meta{font-size:12px}
+.ent-vacio{grid-column:1/-1;text-align:center;color:var(--tx3);font-size:13px;padding:18px 0}
 .ms-btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:11px 16px;border:1px solid var(--brd2);border-radius:var(--r);background:#fff;font-size:14px;font-weight:500;font-family:var(--f);cursor:pointer}
 .ms-btn:hover{background:var(--bg)}
 .empty{text-align:center;padding:40px;color:var(--tx3);font-size:13px}
@@ -285,10 +302,16 @@ body.cam-abierta{overflow:hidden}
   table[data-movil] tfoot tr{background:var(--bg);font-weight:600}
   /* modales y login */
   .mo{width:auto;max-width:100vw;max-height:100vh;border-radius:0}
-  .login-box{width:auto;margin:0 14px;padding:28px 18px}
-  #login-screen{padding:16px 0;align-items:flex-start;overflow-y:auto;-webkit-overflow-scrolling:touch}
-  .ent-box{width:calc(100vw - 24px) !important;max-width:520px;margin:0 12px;padding:22px 16px !important}
+  .login-box{width:100%;margin:0;padding:28px 18px}
+  #login-screen{padding:12px}
+  .ent-box{padding:22px 16px}
+  .ent-cab{flex-wrap:wrap}
+  .ent-cab .inp{margin-left:0;width:100%;max-width:none}
+  .ent-grid{grid-template-columns:1fr}
+  .ent-card{padding:14px}
   .ent-card img{max-width:100%}
+  .ent-pie{flex-direction:column;align-items:stretch}
+  .ent-pie .btn{justify-content:center;min-height:44px}
 }
 </style>
 </head>
@@ -1349,26 +1372,50 @@ function mostrarSelectorEntidad() {
   });
   for (var ei=0; ei<entidadesVisibles.length; ei++) {
     var e = entidadesVisibles[ei];
-    var rfc_txt = e.rfc ? ' - ' + e.rfc : '';
+    var rfc_txt = e.rfc ? ' · ' + capEsc(e.rfc) : '';
     var logoSrc = LOGOS_ENTIDADES && LOGOS_ENTIDADES[e.id];
-    cards += '<div data-eid="' + e.id + '" class="ent-card" style="border:1px solid var(--brd2);border-radius:var(--rl);padding:20px;cursor:pointer;transition:all .15s;background:#fff">'
-      + (logoSrc ? '<img src="' + logoSrc + '" alt="' + e.nombre + '" style="height:36px;max-width:160px;object-fit:contain;margin-bottom:10px;display:block">' : '')
-      + '<div style="font-size:13px;font-weight:600;margin-bottom:4px">' + e.nombre + '</div>'
-      + '<div style="font-size:11px;color:var(--tx3)">' + e.id + rfc_txt + '</div>'
+    var tema = (TEMAS_ENTIDAD && TEMAS_ENTIDAD[e.id]) || null;
+    // Sin logotipo se muestra un monograma con la clave, en el color de la entidad si tiene tema
+    var marca = logoSrc
+      ? '<div class="ent-logo"><img src="' + logoSrc + '" alt=""></div>'
+      : '<div class="ent-logo"><div class="ent-mono"' + (tema && tema.az ? ' style="background:' + tema.az + '"' : '') + '>' + capEsc(String(e.id || '').slice(0, 3)) + '</div></div>';
+    cards += '<div data-eid="' + capEsc(e.id) + '" class="ent-card" role="button" tabindex="0" data-buscar="' + capEsc((e.id + ' ' + e.nombre + ' ' + (e.rfc || '')).toLowerCase()) + '">'
+      + marca
+      + '<div class="ent-nombre">' + capEsc(e.nombre) + '</div>'
+      + '<div class="ent-meta">' + capEsc(e.id) + rfc_txt + '</div>'
       + '</div>';
   }
+  var n = entidadesVisibles.length;
+  var conBuscador = n > 6;
 
   document.getElementById('login-screen').style.display = 'flex';
   document.getElementById('login-ct').innerHTML =
-    '<div class="ent-box" style="background:#fff;border-radius:var(--rl);padding:36px 40px;width:min(520px,100%);box-sizing:border-box;box-shadow:0 4px 20px rgba(0,0,0,.08)">'
-    +'<div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">'
-    +'<div style="width:40px;height:40px;border-radius:var(--r);background:var(--az);display:flex;align-items:center;justify-content:center"><svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="white" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/></svg></div>'
+    '<div class="ent-box">'
+    +'<div class="ent-cab">'
+    +'<div style="width:40px;height:40px;border-radius:var(--r);background:var(--az);display:flex;align-items:center;justify-content:center;flex-shrink:0"><svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="white" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/></svg></div>'
     +'<div><div style="font-size:16px;font-weight:700">PLD Corporativo SMS</div>'
-    +'<div style="font-size:12px;color:var(--tx3)">Selecciona la entidad a operar</div></div></div>'
-    +'<div style="display:grid;gap:10px;margin-bottom:20px">'+cards+'</div>'
-    +'<div style="text-align:center">'
+    +'<div style="font-size:12px;color:var(--tx3)">Selecciona la entidad a operar</div></div>'
+    +(conBuscador ? '<input class="inp" type="search" placeholder="Buscar entidad" aria-label="Buscar entidad" oninput="filtrarSelectorEntidad(this.value)">' : '')
+    +'</div>'
+    +'<div class="ent-grid" id="ent-grid">'+cards+'<div class="ent-vacio" hidden>Ninguna entidad coincide con la busqueda</div></div>'
+    +'<div class="ent-pie">'
+    +'<span class="ent-meta">' + n + (n === 1 ? ' entidad disponible' : ' entidades disponibles') + '</span>'
     +'<button class="btn" onclick="verTodasEntidades()" style="font-size:12px">Vista consolidada (todas las entidades)</button>'
     +'</div></div>';
+}
+
+function filtrarSelectorEntidad(texto) {
+  var grid = document.getElementById('ent-grid');
+  if (!grid) return;
+  var q = String(texto || '').toLowerCase().trim(), visibles = 0;
+  var cards = grid.querySelectorAll('.ent-card');
+  for (var i = 0; i < cards.length; i++) {
+    var ok = !q || (cards[i].getAttribute('data-buscar') || '').indexOf(q) >= 0;
+    cards[i].hidden = !ok;
+    if (ok) visibles++;
+  }
+  var vacio = grid.querySelector('.ent-vacio');
+  if (vacio) vacio.hidden = visibles > 0;
 }
 
 // Autoconversión a MAYÚSCULAS al teclear datos del cliente (excepto correo electrónico)
@@ -1399,6 +1446,16 @@ document.addEventListener('change', function(ev) {
   }
   if (acuseInput && acuseInput.files && acuseInput.files.length) {
     subirAcuseSAT(acuseInput, acuseInput.getAttribute('data-altid'), acuseInput.getAttribute('data-nom')||'cliente');
+  }
+});
+
+document.addEventListener('keydown', function(ev) {
+  // Enter o espacio sobre una tarjeta de entidad equivale a tocarla
+  if (ev.key !== 'Enter' && ev.key !== ' ') return;
+  var t = ev.target;
+  if (t && t.classList && t.classList.contains('ent-card') && t.getAttribute('data-eid')) {
+    ev.preventDefault();
+    seleccionarEntidad(t.getAttribute('data-eid'));
   }
 });
 
