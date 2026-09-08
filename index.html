@@ -4683,24 +4683,9 @@ function cargarEntidadesConfig(cb) {
       _entidadesConfigId = item.id;
       ENTIDADES.length = 0;
       item.entidades.forEach(function(e){ ENTIDADES.push(e); });
-      // Migración: renombrar IDs y nombres obsoletos
-      var migraciones = {
-        'GIN': {id:'CIN', nombre:'Corporativo Industrial Nexxus, SA de CV'},
-        'AIV': {id:'VAI', nombre:'Vali Asesores Inmobiliarios SA de CV'}
-      };
-      var necesitaMigrar = false;
-      ENTIDADES.forEach(function(e, i){
-        // Resolver la migración ANTES de tocar el id: e es el mismo objeto que
-        // ENTIDADES[i], así que reasignar e.id dejaba migraciones[e.id]
-        // indefinido en la línea siguiente y reventaba la carga en cada login.
-        var m = migraciones[e.id];
-        if (m) {
-          ENTIDADES[i].id     = m.id;
-          ENTIDADES[i].nombre = m.nombre;
-          necesitaMigrar = true;
-        }
-      });
-      if (necesitaMigrar) guardarEntidades(function(){});
+      // Las claves son las que el usuario dio de alta: aqui no se renombra
+      // nada. (Hubo una migracion GIN->CIN / AIV->VAI que ya cumplio y que
+      // convertia cualquier entidad nueva con clave GIN en la original.)
     } else {
       // Primera vez: migrar las hardcoded a SharePoint
       guardarEntidades(function(){});
