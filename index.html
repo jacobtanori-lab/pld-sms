@@ -1,9 +1,4 @@
-  // CURP: 18 caracteres exactos en los campos que SON una CURP (curp, rl_curp,
-  // db_curp...). Los datos de la constancia (curp_qr_url, curp_folio,
-  // curp_constancia_fecha) tambien llevan "curp" en el nombre y no lo son.
-  frm.querySelectorAll('[name*="curp"]').forEach(function(el){
-    if (!/(^|_)curp$/.test(el.name || '')) return;
-    var v = (el.value || '').trim();﻿<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
@@ -6664,8 +6659,11 @@ function validarCliente(frm, datos, tipo) {
     if (v && v.length !== 13) bloq.push(par[1] + ' debe tener 13 caracteres; tiene ' + v.length);
   });
 
-  // CURP: 18 caracteres exactos en cualquier campo que la contenga
+  // CURP: 18 caracteres exactos en los campos que SON una CURP (curp, rl_curp,
+  // db_curp...). Los datos de la constancia (curp_qr_url, curp_folio,
+  // curp_constancia_fecha) tambien llevan "curp" en el nombre y no lo son.
   frm.querySelectorAll('[name*="curp"]').forEach(function(el){
+    if (!/(^|_)curp$/.test(el.name || '')) return;
     var v = (el.value || '').trim();
     if (v && v.length !== 18) bloq.push('La CURP debe tener 18 caracteres; "' + el.name + '" tiene ' + v.length);
   });
