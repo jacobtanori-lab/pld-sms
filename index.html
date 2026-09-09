@@ -1,4 +1,9 @@
-﻿<!DOCTYPE html>
+  // CURP: 18 caracteres exactos en los campos que SON una CURP (curp, rl_curp,
+  // db_curp...). Los datos de la constancia (curp_qr_url, curp_folio,
+  // curp_constancia_fecha) tambien llevan "curp" en el nombre y no lo son.
+  frm.querySelectorAll('[name*="curp"]').forEach(function(el){
+    if (!/(^|_)curp$/.test(el.name || '')) return;
+    var v = (el.value || '').trim();﻿<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
