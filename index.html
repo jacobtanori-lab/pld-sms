@@ -237,6 +237,11 @@ tbody tr:hover td{background:#f4f3ef}
 #cam-botones{position:absolute;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));display:flex;justify-content:center;gap:14px;padding:0 16px}
 #cam-botones .btn{min-height:48px;padding:0 22px;font-size:15px}
 body.cam-abierta{overflow:hidden}
+/* Guia de llenado dentro del recuadro "Prellenar desde documento" */
+.guia-doc{flex-basis:100%;font-size:12px;line-height:1.5;color:var(--tx2);border:1px solid var(--brd);border-radius:var(--r);background:#fff;padding:6px 12px}
+.guia-doc summary{cursor:pointer;font-weight:600;color:var(--tx);padding:4px 0}
+.guia-doc ol{margin:6px 0 4px;padding-left:20px}
+.guia-doc li{margin:4px 0}
 /* Modo QR: marco cuadrado y una linea de estado debajo */
 #cam-ov.qr #cam-marco{width:min(72vw,55vh,420px);aspect-ratio:1;border-radius:14px}
 #cam-estado{display:none;position:absolute;left:0;right:0;top:calc(45% + min(36vw,27.5vh,210px) + 16px);padding:0 16px;text-align:center;color:#fff;font-size:14px;line-height:1.5;text-shadow:0 1px 3px rgba(0,0,0,.8)}
@@ -2499,6 +2504,73 @@ function _extraerDatosCSF(txt) {
   return d;
 }
 
+// ── DOMICILIO DESDE DOCUMENTOS ────────────────────────────────
+// El INE (anverso) y la constancia fiscal traen domicilio. Cual manda lo
+// decide la casilla "Fuente del domicilio":
+//   - vacia: cada documento llena solo las casillas vacias (el primero gana)
+//   - INE o CSF: ese documento impone su domicilio; el otro no lo toca
+//   - OTRO: ningun documento impone nada, solo llenan vacios
+// Lo extraido de cada documento se recuerda, para que al cambiar la fuente
+// despues de digitalizar ambos el domicilio se reacomode solo.
+var CAMPOS_DOMICILIO = ['calle', 'num_ext', 'num_int', 'colonia', 'municipio', 'ciudad', 'cp'];
+
+function _fuenteDomicilio(pref) {
+  var frm = document.getElementById('frm') || document;
+  var el = frm.querySelector('[name="' + (pref || '') + 'domicilio_fuente"]');
+  return el ? el.value : '';
+}
+
+// origen: 'INE' o 'CSF'. Devuelve cuantas casillas cambio.
+function _aplicarDomicilio(pref, datos, origen) {
+  pref = pref || '';
+  var trae = CAMPOS_DOMICILIO.some(function(k){ return datos[k] && String(datos[k]).trim(); }) || !!datos.estado;
+  if (!trae) return 0;
+  App._domExtraido = App._domExtraido || {};
+  var copia = {};
+  CAMPOS_DOMICILIO.concat(['estado']).forEach(function(k){ if (datos[k]) copia[k] = datos[k]; });
+  App._domExtraido[pref + origen] = copia;
+
+  var fuente = _fuenteDomicilio(pref);
+  if ((fuente === 'INE' || fuente === 'CSF') && fuente !== origen) {
+    console.log('[DOM] domicilio de ' + origen + ' no aplicado: la fuente elegida es ' + fuente);
+    return 0;
+  }
+  var forzar = fuente === origen;
+  var frm = document.getElementById('frm') || document, n = 0;
+  CAMPOS_DOMICILIO.forEach(function(k) {
+    var val = datos[k] ? String(datos[k]).trim() : '';
+    if (!val) return;
+    var el = frm.querySelector('[name="' + pref + k + '"]');
+    if (!el) return;
+    if (!forzar && el.value && el.value.trim() !== '') return;
+    el.value = val;
+    el.dispatchEvent(new Event('change'));
+    n++;
+  });
+  if (datos.estado) {
+    var selEdo = frm.querySelector('[name="' + pref + 'estado"]');
+    // El selector de estado no tiene opcion vacia: si sigue en la primera
+    // (Aguascalientes) se toma como sin capturar.
+    if (selEdo && (forzar || !selEdo.value || selEdo.selectedIndex === 0)) {
+      var edoUp = String(datos.estado).toUpperCase();
+      Array.from(selEdo.options).forEach(function(opt){
+        if (opt.value && (opt.text.toUpperCase().indexOf(edoUp) >= 0 || edoUp.indexOf(opt.text.toUpperCase()) >= 0)) {
+          selEdo.value = opt.value; n++;
+        }
+      });
+    }
+  }
+  return n;
+}
+
+function onFuenteDomicilio(sel, pref) {
+  var v = sel.value;
+  var guardado = App._domExtraido && App._domExtraido[(pref || '') + v];
+  if (!guardado) return;
+  var n = _aplicarDomicilio(pref, guardado, v);
+  if (n) toast('Domicilio tomado de ' + (v === 'INE' ? 'la credencial INE' : 'la constancia fiscal') + ': ' + n + ' campos', 's');
+}
+
 function _preRellenarDesdeCSF(datos, pref) {
   var frm = document.getElementById('frm') || document;
   var llenados = 0;
@@ -2527,28 +2599,11 @@ function _preRellenarDesdeCSF(datos, pref) {
   setV(pref+'email',     datos.email);
   setV(pref+'telefono',  datos.telefono);
 
-  // Domicilio fiscal
-  setV(pref+'calle',     datos.calle);
-  setV(pref+'num_ext',   datos.num_ext);
-  setV(pref+'num_int',   datos.num_int);
-  setV(pref+'colonia',   datos.colonia);
-  setV(pref+'municipio', datos.municipio);
-  setV(pref+'ciudad',    datos.ciudad);
-  setV(pref+'cp',        datos.cp);
-
-  // Estado es un <select> — buscar opción que contenga el texto
-  if (datos.estado) {
-    var selEdo = frm.querySelector('[name="'+pref+'estado"]');
-    if (selEdo) {
-      var edoUp = datos.estado.toUpperCase();
-      Array.from(selEdo.options).forEach(function(opt){
-        if (opt.text.toUpperCase().indexOf(edoUp) >= 0 ||
-            edoUp.indexOf(opt.text.toUpperCase()) >= 0) {
-          selEdo.value = opt.value;
-          llenados++;
-        }
-      });
-    }
+  // Domicilio fiscal, segun la casilla "Fuente del domicilio"
+  llenados += _aplicarDomicilio(pref, datos, 'CSF');
+  if (llenados === 0 && _fuenteDomicilio(pref) === 'INE' && (datos.calle || datos.cp)) {
+    toast('Constancia SAT leida. Su domicilio no se aplico porque la fuente elegida es el INE.', 'i');
+    return;
   }
 
   if (llenados > 0) {
@@ -2722,7 +2777,7 @@ function _guardarFolioConstancia(txt, pref) {
 // el expediente. Al terminar invoca `luego(listo)`: listo=true cuando el QR de
 // datos trajo nombre y apellidos y ya no hace falta leer el texto; false
 // cuando hay que seguir con la capa de texto del PDF o con el OCR.
-function leerQRConstancia(source, pref, luego) {
+function leerQRConstancia(source, pref, luego, doc) {
   var procesar = function(canvas) {
     cargarQRLib(function() {
       leerQRDeCanvas(canvas, function(textos) {
@@ -2730,6 +2785,8 @@ function leerQRConstancia(source, pref, luego) {
         (textos || []).forEach(function(t) {
           var p = _parsearQRConstancia(t);
           if (!p) return;
+          if (doc === 'sat' && !p.sat) return;   // se pidio la cedula fiscal
+          if (doc === 'curp' && p.sat) return;   // se pidio la constancia CURP
           if (p.sat) sat = sat || p;
           else if (p.url) url = url || p.url;
           else datos = datos || p;
@@ -2801,7 +2858,7 @@ function iniciarLecturaCURP(input, pref, cara) {
 // Foto de un QR de la constancia elegida como archivo (escritorio, o telefono
 // sin camara utilizable). Solo se leen los codigos: una foto de un QR no es
 // un documento, asi que no se anexa ni se manda al OCR.
-function iniciarLecturaQR(input, pref) {
+function iniciarLecturaQR(input, pref, doc) {
   var file = input.files[0];
   input.value = '';
   if (!file) return;
@@ -2809,10 +2866,10 @@ function iniciarLecturaQR(input, pref) {
   var url = URL.createObjectURL(file);
   leerQRConstancia(url, pref || '', function(listo){
     var frm = document.getElementById('frm');
-    var h = frm && frm.querySelector('[name="' + (pref || '') + 'curp_qr_url"]');
-    if (h && h.value) _mostrarEnlaceConstancia(pref, h.value);
-    if (!listo && !(h && h.value)) toast('No se encontro ningun QR de la constancia en la foto', 'w');
-  });
+    var h = frm && frm.querySelector('[name="' + (pref || '') + (doc === 'sat' ? 'rfc_qr_url' : 'curp_qr_url') + '"]');
+    if (doc !== 'sat' && h && h.value) _mostrarEnlaceConstancia(pref, h.value);
+    if (!listo && !(h && h.value)) toast('No se encontro el QR ' + (doc === 'sat' ? 'de la cedula fiscal' : 'de la constancia CURP') + ' en la foto', 'w');
+  }, doc || 'curp');
 }
 
 // Lo comun a las dos formas de conseguir la imagen (archivo elegido o foto
@@ -2851,7 +2908,10 @@ function abrirCamaraINE(ev, pref, cara) { return _abrirCamara(ev, pref, cara, 'i
 // los datos de la persona; el de abajo guarda el enlace con el que RENAPO
 // reimprime la constancia. Se leen en vivo, sin pulsar nada; Capturar queda
 // como recurso si la lectura en vivo no lo encuentra.
-function abrirEscanerQR(ev, pref) { return _abrirCamara(ev, pref, '', 'qr'); }
+// doc = 'curp' (los dos QR de la constancia CURP) o 'sat' (el QR de la cedula
+// de identificacion fiscal). Son momentos distintos del onboarding, asi que
+// cada boton abre el visor para su documento y no acepta el del otro.
+function abrirEscanerQR(ev, pref, doc) { _cam.doc = doc || 'curp'; return _abrirCamara(ev, pref, '', 'qr'); }
 
 function _abrirCamara(ev, pref, cara, modo) {
   if (!camaraDisponible()) return true;      // deja que el <label> abra el archivo
@@ -2876,7 +2936,9 @@ function _abrirCamara(ev, pref, cara, modo) {
   ov.classList.toggle('qr', _cam.modo === 'qr');
   document.getElementById('cam-listo').style.display = 'none';
   if (_cam.modo === 'qr') {
-    document.getElementById('cam-texto').textContent = 'Enfoca un QR dentro del marco: los dos de la constancia CURP o el de la cedula fiscal del SAT. Se lee solo.';
+    document.getElementById('cam-texto').textContent = _cam.doc === 'sat'
+      ? 'Enfoca el QR de la cedula de identificacion fiscal (arriba de la constancia del SAT). Se lee solo.'
+      : 'Enfoca uno de los dos QR de la constancia CURP dentro del marco. Se lee solo.';
     document.getElementById('cam-estado').innerHTML = 'Buscando el codigo…';
     cargarQRLib(function(){});
   } else {
@@ -2984,6 +3046,15 @@ function _qrConstanciaRecibir(texto) {
   var estado = document.getElementById('cam-estado');
   if (!p) { if (estado) estado.innerHTML = 'Ese codigo no es de la constancia CURP ni del SAT'; return; }
   var pref = _cam.pref, nuevo = false;
+  var esSAT = _cam.doc === 'sat';
+  if (esSAT && !p.sat) {
+    if (estado) estado.innerHTML = 'Ese QR es de la constancia CURP. Aqui va el de la cedula fiscal del SAT.';
+    return;
+  }
+  if (!esSAT && p.sat) {
+    if (estado) estado.innerHTML = 'Ese QR es de la cedula fiscal del SAT. Usa el boton "QR cedula fiscal".';
+    return;
+  }
   if (p.sat) {
     if (_cam.qr.rfc) return;
     _cam.qr.rfc = true; nuevo = true;
@@ -3001,16 +3072,19 @@ function _qrConstanciaRecibir(texto) {
   }
   if (!nuevo) return;
   if (navigator.vibrate) { try { navigator.vibrate(80); } catch (e) {} }
-  if (_cam.qr.datos && _cam.qr.url && _cam.qr.rfc) {
-    if (estado) estado.innerHTML = '<b>✓ Datos</b> · <b>✓ Enlace</b> · <b>✓ RFC</b> · Todo leido';
+  if (esSAT) {
+    if (estado) estado.innerHTML = '<b>✓ RFC leido</b>' + (p.id_cif ? ' · idCIF guardado' : '');
     setTimeout(camCerrar, 700);
     return;
   }
-  var partes = [];
-  partes.push(_cam.qr.datos ? '<b>✓ Datos CURP</b>' : 'Datos CURP: QR de arriba de la constancia CURP');
-  partes.push(_cam.qr.url ? '<b>✓ Enlace RENAPO</b>' : 'Enlace: QR de abajo de la constancia CURP');
-  partes.push(_cam.qr.rfc ? '<b>✓ RFC</b>' : 'RFC: QR de la cedula fiscal (constancia del SAT)');
-  if (estado) estado.innerHTML = partes.join('<br>') + '<br>Pulsa Listo cuando termines';
+  if (_cam.qr.datos && _cam.qr.url) {
+    if (estado) estado.innerHTML = '<b>✓ Datos</b> · <b>✓ Enlace</b> · Constancia completa';
+    setTimeout(camCerrar, 700);
+    return;
+  }
+  if (estado) estado.innerHTML = _cam.qr.datos
+    ? '<b>✓ Datos leidos.</b> Ahora el QR de abajo para el enlace, o pulsa Listo'
+    : '<b>✓ Enlace guardado.</b> Ahora el QR de arriba para los datos, o pulsa Listo';
   var listo = document.getElementById('cam-listo');
   if (listo) listo.style.display = '';
 }
@@ -3802,11 +3876,11 @@ function _preRellenarDesdeCURP(datos, pref, modo) {
   // El QR de la constancia trae el sexo; la CURP tambien lo deriva al validarse.
   setV(pref+'sexo',     datos.sexo);
 
-  // Campos de domicilio (principalmente del INE)
-  setV(pref+'calle',    datos.calle);
-  setV(pref+'num_ext',  datos.num_ext);
-  setV(pref+'colonia',  datos.colonia);
-  setV(pref+'cp',       datos.cp);
+  // Domicilio (del anverso del INE), segun la casilla "Fuente del domicilio"
+  if (datos.calle || datos.cp || datos.colonia) {
+    conValor++;
+    llenados += _aplicarDomicilio(pref, datos, 'INE');
+  }
   // Reverso de la credencial INE
   setV(pref+'ine_cic',           datos.ine_cic);
   setV(pref+'ine_id_ciudadano',  datos.ine_id_ciudadano);
@@ -5977,8 +6051,17 @@ function htmlDomicilio(d, pref) {
   var estadoVal = esExt ? 'Otro' : (d[pref+'estado'] || '');
   var estadoExt = d[pref+'estado_ext'] || '';
   var mostrarExt = esExt || estadoVal === 'Otro' || !!estadoExt;
+  var fuenteDom = d[pref+'domicilio_fuente'] || '';
   return '<div class="fgrid">'
     +secHdr('Domicilio '+(pref?'('+pref+')':''))
+    +'<div class="fg full"><label class="lbl">Fuente del domicilio</label>'
+    +'<select class="sel" name="'+pref+'domicilio_fuente" onchange="onFuenteDomicilio(this,\''+pref+'\')">'
+    +'<option value=""'+(fuenteDom===''?' selected':'')+'>— Seleccionar —</option>'
+    +'<option value="INE"'+(fuenteDom==='INE'?' selected':'')+'>Credencial INE</option>'
+    +'<option value="CSF"'+(fuenteDom==='CSF'?' selected':'')+'>Constancia de situacion fiscal (SAT)</option>'
+    +'<option value="OTRO"'+(fuenteDom==='OTRO'?' selected':'')+'>Otro comprobante</option>'
+    +'</select>'
+    +'<span class="fhint">Elige de donde se toma el domicilio antes de digitalizar. Si digitalizas INE y constancia, el domicilio queda del que elijas aqui; puedes cambiarlo despues.</span></div>'
     +fg('Pais',pref+'pais_dom',true)+'<select class="sel" name="'+pref+'pais_dom" onchange="onPaisDomChange(this,\''+pref+'\')">'+optsPais(paisDom)+'</select></div>'
     +'<div class="fg"><label class="lbl">Codigo postal</label>'
     +'<input class="inp mono" name="'+pref+'cp" value="'+(d[pref+'cp']||'')+'" placeholder="00000" maxlength="5" '
@@ -6077,17 +6160,26 @@ function sanitizeEstadoExt(input) {
 function htmlIdPF(d, pref, esMexicana) {
   pref = pref||'';
   var tipoIdLabel = esMexicana?'Nombre de la identificacion':'Documento de identificacion / pasaporte';
+  var guiaAbierta = true;
+  try { guiaAbierta = localStorage.getItem('guia_doc_cerrada') !== '1'; } catch (e) {}
   var btnOCR = esMexicana
     ? '<div style="grid-column:1/-1;margin-bottom:4px;display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg2);border:1px dashed var(--brd);border-radius:8px;flex-wrap:wrap">'
       +'<span style="font-size:20px">📄</span>'
       +'<div style="flex:1;min-width:160px"><div style="font-size:12px;font-weight:600;color:var(--tx1)">Prellenar desde documento</div>'
-      +'<div style="font-size:11px;color:var(--tx3)">Constancia CURP y constancia del SAT (el PDF, o en el telefono sus codigos QR) y anverso del INE para nombre, CURP, RFC y domicilio; reverso del INE para el CIC y el identificador</div></div>'
+      +'<div style="font-size:11px;color:var(--tx3)">Los documentos llenan las casillas por ti. Sigue los tres pasos de la guia.</div></div>'
+      +'<details class="guia-doc"'+(guiaAbierta ? ' open' : '')+' ontoggle="try{localStorage.setItem(\'guia_doc_cerrada\', this.open ? \'\' : \'1\')}catch(e){}">'
+      +'<summary>Camino mas rapido para llenar el expediente</summary>'
+      +'<ol>'
+      +'<li><b>Datos generales.</b> En el telefono, escanea los dos QR de la constancia CURP con el boton "QR constancia CURP". En escritorio, sube su PDF. Con eso quedan CURP, nombre, apellidos, sexo y fecha de nacimiento.</li>'
+      +'<li><b>Fuente del domicilio.</b> En la seccion Domicilio elige si el domicilio vendra del INE o de la constancia fiscal. Hazlo antes de digitalizar; si digitalizas ambos documentos, puedes cambiarlo despues y el domicilio se reacomoda.</li>'
+      +'<li><b>Documentos.</b> INE: digitaliza anverso y reverso. Constancia fiscal: escanea el QR de la cedula con "QR cedula fiscal" para el RFC, y sube el PDF para el domicilio y el regimen (el QR no trae el domicilio).</li>'
+      +'</ol></details>'
       +'<label class="btn btn-p" style="cursor:pointer;font-size:12px;white-space:nowrap">📋 Constancia CURP'
       +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
       +'onchange="iniciarLecturaCURP(this,\''+pref+'\',\'\')"></label>'
-      +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap" onclick="return abrirEscanerQR(event,\''+pref+'\')">📷 Leer QR (CURP / SAT)'
+      +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap" onclick="return abrirEscanerQR(event,\''+pref+'\',\'curp\')">📷 QR constancia CURP'
       +'<input type="file" accept="image/*" capture="environment" style="display:none" '
-      +'onchange="iniciarLecturaQR(this,\''+pref+'\')"></label>'
+      +'onchange="iniciarLecturaQR(this,\''+pref+'\',\'curp\')"></label>'
       +'<span id="curp-enlace-'+pref+'">'
       +(d[pref+'curp_qr_url'] && /^https?:\/\//i.test(d[pref+'curp_qr_url'])
           ? '<a class="btn" href="'+capEsc(d[pref+'curp_qr_url'])+'" target="_blank" rel="noopener" style="font-size:12px;white-space:nowrap">🔗 Abrir constancia</a>'
@@ -6102,6 +6194,9 @@ function htmlIdPF(d, pref, esMexicana) {
       +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap">🧾 Const. SAT'
       +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
       +'onchange="iniciarLecturaCSF(this,\''+pref+'\')"></label>'
+      +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap" onclick="return abrirEscanerQR(event,\''+pref+'\',\'sat\')">📷 QR cedula fiscal'
+      +'<input type="file" accept="image/*" capture="environment" style="display:none" '
+      +'onchange="iniciarLecturaQR(this,\''+pref+'\',\'sat\')"></label>'
       +'</div>'
     : '';
   return '<div class="fgrid">'
@@ -7407,8 +7502,10 @@ function renderDomicilio(c, pref) {
   pref = pref || '';
   var estadoMostrar = (c[pref+'estado']==='Otro' && c[pref+'estado_ext'])
     ? c[pref+'estado_ext'] : c[pref+'estado'];
+  var fuentes = { INE: 'Credencial INE', CSF: 'Constancia de situacion fiscal (SAT)', OTRO: 'Otro comprobante' };
   return fgHtml(
-    fcHtml('Calle o vialidad',c[pref+'calle'])+fcHtml('Num. exterior',c[pref+'num_ext'])
+    (c[pref+'domicilio_fuente'] ? fcHtml('Fuente del domicilio', fuentes[c[pref+'domicilio_fuente']] || c[pref+'domicilio_fuente']) : '')
+    +fcHtml('Calle o vialidad',c[pref+'calle'])+fcHtml('Num. exterior',c[pref+'num_ext'])
     +fcHtml('Num. interior',c[pref+'num_int'])+fcHtml('Colonia',c[pref+'colonia'])
     +fcHtml('Demarcacion / municipio',c[pref+'municipio'])+fcHtml('Ciudad / poblacion',c[pref+'ciudad'])
     +fcHtml('Estado',estadoMostrar)+fcHtml('Codigo postal',c[pref+'cp'])
