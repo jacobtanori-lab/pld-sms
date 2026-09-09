@@ -2451,6 +2451,11 @@ function _extraerDatosCSF(txt) {
   // RFC — aparece como "RFC: CATJ850406NM9"
   d.rfc = rx(/RFC:\s*([A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3})/i, t).toUpperCase();
 
+  // idCIF — clave de la cedula de identificacion fiscal ("idCIF: 15090609137").
+  // Con ella y el RFC se forma el enlace del validador del SAT, el mismo que
+  // trae el QR de la cedula.
+  d.id_cif = rx(/idCIF:?\s*(\d{6,15})/i, t);
+
   // CURP
   var cm = t.toUpperCase().match(/[A-Z]{4}\d{6}[HM][A-Z]{2}[B-DF-HJ-NP-TV-Z]{3}[A-Z0-9][\dA-Z]/);
   if (cm) d.curp = cm[0];
@@ -2510,6 +2515,10 @@ function _preRellenarDesdeCSF(datos, pref) {
 
   // Datos personales (solo si no hay nada de la CURP)
   setV(pref+'rfc',       datos.rfc);
+  if (datos.id_cif) {
+    _guardarOcultoFrm(pref, 'id_cif', datos.id_cif);
+    if (datos.rfc) _guardarOcultoFrm(pref, 'rfc_qr_url', 'https://siat.sat.gob.mx/app/qr/faces/pages/mobile/validadorqr.jsf?D1=10&D2=1&D3=' + datos.id_cif + '_' + datos.rfc);
+  }
   setV(pref+'curp',      datos.curp);
   setV(pref+'ap_pat',    datos.ap_pat);
   setV(pref+'ap_mat',    datos.ap_mat);
@@ -2631,9 +2640,21 @@ function leerQRDeCanvas(canvas, cb) {
 // El segundo campo llega vacio. Para no depender de esa posicion se ancla en
 // la casilla del sexo: lo que va antes son apellidos y nombre; lo que va
 // despues, fecha y entidad de nacimiento.
+var RE_RFC_QR = /([A-Z&\u00D1]{3,4}\d{6}[A-Z0-9]{3})/;
+function _parsearQRSAT(texto) {
+  var t = String(texto || '').trim();
+  var m = t.match(/validadorqr\.jsf\?D1=(\d+)&D2=(\d+)&D3=(\d+)_([A-Z&\u00D1]{3,4}\d{6}[A-Z0-9]{3})/i);
+  if (!m) return null;
+  var d = { sat: true, url: t, rfc: m[4].toUpperCase(), tipo: m[1] };
+  if (m[1] === '10') d.id_cif = m[3];   // la cedula de identificacion fiscal
+  return d;
+}
+
 function _parsearQRConstancia(texto) {
   var t = String(texto || '').trim();
   if (!t) return null;
+  var sat = _parsearQRSAT(t);
+  if (sat) return sat;
   if (/^https?:\/\//i.test(t)) return { url: t };
   var partes = t.split('|').map(function(p){ return p.trim(); });
   var curp = (partes[0] || '').toUpperCase().match(RE_CURP);
@@ -2652,6 +2673,20 @@ function _parsearQRConstancia(texto) {
     if (d.ap_pat && d.ap_pat[0] !== curp[0]) console.warn('[QR] el primer apellido del QR no cuadra con la CURP');
   }
   return d;
+}
+
+// Con el QR de la cedula fiscal: RFC a su casilla (sin pisar lo capturado),
+// idCIF y enlace del validador del SAT guardados con el expediente.
+function _aplicarQRSAT(sat, pref) {
+  if (!sat || !sat.rfc) return;
+  _preRellenarDesdeCSF({ rfc: sat.rfc }, pref || '');
+  if (sat.id_cif) _guardarOcultoFrm(pref, 'id_cif', sat.id_cif);
+  if (sat.id_cif && sat.url) _guardarOcultoFrm(pref, 'rfc_qr_url', sat.url);
+  var frm = document.getElementById('frm');
+  var el = frm && frm.querySelector('[name="' + (pref || '') + 'rfc"]');
+  if (el && el.value && el.value.trim().toUpperCase() !== sat.rfc) {
+    toast('El RFC del QR (' + sat.rfc + ') no coincide con el capturado (' + el.value.trim().toUpperCase() + ')', 'w');
+  }
 }
 
 // Deja un valor en un campo oculto del formulario del expediente (lo crea si
@@ -2691,19 +2726,22 @@ function leerQRConstancia(source, pref, luego) {
   var procesar = function(canvas) {
     cargarQRLib(function() {
       leerQRDeCanvas(canvas, function(textos) {
-        var datos = null, url = null;
+        var datos = null, url = null, sat = null;
         (textos || []).forEach(function(t) {
           var p = _parsearQRConstancia(t);
           if (!p) return;
-          if (p.url) url = url || p.url;
+          if (p.sat) sat = sat || p;
+          else if (p.url) url = url || p.url;
           else datos = datos || p;
         });
         var completo = !!(datos && datos.ap_pat && datos.nombre);
         // Forma del contenido, sin volcar datos personales completos
         console.log('[QR] constancia: ' + (textos || []).length + ' codigo(s) legible(s)'
           + (datos ? ', datos con CURP ' + datos.curp.slice(0, 4) + '…' + datos.curp.slice(-2) + (completo ? ' y nombre completo' : ' sin nombre') : ', sin datos de la persona')
-          + (url ? ', enlace de verificacion' : ', sin enlace'));
+          + (url ? ', enlace de verificacion' : ', sin enlace')
+          + (sat ? ', QR del SAT con RFC' + (sat.id_cif ? ' e idCIF' : '') : ''));
         if (url) _guardarOcultoFrm(pref, 'curp_qr_url', url);
+        if (sat) _aplicarQRSAT(sat, pref);
         if (datos) {
           _preRellenarDesdeCURP(datos, pref || '', '');
           if (completo) toast('Constancia leida por su codigo QR', 's');
@@ -2819,7 +2857,7 @@ function _abrirCamara(ev, pref, cara, modo) {
   if (!camaraDisponible()) return true;      // deja que el <label> abra el archivo
   if (ev && ev.preventDefault) ev.preventDefault();
   _cam.pref = pref || ''; _cam.cara = cara || ''; _cam.modo = modo || 'ine';
-  _cam.qr = { datos: false, url: false }; _cam.ocupado = false;
+  _cam.qr = { datos: false, url: false, rfc: false }; _cam.ocupado = false;
   var ov = document.getElementById('cam-ov');
   if (!ov) {
     ov = document.createElement('div');
@@ -2838,7 +2876,7 @@ function _abrirCamara(ev, pref, cara, modo) {
   ov.classList.toggle('qr', _cam.modo === 'qr');
   document.getElementById('cam-listo').style.display = 'none';
   if (_cam.modo === 'qr') {
-    document.getElementById('cam-texto').textContent = 'Enfoca uno de los dos QR de la constancia dentro del marco. Se lee solo.';
+    document.getElementById('cam-texto').textContent = 'Enfoca un QR dentro del marco: los dos de la constancia CURP o el de la cedula fiscal del SAT. Se lee solo.';
     document.getElementById('cam-estado').innerHTML = 'Buscando el codigo…';
     cargarQRLib(function(){});
   } else {
@@ -2944,9 +2982,14 @@ function _qrConstanciaRecibir(texto) {
   if (_cam.modo !== 'qr') return;
   var p = _parsearQRConstancia(texto);
   var estado = document.getElementById('cam-estado');
-  if (!p) { if (estado) estado.innerHTML = 'Ese codigo no es de la constancia CURP'; return; }
+  if (!p) { if (estado) estado.innerHTML = 'Ese codigo no es de la constancia CURP ni del SAT'; return; }
   var pref = _cam.pref, nuevo = false;
-  if (p.url && !_cam.qr.url) {
+  if (p.sat) {
+    if (_cam.qr.rfc) return;
+    _cam.qr.rfc = true; nuevo = true;
+    _aplicarQRSAT(p, pref);
+    console.log('[QR] escaner: QR del SAT con RFC' + (p.id_cif ? ' e idCIF' : ''));
+  } else if (p.url && !_cam.qr.url) {
     _cam.qr.url = true; nuevo = true;
     _guardarOcultoFrm(pref, 'curp_qr_url', p.url);
     _mostrarEnlaceConstancia(pref, p.url);
@@ -2958,14 +3001,16 @@ function _qrConstanciaRecibir(texto) {
   }
   if (!nuevo) return;
   if (navigator.vibrate) { try { navigator.vibrate(80); } catch (e) {} }
-  if (_cam.qr.datos && _cam.qr.url) {
-    if (estado) estado.innerHTML = '<b>✓ Datos</b> · <b>✓ Enlace</b> · Constancia completa';
+  if (_cam.qr.datos && _cam.qr.url && _cam.qr.rfc) {
+    if (estado) estado.innerHTML = '<b>✓ Datos</b> · <b>✓ Enlace</b> · <b>✓ RFC</b> · Todo leido';
     setTimeout(camCerrar, 700);
     return;
   }
-  if (estado) estado.innerHTML = _cam.qr.datos
-    ? '<b>✓ Datos leidos.</b> Ahora el QR de abajo para el enlace, o pulsa Listo'
-    : '<b>✓ Enlace guardado.</b> Ahora el QR de arriba para los datos, o pulsa Listo';
+  var partes = [];
+  partes.push(_cam.qr.datos ? '<b>✓ Datos CURP</b>' : 'Datos CURP: QR de arriba de la constancia CURP');
+  partes.push(_cam.qr.url ? '<b>✓ Enlace RENAPO</b>' : 'Enlace: QR de abajo de la constancia CURP');
+  partes.push(_cam.qr.rfc ? '<b>✓ RFC</b>' : 'RFC: QR de la cedula fiscal (constancia del SAT)');
+  if (estado) estado.innerHTML = partes.join('<br>') + '<br>Pulsa Listo cuando termines';
   var listo = document.getElementById('cam-listo');
   if (listo) listo.style.display = '';
 }
@@ -6036,11 +6081,11 @@ function htmlIdPF(d, pref, esMexicana) {
     ? '<div style="grid-column:1/-1;margin-bottom:4px;display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg2);border:1px dashed var(--brd);border-radius:8px;flex-wrap:wrap">'
       +'<span style="font-size:20px">📄</span>'
       +'<div style="flex:1;min-width:160px"><div style="font-size:12px;font-weight:600;color:var(--tx1)">Prellenar desde documento</div>'
-      +'<div style="font-size:11px;color:var(--tx3)">Constancia CURP (el PDF, o en el telefono su codigo QR) y anverso del INE para nombre, CURP y domicilio; reverso del INE para el CIC y el identificador</div></div>'
+      +'<div style="font-size:11px;color:var(--tx3)">Constancia CURP y constancia del SAT (el PDF, o en el telefono sus codigos QR) y anverso del INE para nombre, CURP, RFC y domicilio; reverso del INE para el CIC y el identificador</div></div>'
       +'<label class="btn btn-p" style="cursor:pointer;font-size:12px;white-space:nowrap">📋 Constancia CURP'
       +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
       +'onchange="iniciarLecturaCURP(this,\''+pref+'\',\'\')"></label>'
-      +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap" onclick="return abrirEscanerQR(event,\''+pref+'\')">📷 QR de la constancia'
+      +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap" onclick="return abrirEscanerQR(event,\''+pref+'\')">📷 Leer QR (CURP / SAT)'
       +'<input type="file" accept="image/*" capture="environment" style="display:none" '
       +'onchange="iniciarLecturaQR(this,\''+pref+'\')"></label>'
       +'<span id="curp-enlace-'+pref+'">'
@@ -7016,7 +7061,14 @@ function renderDatosGenerales(c) {
   if (c.tipo==='PF_MEX') {
     campos = fgHtml(
       fcHtml('Nombre completo',[c.nombre,c.ap_pat,c.ap_mat].filter(Boolean).join(' '))
-      +fcHtml('RFC',c.rfc)+fcHtml('CURP',c.curp)
+      +fcHtml('RFC',c.rfc)
+      +((c.id_cif || (c.rfc_qr_url && /^https?:\/\//i.test(c.rfc_qr_url)))
+          ? fcHtml('Cedula de identificacion fiscal', (c.id_cif ? 'idCIF ' + capEsc(c.id_cif) : '')
+              + (c.rfc_qr_url && /^https?:\/\//i.test(c.rfc_qr_url)
+                  ? (c.id_cif ? ' · ' : '') + '<a href="'+capEsc(c.rfc_qr_url)+'" target="_blank" rel="noopener">Validar en el SAT</a>'
+                  : ''))
+          : '')
+      +fcHtml('CURP',c.curp)
       +(c.curp_qr_url && /^https?:\/\//i.test(c.curp_qr_url)
           ? fcHtml('Verificacion RENAPO (QR de la constancia)', '<a href="'+capEsc(c.curp_qr_url)+'" target="_blank" rel="noopener">Abrir enlace de verificacion</a>')
           : '')
