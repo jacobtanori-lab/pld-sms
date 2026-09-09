@@ -237,6 +237,12 @@ tbody tr:hover td{background:#f4f3ef}
 #cam-botones{position:absolute;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));display:flex;justify-content:center;gap:14px;padding:0 16px}
 #cam-botones .btn{min-height:48px;padding:0 22px;font-size:15px}
 body.cam-abierta{overflow:hidden}
+/* Modo QR: marco cuadrado y una linea de estado debajo */
+#cam-ov.qr #cam-marco{width:min(72vw,55vh,420px);aspect-ratio:1;border-radius:14px}
+#cam-estado{display:none;position:absolute;left:0;right:0;top:calc(45% + min(36vw,27.5vh,210px) + 16px);padding:0 16px;text-align:center;color:#fff;font-size:14px;line-height:1.5;text-shadow:0 1px 3px rgba(0,0,0,.8)}
+#cam-ov.qr #cam-estado{display:block}
+#cam-estado b{color:#ffd54a;font-weight:600}
+#cam-listo{display:none}
 
 /* ── Movil y tableta angosta ─────────────────────────────────── */
 #sb-toggle{display:none;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;width:38px;height:38px;border-radius:6px;font-size:20px;line-height:1;cursor:pointer;flex-shrink:0}
@@ -2754,6 +2760,23 @@ function iniciarLecturaCURP(input, pref, cara) {
   procesarArchivoINE(file, pref, cara);
 }
 
+// Foto de un QR de la constancia elegida como archivo (escritorio, o telefono
+// sin camara utilizable). Solo se leen los codigos: una foto de un QR no es
+// un documento, asi que no se anexa ni se manda al OCR.
+function iniciarLecturaQR(input, pref) {
+  var file = input.files[0];
+  input.value = '';
+  if (!file) return;
+  toast('Buscando el codigo QR...', 'i');
+  var url = URL.createObjectURL(file);
+  leerQRConstancia(url, pref || '', function(listo){
+    var frm = document.getElementById('frm');
+    var h = frm && frm.querySelector('[name="' + (pref || '') + 'curp_qr_url"]');
+    if (h && h.value) _mostrarEnlaceConstancia(pref, h.value);
+    if (!listo && !(h && h.value)) toast('No se encontro ningun QR de la constancia en la foto', 'w');
+  });
+}
+
 // Lo comun a las dos formas de conseguir la imagen (archivo elegido o foto
 // tomada dentro de la app): guardarla para subirla al expediente cuando se
 // cree el cliente, y arrancar el OCR.
@@ -2776,17 +2799,27 @@ function procesarArchivoINE(file, pref, cara) {
 // Solo se usa en dispositivos tactiles con acceso a camara; en escritorio el
 // boton sigue abriendo el selector de archivos.
 var CAM_PROPORCION = 85.6 / 53.98;
-var _cam = { stream: null, pref: '', cara: '' };
+var _cam = { stream: null, pref: '', cara: '', modo: '', qr: {}, timer: null, ocupado: false };
 
 function camaraDisponible() {
   return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
     && window.matchMedia && window.matchMedia('(pointer:coarse)').matches;
 }
 
-function abrirCamaraINE(ev, pref, cara) {
+function abrirCamaraINE(ev, pref, cara) { return _abrirCamara(ev, pref, cara, 'ine'); }
+
+// Escaner de la constancia CURP: en vez de fotografiar la hoja, que en un
+// telefono es poco practico, se enfoca uno de sus dos QR. El de arriba llena
+// los datos de la persona; el de abajo guarda el enlace con el que RENAPO
+// reimprime la constancia. Se leen en vivo, sin pulsar nada; Capturar queda
+// como recurso si la lectura en vivo no lo encuentra.
+function abrirEscanerQR(ev, pref) { return _abrirCamara(ev, pref, '', 'qr'); }
+
+function _abrirCamara(ev, pref, cara, modo) {
   if (!camaraDisponible()) return true;      // deja que el <label> abra el archivo
   if (ev && ev.preventDefault) ev.preventDefault();
-  _cam.pref = pref || ''; _cam.cara = cara || '';
+  _cam.pref = pref || ''; _cam.cara = cara || ''; _cam.modo = modo || 'ine';
+  _cam.qr = { datos: false, url: false }; _cam.ocupado = false;
   var ov = document.getElementById('cam-ov');
   if (!ov) {
     ov = document.createElement('div');
@@ -2794,14 +2827,24 @@ function abrirCamaraINE(ev, pref, cara) {
     ov.innerHTML = '<video id="cam-video" autoplay playsinline muted></video>'
       + '<div id="cam-marco"></div>'
       + '<div id="cam-texto"></div>'
+      + '<div id="cam-estado"></div>'
       + '<div id="cam-botones">'
       + '<button type="button" class="btn" onclick="camCerrar()">Cancelar</button>'
       + '<button type="button" class="btn btn-p" id="cam-disparo" onclick="camCapturar()">Capturar</button>'
+      + '<button type="button" class="btn btn-p" id="cam-listo" onclick="camCerrar()">Listo</button>'
       + '</div>';
     document.body.appendChild(ov);
   }
-  document.getElementById('cam-texto').textContent = 'Coloca el ' + (cara === 'reverso' ? 'reverso' : 'anverso')
-    + ' de la credencial dentro del marco, acostada, y pulsa Capturar';
+  ov.classList.toggle('qr', _cam.modo === 'qr');
+  document.getElementById('cam-listo').style.display = 'none';
+  if (_cam.modo === 'qr') {
+    document.getElementById('cam-texto').textContent = 'Enfoca uno de los dos QR de la constancia dentro del marco. Se lee solo.';
+    document.getElementById('cam-estado').innerHTML = 'Buscando el codigo…';
+    cargarQRLib(function(){});
+  } else {
+    document.getElementById('cam-texto').textContent = 'Coloca el ' + (cara === 'reverso' ? 'reverso' : 'anverso')
+      + ' de la credencial dentro del marco, acostada, y pulsa Capturar';
+  }
   ov.style.display = 'block';
   document.body.classList.add('cam-abierta');
   var video = document.getElementById('cam-video');
@@ -2816,6 +2859,7 @@ function abrirCamaraINE(ev, pref, cara) {
   }).then(function(stream){
     _cam.stream = stream;
     video.srcObject = stream;
+    if (_cam.modo === 'qr') _qrEnVivoIniciar();
     return video.play && video.play();
   }).catch(function(e){
     console.warn('[CAM] no se pudo abrir la camara:', e && e.name, e && e.message);
@@ -2830,6 +2874,7 @@ function abrirCamaraINE(ev, pref, cara) {
 }
 
 function camCerrar() {
+  if (_cam.timer) { clearInterval(_cam.timer); _cam.timer = null; }
   if (_cam.stream) { _cam.stream.getTracks().forEach(function(t){ t.stop(); }); _cam.stream = null; }
   var video = document.getElementById('cam-video');
   if (video) video.srcObject = null;
@@ -2841,10 +2886,13 @@ function camCerrar() {
 // El video llena la pantalla con object-fit: cover, asi que la parte visible
 // es un recorte centrado del cuadro real. Se calcula que rectangulo del cuadro
 // corresponde al marco en pantalla y se dibuja solo eso.
-function camCapturar() {
+// Devuelve un canvas con lo que hay dentro del marco, a resolucion completa
+// del cuadro o reducido a `maxLado` pixeles por lado si se indica. Null si la
+// camara aun no entrega cuadros.
+function camRecorteMarco(maxLado) {
   var video = document.getElementById('cam-video');
   var marco = document.getElementById('cam-marco');
-  if (!video || !marco || !video.videoWidth) { toast('La camara aun no esta lista', 'w'); return; }
+  if (!video || !marco || !video.videoWidth) return null;
   var vw = video.videoWidth, vh = video.videoHeight;
   var rv = video.getBoundingClientRect(), rm = marco.getBoundingClientRect();
   var esc = Math.max(rv.width / vw, rv.height / vh);          // escala de cover
@@ -2854,10 +2902,100 @@ function camCapturar() {
   var sw = rm.width / esc, sh = rm.height / esc;
   sx = Math.max(0, Math.min(vw - 1, sx)); sy = Math.max(0, Math.min(vh - 1, sy));
   sw = Math.max(1, Math.min(vw - sx, sw)); sh = Math.max(1, Math.min(vh - sy, sh));
-
+  var red = maxLado ? Math.min(1, maxLado / Math.max(sw, sh)) : 1;
   var c = document.createElement('canvas');
-  c.width = Math.round(sw); c.height = Math.round(sh);
+  c.width = Math.max(1, Math.round(sw * red)); c.height = Math.max(1, Math.round(sh * red));
   c.getContext('2d').drawImage(video, sx, sy, sw, sh, 0, 0, c.width, c.height);
+  return c;
+}
+
+// Lectura en vivo: cada 300 ms se decodifica lo que hay dentro del marco,
+// reducido a 700 px para que sea rapido. Con el lector nativo (Chrome en
+// Android) es casi instantaneo; con jsQR tarda unas decimas por cuadro.
+function _qrEnVivoIniciar() {
+  if (_cam.timer) clearInterval(_cam.timer);
+  _cam.timer = setInterval(function() {
+    if (_cam.ocupado || _cam.modo !== 'qr') return;
+    var c = camRecorteMarco(700);
+    if (!c) return;
+    _cam.ocupado = true;
+    var entregar = function(textos) {
+      _cam.ocupado = false;
+      (textos || []).forEach(_qrConstanciaRecibir);
+    };
+    if (window.BarcodeDetector) {
+      try {
+        new BarcodeDetector({ formats: ['qr_code'] }).detect(c)
+          .then(function(res){ entregar((res || []).map(function(r){ return r.rawValue; })); })
+          .catch(function(){ entregar([]); });
+        return;
+      } catch (e) { /* se sigue con jsQR */ }
+    }
+    if (!window.jsQR) { _cam.ocupado = false; return; }
+    var img = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+    var r = window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+    entregar(r && r.data ? [r.data] : []);
+  }, 300);
+}
+
+// Un QR leido en el escaner. Los dos codigos de la constancia se pueden leer
+// en la misma sesion, en cualquier orden; con los dos se cierra solo.
+function _qrConstanciaRecibir(texto) {
+  if (_cam.modo !== 'qr') return;
+  var p = _parsearQRConstancia(texto);
+  var estado = document.getElementById('cam-estado');
+  if (!p) { if (estado) estado.innerHTML = 'Ese codigo no es de la constancia CURP'; return; }
+  var pref = _cam.pref, nuevo = false;
+  if (p.url && !_cam.qr.url) {
+    _cam.qr.url = true; nuevo = true;
+    _guardarOcultoFrm(pref, 'curp_qr_url', p.url);
+    _mostrarEnlaceConstancia(pref, p.url);
+    console.log('[QR] escaner: enlace de verificacion guardado');
+  } else if (p.curp && !_cam.qr.datos) {
+    _cam.qr.datos = true; nuevo = true;
+    console.log('[QR] escaner: datos con CURP ' + p.curp.slice(0, 4) + '…' + p.curp.slice(-2) + (p.ap_pat ? ' y nombre completo' : ' sin nombre'));
+    _preRellenarDesdeCURP(p, pref, '');
+  }
+  if (!nuevo) return;
+  if (navigator.vibrate) { try { navigator.vibrate(80); } catch (e) {} }
+  if (_cam.qr.datos && _cam.qr.url) {
+    if (estado) estado.innerHTML = '<b>✓ Datos</b> · <b>✓ Enlace</b> · Constancia completa';
+    setTimeout(camCerrar, 700);
+    return;
+  }
+  if (estado) estado.innerHTML = _cam.qr.datos
+    ? '<b>✓ Datos leidos.</b> Ahora el QR de abajo para el enlace, o pulsa Listo'
+    : '<b>✓ Enlace guardado.</b> Ahora el QR de arriba para los datos, o pulsa Listo';
+  var listo = document.getElementById('cam-listo');
+  if (listo) listo.style.display = '';
+}
+
+// Boton "Abrir constancia" junto a los de prellenado, cuando el expediente
+// tiene el enlace de RENAPO. Abre el PDF en el navegador; no se puede
+// descargar desde la app porque el servidor solo admite a gob.mx.
+function _mostrarEnlaceConstancia(pref, url) {
+  var cont = document.getElementById('curp-enlace-' + (pref || ''));
+  if (!cont || !url || !/^https?:\/\//i.test(url)) return;
+  cont.innerHTML = '<a class="btn" href="' + capEsc(url) + '" target="_blank" rel="noopener" style="font-size:12px;white-space:nowrap">🔗 Abrir constancia</a>';
+}
+
+function camCapturar() {
+  if (_cam.modo === 'qr') {
+    // Lectura manual a resolucion completa, por si la lectura en vivo no lo halla
+    var cq = camRecorteMarco(0);
+    if (!cq) { toast('La camara aun no esta lista', 'w'); return; }
+    var estado = document.getElementById('cam-estado');
+    if (estado) estado.innerHTML = 'Leyendo…';
+    cargarQRLib(function(){
+      leerQRDeCanvas(cq, function(textos){
+        if (!textos || !textos.length) { if (estado) estado.innerHTML = 'No se encontro un QR. Acercate mas y que quede nitido.'; return; }
+        textos.forEach(_qrConstanciaRecibir);
+      });
+    });
+    return;
+  }
+  var c = camRecorteMarco(0);
+  if (!c) { toast('La camara aun no esta lista', 'w'); return; }
   var cara = _cam.cara, pref = _cam.pref;
   var disparo = document.getElementById('cam-disparo');
   if (disparo) disparo.disabled = true;
@@ -5898,10 +6036,18 @@ function htmlIdPF(d, pref, esMexicana) {
     ? '<div style="grid-column:1/-1;margin-bottom:4px;display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg2);border:1px dashed var(--brd);border-radius:8px;flex-wrap:wrap">'
       +'<span style="font-size:20px">📄</span>'
       +'<div style="flex:1;min-width:160px"><div style="font-size:12px;font-weight:600;color:var(--tx1)">Prellenar desde documento</div>'
-      +'<div style="font-size:11px;color:var(--tx3)">Constancia CURP y anverso del INE para nombre, CURP y domicilio; reverso del INE para el CIC y el identificador</div></div>'
+      +'<div style="font-size:11px;color:var(--tx3)">Constancia CURP (el PDF, o en el telefono su codigo QR) y anverso del INE para nombre, CURP y domicilio; reverso del INE para el CIC y el identificador</div></div>'
       +'<label class="btn btn-p" style="cursor:pointer;font-size:12px;white-space:nowrap">📋 Constancia CURP'
       +'<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" '
       +'onchange="iniciarLecturaCURP(this,\''+pref+'\',\'\')"></label>'
+      +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap" onclick="return abrirEscanerQR(event,\''+pref+'\')">📷 QR de la constancia'
+      +'<input type="file" accept="image/*" capture="environment" style="display:none" '
+      +'onchange="iniciarLecturaQR(this,\''+pref+'\')"></label>'
+      +'<span id="curp-enlace-'+pref+'">'
+      +(d[pref+'curp_qr_url'] && /^https?:\/\//i.test(d[pref+'curp_qr_url'])
+          ? '<a class="btn" href="'+capEsc(d[pref+'curp_qr_url'])+'" target="_blank" rel="noopener" style="font-size:12px;white-space:nowrap">🔗 Abrir constancia</a>'
+          : '')
+      +'</span>'
       +'<label class="btn" style="cursor:pointer;font-size:12px;white-space:nowrap" onclick="return abrirCamaraINE(event,\''+pref+'\',\'anverso\')">🪪 INE anverso'
       +'<input type="file" accept="image/*" capture="environment" style="display:none" '
       +'onchange="iniciarLecturaCURP(this,\''+pref+'\',\'anverso\')"></label>'
