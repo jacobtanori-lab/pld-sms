@@ -2565,15 +2565,13 @@ function cargarQRLib(cb) {
   document.head.appendChild(s);
 }
 
-// Devuelve el texto del primer QR que encuentre en el canvas, o null.
+// Devuelve los textos de los codigos QR que encuentre en el canvas (lista,
+// posiblemente vacia). La constancia trae dos y hacen falta los dos.
 function leerQRDeCanvas(canvas, cb) {
+  var W = canvas.width, H = canvas.height, vistos = [];
+  var agregar = function(t){ if (t && vistos.indexOf(t) < 0) vistos.push(t); };
   var conJsQR = function() {
-    if (!window.jsQR) { cb(null); return; }
-    // El QR de la constancia es pequeno respecto a la hoja, y jsQR pierde
-    // simbolos chicos dentro de imagenes grandes. Se prueba la hoja entera a
-    // varias escalas y, si no aparece, cada esquina por separado (el QR de la
-    // constancia va en una esquina), donde el simbolo ocupa una fraccion mayor.
-    var W = canvas.width, H = canvas.height;
+    if (!window.jsQR) { cb(vistos); return; }
     var intentar = function(sx, sy, sw, sh, esc) {
       var c = document.createElement('canvas');
       c.width = Math.max(1, Math.round(sw * esc)); c.height = Math.max(1, Math.round(sh * esc));
@@ -2582,24 +2580,34 @@ function leerQRDeCanvas(canvas, cb) {
       var r = window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' });
       return (r && r.data) ? r.data : null;
     };
-    var lado = Math.max(W, H), res = null;
+    // jsQR devuelve un solo simbolo por imagen, asi que se recorre por
+    // regiones: la hoja entera (a varias escalas, porque pierde simbolos
+    // chicos en imagenes grandes), luego la mitad superior y la inferior, y
+    // por ultimo las esquinas en dos tamanos. El tamano ajustado deja fuera el
+    // texto que va junto al QR, que al tocar su zona de silencio lo esconde.
+    var lado = Math.max(W, H);
     var escalas = [1, 1600 / lado, 1000 / lado].filter(function(e){ return e > 0 && e <= 1; });
-    for (var i = 0; i < escalas.length && !res; i++) res = intentar(0, 0, W, H, escalas[i]);
-    // Dos tamanos de esquina: uno amplio y uno ajustado. El ajustado deja fuera
-    // el texto que suele ir junto al QR (titulos, leyendas), que al tocar la
-    // zona de silencio del simbolo impide encontrarlo.
+    for (var i = 0; i < escalas.length; i++) { var t0 = intentar(0, 0, W, H, escalas[i]); if (t0) { agregar(t0); break; } }
+    var regiones = [[0, 0, W, Math.round(H * 0.5)], [0, Math.round(H * 0.5), W, H - Math.round(H * 0.5)]];
     var tamanos = [[0.5, 0.45], [0.35, 0.25]];
-    for (var t = 0; t < tamanos.length && !res; t++) {
+    for (var t = 0; t < tamanos.length; t++) {
       var fw = Math.round(W * tamanos[t][0]), fh = Math.round(H * tamanos[t][1]);
-      var esquinas = [[W - fw, 0], [0, 0], [W - fw, H - fh], [0, H - fh]];
-      for (var j = 0; j < esquinas.length && !res; j++) res = intentar(esquinas[j][0], esquinas[j][1], fw, fh, 1);
+      regiones.push([W - fw, 0, fw, fh], [0, 0, fw, fh], [W - fw, H - fh, fw, fh], [0, H - fh, fw, fh]);
     }
-    cb(res);
+    for (var j = 0; j < regiones.length && vistos.length < 2; j++) {
+      var rg = regiones[j];
+      agregar(intentar(rg[0], rg[1], rg[2], rg[3], 1));
+    }
+    cb(vistos);
   };
   if (window.BarcodeDetector) {
     try {
+      // El lector nativo devuelve todos los simbolos de una vez.
       new BarcodeDetector({ formats: ['qr_code'] }).detect(canvas)
-        .then(function(res){ if (res && res.length && res[0].rawValue) cb(res[0].rawValue); else conJsQR(); })
+        .then(function(res){
+          (res || []).forEach(function(r){ agregar(r.rawValue); });
+          if (vistos.length >= 2) cb(vistos); else conJsQR();
+        })
         .catch(function(){ conJsQR(); });
       return;
     } catch (e) { /* sin soporte real: se sigue con jsQR */ }
@@ -2607,34 +2615,96 @@ function leerQRDeCanvas(canvas, cb) {
   conJsQR();
 }
 
-// Intenta el QR de la constancia sobre un canvas o una URL de imagen. Llame o
-// no llame, al terminar invoca `luego`, que es la lectura OCR de siempre.
+// Interpreta el contenido de un QR de la constancia. Devuelve null si no es
+// de la constancia; {url} si es el enlace de verificacion; y si son los datos
+// de la persona, {curp, ap_pat, ap_mat, nombre, sexo, fecha_nac, entidad_nac}.
+//
+// Formato observado en constancias reales (RENAPO, 2026), campos separados
+// por barras verticales:
+//   CURP||PRIMER APELLIDO|SEGUNDO APELLIDO|NOMBRE(S)|HOMBRE o MUJER|dd/mm/aaaa|ENTIDAD|clave|
+// El segundo campo llega vacio. Para no depender de esa posicion se ancla en
+// la casilla del sexo: lo que va antes son apellidos y nombre; lo que va
+// despues, fecha y entidad de nacimiento.
+function _parsearQRConstancia(texto) {
+  var t = String(texto || '').trim();
+  if (!t) return null;
+  if (/^https?:\/\//i.test(t)) return { url: t };
+  var partes = t.split('|').map(function(p){ return p.trim(); });
+  var curp = (partes[0] || '').toUpperCase().match(RE_CURP);
+  curp = curp && parseCURP(curp[0]) ? curp[0] : null;
+  if (!curp) return null;
+  var d = { curp: curp };
+  var s = -1;
+  for (var i = 1; i < partes.length; i++) if (/^(HOMBRE|MUJER)$/i.test(partes[i])) { s = i; break; }
+  if (s >= 3) {
+    d.ap_pat = partes[s - 3]; d.ap_mat = partes[s - 2]; d.nombre = partes[s - 1];
+    d.sexo = /^H/i.test(partes[s]) ? 'Masculino' : 'Femenino';
+    var fm = (partes[s + 1] || '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (fm) d.fecha_nac = fm[1] + '-' + fm[2] + '-' + fm[3];
+    if (partes[s + 2]) d.entidad_nac = partes[s + 2];
+    // La CURP se forma con las iniciales; si no cuadran, algo se leyo torcido.
+    if (d.ap_pat && d.ap_pat[0] !== curp[0]) console.warn('[QR] el primer apellido del QR no cuadra con la CURP');
+  }
+  return d;
+}
+
+// Deja un valor en un campo oculto del formulario del expediente (lo crea si
+// no existe), para que se guarde con el cliente como cualquier otro dato.
+function _guardarOcultoFrm(pref, nombre, valor) {
+  var frm = document.getElementById('frm');
+  if (!frm || !valor) return;
+  var h = frm.querySelector('[name="' + (pref || '') + nombre + '"]');
+  if (!h) { h = document.createElement('input'); h.type = 'hidden'; h.name = (pref || '') + nombre; frm.appendChild(h); }
+  h.value = valor;
+}
+
+// Folio y fecha de emision de la constancia, a partir de su texto (capa de
+// texto del PDF u OCR). El folio son 15 digitos; la fecha va como
+// "Ciudad de Mexico, a 19 de junio de 2026".
+var MESES_ES = { enero:'01', febrero:'02', marzo:'03', abril:'04', mayo:'05', junio:'06', julio:'07', agosto:'08', septiembre:'09', setiembre:'09', octubre:'10', noviembre:'11', diciembre:'12' };
+function _extraerFolioConstancia(txt) {
+  var d = {}, t = String(txt || '');
+  var fo = t.match(/(?:^|\D)(\d{15})(?!\d)/);
+  if (fo) d.curp_folio = fo[1];
+  var fe = t.match(/a\s+(\d{1,2})\s+de\s+([a-záéíóúü]+)\s+de\s+(\d{4})/i);
+  if (fe && MESES_ES[fe[2].toLowerCase()]) d.curp_constancia_fecha = ('0' + fe[1]).slice(-2) + '-' + MESES_ES[fe[2].toLowerCase()] + '-' + fe[3];
+  return d;
+}
+function _guardarFolioConstancia(txt, pref) {
+  var d = _extraerFolioConstancia(txt);
+  _guardarOcultoFrm(pref, 'curp_folio', d.curp_folio);
+  _guardarOcultoFrm(pref, 'curp_constancia_fecha', d.curp_constancia_fecha);
+  if (d.curp_folio || d.curp_constancia_fecha) console.log('[QR] constancia: folio ' + (d.curp_folio ? 'leido' : 'no encontrado') + ', emitida ' + (d.curp_constancia_fecha || 'en fecha no encontrada'));
+}
+
+// Lee los QR de la constancia sobre un canvas o una URL de imagen y prellena
+// el expediente. Al terminar invoca `luego(listo)`: listo=true cuando el QR de
+// datos trajo nombre y apellidos y ya no hace falta leer el texto; false
+// cuando hay que seguir con la capa de texto del PDF o con el OCR.
 function leerQRConstancia(source, pref, luego) {
   var procesar = function(canvas) {
     cargarQRLib(function() {
-      leerQRDeCanvas(canvas, function(texto) {
-        if (!texto) { console.log('[QR] constancia: sin codigo legible'); luego(); return; }
-        var m = String(texto).toUpperCase().match(RE_CURP);
-        var curp = m && parseCURP(m[0]) ? m[0] : null;
-        var esUrl = /^https?:\/\//i.test(texto);
+      leerQRDeCanvas(canvas, function(textos) {
+        var datos = null, url = null;
+        (textos || []).forEach(function(t) {
+          var p = _parsearQRConstancia(t);
+          if (!p) return;
+          if (p.url) url = url || p.url;
+          else datos = datos || p;
+        });
+        var completo = !!(datos && datos.ap_pat && datos.nombre);
         // Forma del contenido, sin volcar datos personales completos
-        console.log('[QR] constancia: ' + texto.length + ' caracteres, ' + (esUrl ? 'enlace' : 'texto')
-          + (curp ? ', trae CURP ' + curp.slice(0, 4) + '…' + curp.slice(-2) : ', sin CURP dentro'));
-        if (curp) {
-          _preRellenarDesdeCURP({ curp: curp }, pref || '', '');
-          toast('QR leido: CURP ' + curp, 's');
+        console.log('[QR] constancia: ' + (textos || []).length + ' codigo(s) legible(s)'
+          + (datos ? ', datos con CURP ' + datos.curp.slice(0, 4) + '…' + datos.curp.slice(-2) + (completo ? ' y nombre completo' : ' sin nombre') : ', sin datos de la persona')
+          + (url ? ', enlace de verificacion' : ', sin enlace'));
+        if (url) _guardarOcultoFrm(pref, 'curp_qr_url', url);
+        if (datos) {
+          _preRellenarDesdeCURP(datos, pref || '', '');
+          if (completo) toast('Constancia leida por su codigo QR', 's');
+        } else if (url) {
+          toast('QR leido: enlace de verificacion guardado', 'i');
         }
-        if (esUrl) {
-          // Se guarda con el expediente como enlace de verificacion en RENAPO.
-          var frm = document.getElementById('frm');
-          if (frm) {
-            var h = frm.querySelector('[name="' + (pref || '') + 'curp_qr_url"]');
-            if (!h) { h = document.createElement('input'); h.type = 'hidden'; h.name = (pref || '') + 'curp_qr_url'; frm.appendChild(h); }
-            h.value = texto;
-          }
-          if (!curp) toast('QR leido: enlace de verificacion guardado', 'i');
-        }
-        luego();
+        luego(completo);
       });
     });
   };
@@ -2813,9 +2883,27 @@ function leerConstanciaCURP(file, pref, esINE) {
           var vp = page.getViewport({scale:2.5});
           var canvas = document.createElement('canvas');
           canvas.width = vp.width; canvas.height = vp.height;
+          // La constancia que emite RENAPO es un PDF con texto real, no una
+          // imagen: su capa de texto es exacta y sale gratis, asi que se usa
+          // antes que el OCR. Un PDF escaneado no la trae y cae al OCR.
+          var textoPDF = '';
+          var conTexto = page.getTextContent().then(function(tc){
+            textoPDF = (tc.items || []).map(function(it){ return it.str; }).join('\n');
+          }).catch(function(){});
           page.render({canvasContext:canvas.getContext('2d'), viewport:vp}).promise.then(function(){
             if (esINE) { _runOCR(canvas, pref, esINE); return; }
-            leerQRConstancia(canvas, pref, function(){ _runOCR(canvas, pref, esINE); });
+            conTexto.then(function(){
+              if (textoPDF) _guardarFolioConstancia(textoPDF, pref);
+              leerQRConstancia(canvas, pref, function(listo){
+                if (listo) return;
+                if (RE_CURP.test(textoPDF.toUpperCase())) {
+                  console.log('[QR] constancia: sin datos en QR; se usa la capa de texto del PDF');
+                  _preRellenarDesdeCURP(_extraerDatosConstancia(textoPDF), pref, '');
+                  return;
+                }
+                _runOCR(canvas, pref, esINE);
+              });
+            });
           });
         });
       }).catch(function(){ toast('No se pudo leer el PDF','e'); });
@@ -2824,7 +2912,7 @@ function leerConstanciaCURP(file, pref, esINE) {
   } else {
     var url = URL.createObjectURL(file);
     if (esINE) { _runOCR(url, pref, esINE); return; }
-    leerQRConstancia(url, pref, function(){ _runOCR(url, pref, esINE); });
+    leerQRConstancia(url, pref, function(listo){ if (!listo) _runOCR(url, pref, esINE); });
   }
 }
 
@@ -3080,6 +3168,7 @@ function _runOCR(source, pref, cara) {
   }).then(function(result){
     var txt = result.data.text;
     console.log('[OCR] constancia - ' + txt.length + ' caracteres leidos:\n' + txt);
+    _guardarFolioConstancia(txt, pref);
     _preRellenarDesdeCURP(_extraerDatosConstancia(txt), pref, '');
   }).catch(function(e){ toast('Error OCR: '+(e.message||e),'e'); });
 }
@@ -3527,6 +3616,8 @@ function _preRellenarDesdeCURP(datos, pref, modo) {
   setV(pref+'ap_mat',   datos.ap_mat);
   setV(pref+'nombre',   datos.nombre);
   if (datos.fecha_nac)  setV(pref+'fecha_nac', datos.fecha_nac);
+  // El QR de la constancia trae el sexo; la CURP tambien lo deriva al validarse.
+  setV(pref+'sexo',     datos.sexo);
 
   // Campos de domicilio (principalmente del INE)
   setV(pref+'calle',    datos.calle);
@@ -6779,6 +6870,10 @@ function renderDatosGenerales(c) {
       +fcHtml('RFC',c.rfc)+fcHtml('CURP',c.curp)
       +(c.curp_qr_url && /^https?:\/\//i.test(c.curp_qr_url)
           ? fcHtml('Verificacion RENAPO (QR de la constancia)', '<a href="'+capEsc(c.curp_qr_url)+'" target="_blank" rel="noopener">Abrir enlace de verificacion</a>')
+          : '')
+      +((c.curp_folio || c.curp_constancia_fecha)
+          ? fcHtml('Constancia CURP', (c.curp_folio ? 'Folio ' + capEsc(c.curp_folio) : '')
+              + (c.curp_constancia_fecha ? (c.curp_folio ? ' · ' : '') + 'emitida el ' + capEsc(c.curp_constancia_fecha) : ''))
           : '')
       +fcHtml('Fecha de nacimiento',c.fecha_nac)
       +fcHtml('Pais de nacimiento',c.pais_nac)+fcHtml('Pais de nacionalidad',c.pais_nac2)
