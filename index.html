@@ -4240,12 +4240,80 @@ function ebrActCat() {
 // Cual de las dos matrices se esta editando en la pantalla de configuracion.
 var EBR_MATRIZ = 'PF';
 
+// Tarjeta de reglas determinantes. Son fijas, acordadas con el usuario; se
+// muestran para que quien configure sepa que pasan por encima del puntaje.
+function ebrReglasHtml() {
+  var fila = function(cond, nivel, cls) {
+    return '<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--brd)">'
+      + '<span style="flex:1;font-size:13px;color:var(--tx2)">' + cond + '</span>'
+      + '<span class="pill ' + cls + '">' + nivel + '</span></div>';
+  };
+  return '<div class="card"><div class="card-h"><span class="card-t">Reglas determinantes</span>'
+    + '<span style="font-size:12px;color:var(--tx3)">Fijan un nivel minimo sin importar el puntaje</span></div>'
+    + '<div class="card-b">'
+    + fila('PEP activo', 'Alto', 'p-rj')
+    + fila('Familiar de PEP o relacionado con PEP', 'Medio como minimo', 'p-am')
+    + fila('Pais con contramedidas del GAFI o sancion del Consejo de Seguridad en el domicilio, la nacionalidad o el nacimiento. En persona moral, el pais de constitucion', 'Alto', 'p-rj')
+    + '<div style="font-size:12px;color:var(--tx3);margin-top:8px;line-height:1.6">El nivel final es el mayor entre el de la dimension cliente, '
+    + 'el de la dimension transaccional y el que fijen estas reglas. Los umbrales de arriba se aplican a cada dimension por separado.</div>'
+    + '</div></div>';
+}
+
+// Tarjeta de la dimension transaccional: los puntos de cada opcion del perfil.
+var TX_GRUPOS_EBR = [
+  ['efectivo',     'Uso de efectivo, arrendamiento', function(){ return PTX_EFECTIVO; }, ''],
+  ['efectivo_cv',  'Efectivo declarado, compraventa', function(){ return [['NINGUNO','Sin efectivo'],['MENOR','Menos de la mitad del limite legal de efectivo'],['MAYOR','La mitad del limite o mas']]; },
+                   'El limite legal de efectivo para inmuebles es de 8,025 UMA.'],
+  ['origen',       'Origen de los recursos', function(){ return PTX_ORIGEN; }, ''],
+  ['moneda',       'Moneda', function(){ return PTX_MONEDA; }, 'En arrendamiento se toma la moneda de la renta, que solo admite pesos o dolares.'],
+  ['volumen_arr',  'Volumen, arrendamiento', function(){ return PTX_ARR_NUMOPS; }, ''],
+  ['volumen_cv',   'Volumen, compraventa', function(){ return PTX_CV_NUMOPS; }, ''],
+  ['frecuencia',   'Frecuencia, solo arrendamiento', function(){ return PTX_FREC; }, 'Va a la inversa: un pago mensual es lo esperado en una renta.'],
+  ['contrapartes', 'Contrapartes', function(){ return PTX_CONTRAPARTES; }, 'En arrendamiento se toma del tipo de pago; "Otro" no suma.']
+];
+function ebrTransaccionalHtml() {
+  var T = CFG_EBR.transaccional || {};
+  var grupos = TX_GRUPOS_EBR.map(function(g){
+    var tabla = T[g[0]] || {};
+    var filas = g[2]().map(function(o){
+      return '<div style="display:flex;align-items:center;gap:12px;padding:6px 0;border-bottom:1px solid var(--brd)">'
+        + '<span style="flex:1;font-size:13px;color:var(--tx2)">' + capEsc(o[1]) + '</span>'
+        + '<input class="inp mono" id="ebr-tx_' + g[0] + '_' + o[0] + '" type="number" min="0" max="100" step="1" value="' + (Number(tabla[o[0]]) || 0) + '" style="width:62px;text-align:center">'
+        + '<span style="font-size:12px;color:var(--tx3)">puntos</span></div>';
+    }).join('');
+    return '<div style="margin-bottom:16px">'
+      + '<div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">' + g[1] + '</div>'
+      + (g[3] ? '<div style="font-size:11px;color:var(--tx3);margin-bottom:4px">' + g[3] + '</div>' : '')
+      + filas + '</div>';
+  }).join('');
+  return '<div class="card"><div class="card-h"><span class="card-t">Dimension transaccional</span>'
+    + '<span style="font-size:12px;color:var(--tx3)">Tope arrendamiento ' + topeTxEBR(true) + ' · compraventa ' + topeTxEBR(false) + '</span></div>'
+    + '<div class="card-b">'
+    + '<div style="font-size:12px;color:var(--tx3);margin-bottom:12px;line-height:1.6">Sale del perfil transaccional que declara el cliente. '
+    + 'No cuentan el tipo de acto, el monto ni la cuenta de origen o destino. Cada variante se lee sobre su propio tope, '
+    + 'de modo que las dos llegan a 100 y usan los mismos umbrales.</div>'
+    + grupos + '</div></div>';
+}
+function recogerTxEnPantalla() {
+  var T = CFG_EBR.transaccional = CFG_EBR.transaccional || JSON.parse(JSON.stringify(EBR_MODELO2.transaccional));
+  TX_GRUPOS_EBR.forEach(function(g){
+    T[g[0]] = T[g[0]] || {};
+    g[2]().forEach(function(o){
+      var el = document.getElementById('ebr-tx_' + g[0] + '_' + o[0]);
+      if (!el) return;
+      var n = parseInt(el.value, 10);
+      if (!isNaN(n)) T[g[0]][o[0]] = n;
+    });
+  });
+}
+
 // Cambiar de pestana no debe perder lo escrito: primero se recoge lo que hay en
 // pantalla hacia la matriz actual, y luego se vuelve a dibujar con la otra. Un
 // solo "Guardar cambios" guarda las dos.
 function ebrCambiarMatriz(cual) {
   if (cual === EBR_MATRIZ) return;
   recogerMatrizEnPantalla();
+  recogerTxEnPantalla();
   EBR_MATRIZ = cual;
   pgConfigEBR();
 }
@@ -4297,10 +4365,18 @@ function pgConfigEBR() {
       + '</div></div>'
     : '';
 
+  var avisoV2 = migracionV2Pendiente()
+    ? '<div class="card" style="border-left:4px solid var(--am)"><div class="card-b">'
+      + '<div style="font-weight:600;margin-bottom:6px">Configuracion actualizada al modelo 2</div>'
+      + '<div style="font-size:13px;color:var(--tx2);line-height:1.6">Se agregaron las reglas determinantes y la dimension transaccional, '
+      + 'y los pesos de las matrices pasaron a los del modelo 2. Se conservaron los umbrales de edad y antiguedad, los puntos por estatus PEP, '
+      + 'los estados y las actividades. El cambio esta solo en pantalla: pulsa <strong>Guardar cambios</strong> para conservarlo.</div>'
+      + '</div></div>'
+    : '';
   setMain('<div class="phdr"><div><div class="ptit">Nivel de Riesgo de clientes</div>'
     +'<div class="psub">Parametros del calculo de nivel de riesgo de clientes</div></div>'
     +'<button class="btn btn-p" onclick="guardarEBR()">Guardar cambios</button></div>'
-    + avisoEsc
+    + avisoEsc + avisoV2
 
     // — Umbrales —
     +'<div class="card"><div class="card-h"><span class="card-t">Umbrales de clasificacion</span></div>'
@@ -4316,13 +4392,14 @@ function pgConfigEBR() {
     +'<div style="margin-top:8px"><span class="pill p-vd">Bajo</span></div></div>'
     +'</div></div></div>'
 
+    + ebrReglasHtml()
     // — Puntajes por indicador, por matriz —
-    +'<div class="card"><div class="card-h"><span class="card-t">Puntajes por indicador</span>'
+    +'<div class="card"><div class="card-h"><span class="card-t">Dimension cliente</span>'
     +'<span style="font-size:12px;color:var(--tx3)">Tope de esta matriz: '+topeMatriz(EBR_MATRIZ)+' de '+ESCALA_EBR+' puntos</span></div>'
     +'<div class="card-b">'
     + pestanasMatriz()
-    +'<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Tipo de cliente</div>'
-    +Object.keys(tipoLabels).map(function(k){ return rowIndicador(tipoLabels[k],'tipo_'+k,(M.tipo_cliente||{})[k]||0); }).join('')+'</div>'
+    +(esPF ? '' : '<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Tipo de cliente</div>'
+    +Object.keys(tipoLabels).map(function(k){ return rowIndicador(tipoLabels[k],'tipo_'+k,(M.tipo_cliente||{})[k]||0); }).join('')+'</div>')
     +'<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Estatus PEP</div>'
     +pepLabels.map(function(k){ return rowIndicador(k,'pep_'+k.replace(/ /g,'_'),(M.pep||{})[k]||0); }).join('')+'</div>'
     +'<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Actividad economica</div>'
@@ -4342,6 +4419,7 @@ function pgConfigEBR() {
         +'<div style="font-size:11px;color:var(--tx3);margin-top:4px;line-height:1.6">Se calcula de la fecha de constitucion del expediente. Es el espejo de la edad en persona fisica: una entidad recien constituida es la se&ntilde;al clasica de empresa de fachada. Los 7 puntos del pais de nacimiento, que una entidad no tiene, estan repartidos en actividad y due&ntilde;o beneficiario.</div></div>')
     +'</div></div>'
 
+    + ebrTransaccionalHtml()
     // — Actividades económicas de alto riesgo —
     +'<div class="card"><div class="card-h"><span class="card-t">Actividades economicas de alto riesgo</span>'
     +'<span style="font-size:12px;color:var(--tx3)">Catalogo Persona Fisica (SAT) + Persona Moral (SCIAN) — texto completo</span></div>'
@@ -4386,6 +4464,14 @@ function pgConfigEBR() {
     +'<option value="NO">No declarado (NO)</option><option value="SI">Declarado (SI)</option></select></div>'
     +'<div class="fg"><label class="lbl">Edad (si persona fisica)</label><input class="inp mono" id="sim-edad" type="number" min="0" max="130" value="35" style="width:90px"></div>'
     +'<div class="fg"><label class="lbl">Antig&uuml;edad en a&ntilde;os (si persona moral)</label><input class="inp mono" id="sim-antig" type="number" min="0" max="200" value="10" style="width:90px"></div>'
+    +'<div class="fg full" style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-top:6px">Perfil transaccional</div>'
+    +'<div class="fg"><label class="lbl">Operacion</label><select class="sel" id="sim-arr"><option value="SI">Arrendamiento</option><option value="NO">Compraventa</option></select></div>'
+    +'<div class="fg"><label class="lbl">Uso de efectivo</label><select class="sel" id="sim-ef"><option value="0">Nunca o sin efectivo</option><option value="1">Ocasional o menos de la mitad del limite</option><option value="2">Habitual o la mitad del limite o mas</option></select></div>'
+    +'<div class="fg"><label class="lbl">Origen de los recursos</label><select class="sel" id="sim-origen">'+PTX_ORIGEN.map(function(o){return '<option value="'+o[0]+'">'+o[1]+'</option>';}).join('')+'</select></div>'
+    +'<div class="fg"><label class="lbl">Moneda</label><select class="sel" id="sim-moneda">'+PTX_MONEDA.map(function(o){return '<option value="'+o[0]+'">'+o[1]+'</option>';}).join('')+'</select></div>'
+    +'<div class="fg"><label class="lbl">Volumen</label><select class="sel" id="sim-vol"><option value="0">Una operacion o una sola exhibicion</option><option value="1">De 2 a 5, o varias por periodo</option><option value="2">Mas de 5</option></select></div>'
+    +'<div class="fg"><label class="lbl">Frecuencia, arrendamiento</label><select class="sel" id="sim-frec">'+PTX_FREC.map(function(o){return '<option value="'+o[0]+'">'+o[1]+'</option>';}).join('')+'</select></div>'
+    +'<div class="fg"><label class="lbl">Contrapartes</label><select class="sel" id="sim-contra">'+PTX_CONTRAPARTES.map(function(o){return '<option value="'+o[0]+'">'+o[1]+'</option>';}).join('')+'</select></div>'
     +'</div>'
     +'<div style="margin-top:16px;text-align:center">'
     +'<button class="btn btn-p" onclick="ebrSimular()">Calcular nivel de riesgo</button>'
@@ -4496,11 +4582,33 @@ function ebrSimular() {
     pais_nac: v('sim-pnacim') || 'MEXICO', pais_nac2: nac || 'MEXICO',
     actividad_scian: actCod, actividad_pf: actCod, tiene_dueno_ben: db, estado: estVal,
     pais_dom: pdom || 'MEXICO', fecha_nac: fechaNacSim, fecha_const: fechaConstSim };
+  // Perfil transaccional hipotetico, traducido a los campos reales de cada variante
+  var esArr = v('sim-arr') !== 'NO', ef = +v('sim-ef') || 0, vol = +v('sim-vol') || 0;
+  var limite = (Number(CFG_UMA.DIARIA) || 0) * (Number(CFG_UMA.UMBRAL_INM) || 8025);
+  mock.es_arrendamiento = esArr ? 'SI' : 'NO';
+  if (esArr) {
+    mock.ptx_arr_efectivo = ['NUNCA', 'OCASIONAL', 'HABITUAL'][ef];
+    mock.ptx_arr_origen = v('sim-origen');
+    mock.renta_moneda = v('sim-moneda') === 'MXN' ? 'MXN' : 'USD';
+    mock.ptx_arr_numops = vol ? 'VARIAS' : 'UNA';
+    mock.ptx_arr_frec = v('sim-frec');
+    mock.ptx_arr_pago = v('sim-contra') === 'TERCEROS' ? 'TRANSF_TERCEROS' : 'TRANSF_PROPIA';
+  } else {
+    mock.ptx_cv_efectivo_mxn = [0, limite * 0.25, limite * 0.75][ef];
+    mock.ptx_cv_origen = v('sim-origen');
+    mock.ptx_cv_moneda = v('sim-moneda');
+    mock.ptx_cv_numops = ['1', '2_5', '5_MAS'][vol];
+    mock.ptx_cv_contrapartes = v('sim-contra');
+  }
   var res = calcEBR(mock);
   var color = res.nivel === 'Alto' ? 'var(--rj)' : res.nivel === 'Medio' ? 'var(--am)' : 'var(--vd,#16a34a)';
   var ct = document.getElementById('ebr-sim-result');
   if (ct) ct.innerHTML = '<span style="color:'+color+'">'+res.nivel+'</span>'
-    +' <span style="font-size:14px;color:var(--tx2);font-weight:400">— Puntaje total: '+res.puntaje+' puntos</span>';
+    +'<div style="font-size:13px;color:var(--tx2);font-weight:400;margin-top:6px;line-height:1.7">'
+    +'Dimension cliente: '+res.puntaje_cliente+' puntos, '+res.nivel_cliente
+    +'<br>Dimension transaccional: '+res.puntaje_tx+' puntos, '+res.nivel_tx
+    +(res.reglas.length ? '<br>Reglas: '+res.reglas.map(function(r){ return capEsc(r.motivo)+', '+r.nivel; }).join('; ') : '<br>Sin reglas determinantes')
+    +'</div>';
 }
 
 // ── Mapa de estados en la configuracion ───────────────────────
@@ -4844,6 +4952,8 @@ function guardarEBR() {
   // Solo una de las dos matrices esta en pantalla; la otra conserva en memoria
   // lo que se le haya editado antes de cambiar de pestana.
   recogerMatrizEnPantalla();
+  recogerTxEnPantalla();
+  CFG_EBR.modelo = 2;
   // actividades_alto_riesgo ya se mantiene actualizado en memoria por ebrAgregarActividad/ebrQuitarActividad
   // Los puntajes por estado no se leen de la pantalla: ipmCiclarEstado los
   // escribe directamente en CFG_EBR.estados_puntaje conforme se pulsan, que es
@@ -5976,7 +6086,57 @@ function edadDesde(fechaStr) {
   return edad;
 }
 
+var NIVELES_EBR = ['Bajo', 'Medio', 'Alto'];
+function nivelPorPuntaje(p) {
+  var uA = CFG_EBR.umbral_alto  || 70;
+  var uM = CFG_EBR.umbral_medio || 40;
+  return p >= uA ? 'Alto' : p >= uM ? 'Medio' : 'Bajo';
+}
+
+// Nivel de riesgo del cliente, modelo 2: el mayor entre el nivel de la
+// dimension cliente, el de la dimension transaccional y el piso que fijen las
+// reglas determinantes. Devuelve tambien el desglose y el motivo, que se
+// guardan con el expediente para poder explicar la clasificacion.
 function calcEBR(d) {
+  var pc = calcEBRCliente(d), pt = calcEBRTransaccional(d);
+  var nc = nivelPorPuntaje(pc), nt = nivelPorPuntaje(pt);
+  var reglas = reglasEBR(d);
+  var idx = Math.max(NIVELES_EBR.indexOf(nc), NIVELES_EBR.indexOf(nt));
+  reglas.forEach(function(r){ idx = Math.max(idx, NIVELES_EBR.indexOf(r.nivel)); });
+  var nivel = NIVELES_EBR[idx];
+  var motivos = [];
+  reglas.forEach(function(r){ if (r.nivel === nivel) motivos.push('Regla: ' + r.motivo); });
+  if (nc === nivel) motivos.push('Cliente ' + pc + ' pts');
+  if (nt === nivel) motivos.push('Operacion ' + pt + ' pts');
+  return { nivel: nivel, puntaje: Math.max(pc, pt), puntaje_cliente: pc, nivel_cliente: nc,
+           puntaje_tx: pt, nivel_tx: nt, reglas: reglas, motivo: motivos.join(' · ') };
+}
+
+// Reglas determinantes. Cada una fija un nivel minimo con su motivo.
+function reglasEBR(d) {
+  var r = [];
+  var pep = d.estatus_pep || 'NO APLICA';
+  if (pep === 'Activo') r.push({ nivel: 'Alto', motivo: 'PEP activo' });
+  else if (pep === 'Familiar') r.push({ nivel: 'Medio', motivo: 'familiar de PEP' });
+  else if (pep === 'Relacionado a PEP') r.push({ nivel: 'Medio', motivo: 'relacionado con PEP' });
+  var esFisica = (d.tipo === 'PF_MEX' || d.tipo === 'PF_EXT');
+  var paises = paisesDePersona(d);
+  var campos = [['el domicilio', d.pais_dom || 'MEXICO'],
+                [esFisica ? 'la nacionalidad' : 'el pais de constitucion', paises.nacionalidad]];
+  if (paises.nacimiento) campos.push(['el pais de nacimiento', paises.nacimiento]);
+  campos.forEach(function(c){
+    if (!c[1] || normPais(c[1]) === 'MEXICO') return;
+    var cats = jurisdiccionesDe(c[1]);
+    var cm = cats.indexOf('gafi_contramedidas') >= 0, cs = cats.indexOf('csnu_sanciones') >= 0;
+    if (cm || cs) r.push({ nivel: 'Alto',
+      motivo: (cm ? 'contramedidas del GAFI' : 'sanciones del Consejo de Seguridad') + ' en ' + c[0] + ', ' + c[1] });
+  });
+  return r;
+}
+
+// Dimension cliente: quien es. Es la matriz anterior, con los pesos del
+// modelo 2; la que le toca depende de su naturaleza.
+function calcEBRCliente(d) {
   var p = 0;
   var M = matrizEBR(d.tipo);
   // Tipo de cliente
@@ -5992,15 +6152,11 @@ function calcEBR(d) {
   if (actCod && CFG_EBR.actividades_alto_riesgo.length && CFG_EBR.actividades_alto_riesgo.indexOf(actCod) >= 0)
     p += M.puntaje_actividad || 0;
   // Geografia. Tres factores independientes, como pide el indicador 4.1 de la
-  // guia de la UIF: domicilio, nacionalidad y pais de nacimiento. Cada uno
-  // suma lo suyo, de modo que un vinculo repetido en varios campos pesa mas que
-  // uno aislado.
+  // guia de la UIF: domicilio, nacionalidad y pais de nacimiento.
   var G = M.geografia || {};
   var paises = paisesDePersona(d);
-
-  // Domicilio. Ramas excluyentes: viviendo en Mexico cuenta el puntaje del
-  // estado, sembrado con la clasificacion del Indice de Paz Mexico; viviendo
-  // fuera cuenta el pais. Nunca los dos, que era el defecto de sumar ambos.
+  // Domicilio. Viviendo en Mexico cuenta el puntaje del estado, sembrado con
+  // la clasificacion del Indice de Paz Mexico; viviendo fuera, el del pais.
   var paisDom = d.pais_dom || 'MEXICO';
   if (normPais(paisDom) === 'MEXICO') {
     var estDom = d.estado || '';
@@ -6014,12 +6170,9 @@ function calcEBR(d) {
   } else {
     p += puntajeGeo(G.domicilio, paisDom);
   }
-
   p += puntajeGeo(G.nacionalidad, paises.nacionalidad);
   p += puntajeGeo(G.nacimiento,   paises.nacimiento);
-  // Edad del cliente. Solo la matriz de persona fisica la tiene: una entidad no
-  // tiene edad, y por eso la matriz de persona moral reparte esos puntos en
-  // otros factores en vez de dejarlos muertos.
+  // Edad, solo en la matriz de persona fisica.
   if (M.edad_min !== undefined || M.edad_max !== undefined) {
     var edad = edadDesde(d.fecha_nac);
     if (edad !== null) {
@@ -6027,20 +6180,68 @@ function calcEBR(d) {
       else if (M.edad_max && edad > M.edad_max) p += M.puntaje_edad_mayor || 0;
     }
   }
-  // Antiguedad de la entidad. Solo la matriz de persona moral la tiene. Se
-  // calcula con la misma rutina que la edad, a partir de la fecha de
-  // constitucion; una entidad con menos anos que el umbral suma.
+  // Antiguedad de la entidad, solo en la matriz de persona moral.
   if (M.antiguedad_min !== undefined) {
     var anios = edadDesde(d.fecha_const);
     if (anios !== null && M.antiguedad_min && anios < M.antiguedad_min) p += M.puntaje_antiguedad || 0;
   }
-  // Red de seguridad: con los pesos vigentes el maximo alcanzable es la escala,
-  // pero unos pesos editados a mano podrian pasarse y el puntaje dejaria de
-  // leerse como porcentaje.
   if (p > ESCALA_EBR) p = ESCALA_EBR;
-  var uA = CFG_EBR.umbral_alto  || 70;
-  var uM = CFG_EBR.umbral_medio || 40;
-  return { nivel: p >= uA ? 'Alto' : p >= uM ? 'Medio' : 'Bajo', puntaje: p };
+  return p;
+}
+
+// Que opcion del perfil transaccional cae en cada factor. Se separa del calculo
+// para que el simulador y la pantalla usen exactamente la misma lectura.
+function factoresTxEBR(d) {
+  if (d.es_arrendamiento === 'SI') {
+    return {
+      arr: true,
+      efectivo: ['efectivo', d.ptx_arr_efectivo],
+      origen: ['origen', d.ptx_arr_origen],
+      moneda: ['moneda', d.renta_moneda === 'USD' ? 'USD' : 'MXN'],
+      volumen: ['volumen_arr', d.ptx_arr_numops],
+      frecuencia: ['frecuencia', d.ptx_arr_frec],
+      contrapartes: ['contrapartes', d.ptx_arr_pago === 'TRANSF_TERCEROS' ? 'TERCEROS'
+                                   : d.ptx_arr_pago === 'TRANSF_PROPIA' ? 'PROPIAS' : '']
+    };
+  }
+  var ef = parseFloat(d.ptx_cv_efectivo_mxn) || 0;
+  var limite = (Number(CFG_UMA.DIARIA) || 0) * (Number(CFG_UMA.UMBRAL_INM) || 8025);
+  return {
+    arr: false,
+    efectivo: ['efectivo_cv', ef <= 0 ? 'NINGUNO' : (limite && ef >= limite / 2) ? 'MAYOR' : 'MENOR'],
+    origen: ['origen', d.ptx_cv_origen],
+    moneda: ['moneda', d.ptx_cv_moneda],
+    volumen: ['volumen_cv', d.ptx_cv_numops],
+    contrapartes: ['contrapartes', d.ptx_cv_contrapartes]
+  };
+}
+
+// Tope de una variante: la suma de la opcion mas alta de cada factor que le
+// aplica. Arrendamiento solo admite pesos o dolares.
+function topeTxEBR(esArr) {
+  var T = CFG_EBR.transaccional || {};
+  var mayor = function(tabla, claves){
+    var v = (claves || Object.keys(tabla || {})).map(function(k){ return Number((tabla || {})[k]) || 0; });
+    return v.length ? Math.max.apply(null, v) : 0;
+  };
+  return esArr
+    ? mayor(T.efectivo) + mayor(T.origen) + mayor(T.moneda, ['MXN', 'USD']) + mayor(T.volumen_arr) + mayor(T.frecuencia) + mayor(T.contrapartes)
+    : mayor(T.efectivo_cv) + mayor(T.origen) + mayor(T.moneda) + mayor(T.volumen_cv) + mayor(T.contrapartes);
+}
+
+// Dimension transaccional: como opera, segun su perfil declarado. Lo que no se
+// declaro no suma. El resultado se lee sobre el tope de la variante.
+function calcEBRTransaccional(d) {
+  var T = CFG_EBR.transaccional || {};
+  var F = factoresTxEBR(d);
+  var p = 0;
+  ['efectivo', 'origen', 'moneda', 'volumen', 'frecuencia', 'contrapartes'].forEach(function(k){
+    var f = F[k];
+    if (!f || !f[1]) return;
+    p += Number((T[f[0]] || {})[f[1]]) || 0;
+  });
+  var tope = topeTxEBR(F.arr);
+  return tope ? Math.min(ESCALA_EBR, Math.round(p * ESCALA_EBR / tope)) : 0;
 }
 
 // --- CAMPOS COMUNES DOMICILIO ---
@@ -6313,7 +6514,7 @@ function toggleArrendamiento(val) {
 // prefijo ptx_, como el resto de campos.
 var PTX_ARR_PAGO   = [['TRANSF_PROPIA','Transferencia electronica de cuentas propias'],['TRANSF_TERCEROS','Transferencia electronica de terceros'],['OTRO','Otro']];
 var PTX_ARR_NUMOPS = [['UNA','En una sola exhibicion'],['VARIAS','Mas de una operacion por periodo']];
-var PTX_FREC       = [['UNICA','Unica'],['MENSUAL','Mensual'],['TRIMESTRAL','Trimestral'],['SEMESTRAL','Semestral'],['ANUAL','Anual']];
+var PTX_FREC       = [['MENSUAL','Mensual'],['TRIMESTRAL','Trimestral'],['SEMESTRAL','Semestral'],['ANUAL','Anual']];
 var PTX_EFECTIVO   = [['NUNCA','Nunca'],['OCASIONAL','Ocasional'],['HABITUAL','Habitual']];
 var PTX_ORIGEN     = [['ACTIVIDAD','Ingresos por actividad'],['AHORRO','Ahorro'],['VENTA_BIENES','Venta de bienes'],['HERENCIA','Herencia o donacion'],['PRESTAMO','Prestamo'],['OTRO','Otro']];
 var PTX_CV_PAGO    = [['CONTADO_PROPIOS','Contado con recursos propios'],['CONTADO_PARCIAL','Contado en parcialidades'],['CREDITO_BANCO','Credito bancario'],['CREDITO_OTRO','Credito de otra entidad u organismo de vivienda'],['MIXTO','Mixto']];
@@ -6362,7 +6563,6 @@ function htmlPerfilTx(d) {
     + '<option value="MXN"' + (d.renta_moneda !== 'USD' ? ' selected' : '') + '>MXN - Pesos</option>'
     + '<option value="USD"' + (d.renta_moneda === 'USD' ? ' selected' : '') + '>USD - Dolares</option>'
     + '</select></div>'
-    + fg('Contrapartes', null, false) + sel('ptx_arr_contrapartes', PTX_CONTRAPARTES, d.ptx_arr_contrapartes)
     + fg('Uso de efectivo', null, false) + sel('ptx_arr_efectivo', PTX_EFECTIVO, d.ptx_arr_efectivo)
     + fg('Origen de los recursos', null, false) + sel('ptx_arr_origen', PTX_ORIGEN, d.ptx_arr_origen, ' onchange="ptxOtro(this,\'ptx-arr-otro\')"')
     + otro('ptx_arr_origen_otro', d.ptx_arr_origen_otro, 'ptx-arr-otro', d.ptx_arr_origen === 'OTRO' ? '' : 'display:none')
@@ -6402,7 +6602,6 @@ function renderPerfilTx(c) {
       + fcHtml('Operaciones esperadas en el periodo', ptxEtiqueta(PTX_ARR_NUMOPS, c.ptx_arr_numops))
       + fcHtml('Frecuencia esperada', ptxEtiqueta(PTX_FREC, c.ptx_arr_frec))
       + fcHtml('Monto esperado por operacion (renta)', c.renta_monto ? fmtMXN(c.renta_monto) + (c.renta_moneda === 'USD' ? ' USD' : ' MXN') : '-')
-      + fcHtml('Contrapartes', ptxEtiqueta(PTX_CONTRAPARTES, c.ptx_arr_contrapartes))
       + fcHtml('Uso de efectivo', ptxEtiqueta(PTX_EFECTIVO, c.ptx_arr_efectivo))
       + fcHtml('Origen de los recursos', ptxEtiqueta(PTX_ORIGEN, c.ptx_arr_origen) + (c.ptx_arr_origen === 'OTRO' && c.ptx_arr_origen_otro ? ': ' + capEsc(c.ptx_arr_origen_otro) : ''));
   } else {
@@ -6416,7 +6615,7 @@ function renderPerfilTx(c) {
       + fcHtml('Origen de los recursos', ptxEtiqueta(PTX_ORIGEN, c.ptx_cv_origen) + (c.ptx_cv_origen === 'OTRO' && c.ptx_cv_origen_otro ? ': ' + capEsc(c.ptx_cv_origen_otro) : ''));
   }
   var vacio = esArr
-    ? !(c.ptx_arr_pago || c.ptx_arr_numops || c.ptx_arr_frec || c.renta_monto || c.ptx_arr_efectivo || c.ptx_arr_origen || c.ptx_arr_contrapartes)
+    ? !(c.ptx_arr_pago || c.ptx_arr_numops || c.ptx_arr_frec || c.renta_monto || c.ptx_arr_efectivo || c.ptx_arr_origen)
     : !(c.ptx_cv_pago || c.ptx_cv_numops || c.ptx_cv_efectivo_mxn || c.ptx_cv_origen || c.ptx_cv_moneda || c.ptx_cv_contrapartes);
   var aviso = vacio
     ? '<div style="margin:0 0 10px;padding:8px 10px;border-left:3px solid var(--am);font-size:12px;color:var(--tx2)">Este expediente no tiene perfil transaccional capturado. Se llena al editar el expediente, en la seccion del final.</div>'
@@ -6932,6 +7131,10 @@ function submitCliente(tipo, idEx) {
   var riesgo = calcEBR(datos);
   datos.riesgo = riesgo.nivel;
   datos.puntaje_ebr = riesgo.puntaje;
+  datos.puntaje_ebr_cliente = riesgo.puntaje_cliente;
+  datos.puntaje_ebr_tx = riesgo.puntaje_tx;
+  datos.riesgo_motivo = riesgo.motivo;
+  datos.riesgo_modelo = 2;
 
   // Asegurar que las listas de screening estén cargadas (última versión en SharePoint)
   // antes de cotejar — sin importar quién ni cuándo las cargó ese día.
@@ -7108,7 +7311,14 @@ function renderFicha(c) {
     +'<div class="ptit">'+nom+'</div>'
     +'<span class="pill '+pE(c.estatus)+'">'+(c.estatus||'-')+'</span>'
     +'<span class="pill '+pR(c.riesgo)+'">'+(c.riesgo||'-')+'</span>'
-    +'<span class="pill p-gr">EBR: '+(c.puntaje_ebr||0)+' pts</span>'
+    +(c.puntaje_ebr_cliente !== undefined
+        ? '<span class="pill p-gr" title="'+capEsc(c.riesgo_motivo||'')+'">Cliente '+c.puntaje_ebr_cliente+' · Operacion '+(c.puntaje_ebr_tx||0)+'</span>'
+        : '<span class="pill p-gr">EBR: '+(c.puntaje_ebr||0)+' pts</span>')
+    +(function(){
+        var rg = String(c.riesgo_motivo||'').split(' · ').filter(function(x){ return x.indexOf('Regla: ')===0; })
+          .map(function(x){ return x.slice(7); });
+        return rg.length ? '<span class="pill '+pR(c.riesgo)+'">Por regla: '+capEsc(rg.join(', '))+'</span>' : '';
+      })()
     +((['Activo','Familiar','Relacionado a PEP'].indexOf(c.estatus_pep||'')>=0)?'<span class="pill p-mo">PEP: '+c.estatus_pep+'</span>':'')
     +'</div>'
     +'<div class="psub">'+labelTipo(c.tipo)+' - '+(c.entidad_nombre||c.entidad_id||'')
@@ -8448,64 +8658,73 @@ var CFG_UMA = {
   FECHA_ACT:   '2024-02-01'
 };
 
-// Configuración del modelo EBR (se sobreescribe al cargar desde SharePoint)
-// Los pesos suman 100 como maximo alcanzable, de modo que el puntaje de un
-// cliente se lee directamente como porcentaje de riesgo. El reparto por factor
-// es: PEP 25, tipo de cliente 15, actividad 15, domicilio 15, edad 10,
-// nacionalidad 10 y dueno beneficiario 10.
+// Configuracion del modelo de riesgo de clientes. Se sobreescribe al cargar
+// desde SharePoint. Es el modelo 2, acordado con el usuario el 5 de octubre de
+// 2026, y se calcula en tres capas:
 //
-// El domicilio es UN solo factor: si el cliente vive en Mexico cuentan los
-// puntos de su estado (0 a 10); si vive fuera, los de su pais (10 EE.UU., 15
-// resto). Nunca se cobran los dos, que era el defecto que subia el techo a 130.
+// 1. Reglas determinantes, que fijan un nivel minimo sin importar el puntaje:
+//    PEP activo es Alto; familiar o relacionado con PEP es por lo menos Medio;
+//    un pais con contramedidas del GAFI o sancion del Consejo de Seguridad en
+//    el domicilio, la nacionalidad o el nacimiento es Alto.
+// 2. Dos dimensiones de 0 a 100, cada una con los mismos umbrales: quien es el
+//    cliente (una matriz por naturaleza, persona fisica o moral) y como opera
+//    (su perfil transaccional declarado).
+// 3. El nivel final es el mayor de los dos niveles y del piso de las reglas.
+//    No se promedian, porque el promedio diluye un riesgo alto que aparece en
+//    una sola de las dos dimensiones.
 var ESCALA_EBR = 100;
-// Hay DOS matrices de riesgo, una por naturaleza de cliente, porque no se les
-// pueden hacer las mismas preguntas. A una persona moral no se le puede medir
-// la edad ni el pais de nacimiento: con una sola matriz esos 17 puntos quedaban
-// muertos y una persona moral necesitaba el 88% de todo lo que podia sumar para
-// clasificar como Alto, contra el 70% de una persona fisica. Los 17 se
-// redistribuyen en lo que si distingue a una estructura juridica: la opacidad
-// de su propiedad y su giro.
-//
-// Las dos matrices llegan a 100, asi que el puntaje se lee como porcentaje en
-// ambas y los umbrales pueden ser los mismos.
-//
 // Dentro de la geografia, cada factor toma el mayor entre su valor base y el
 // que le toque por jurisdiccion, nunca la suma, de modo que su tope es su valor
 // mas alto. Entre factores si se suma: un vinculo repetido en varios campos
 // pesa mas que uno aislado, que es lo que pide el indicador 4.1 de la guia.
 var CFG_EBR = {
+  modelo: 2,
   matriz: {
-    // Persona fisica: tipo 15, PEP 25, actividad 15, domicilio 10,
-    // nacionalidad 8, nacimiento 7, edad 10, dueno beneficiario 10.
+    // Persona fisica: PEP 25, actividad 20, dueno beneficiario 15, domicilio
+    // 10, nacionalidad 10, nacimiento 10, edad 10. No hay tipo de cliente: ser
+    // extranjero ya lo mide la geografia, y cobrarlo tambien aqui lo contaba
+    // tres veces. Un domicilio extranjero sin listas vale 5, lo mismo que un
+    // estado de banda amarilla o naranja.
     PF: {
-      tipo_cliente: { 'PF_MEX': 0, 'PF_EXT': 15 },
+      tipo_cliente: { 'PF_MEX': 0, 'PF_EXT': 0 },
       pep: { 'NO APLICA': 0, 'Inactivo': 12, 'Vencido': 4, 'Activo': 25, 'Familiar': 25, 'Relacionado a PEP': 25 },
-      puntaje_actividad: 15,
-      dueno_beneficiario: { 'SI': 10, 'NO': 0 },
+      puntaje_actividad: 20,
+      dueno_beneficiario: { 'SI': 15, 'NO': 0 },
       geografia: {
-        domicilio:    { ext: 3, us: 3, gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 },
-        nacionalidad: { ext: 3,        gafi_contramedidas:  8, csnu_sanciones:  8, gafi_vigilancia: 6, regimen_fiscal: 3 },
-        nacimiento:   { ext: 2,        gafi_contramedidas:  7, csnu_sanciones:  7, gafi_vigilancia: 5, regimen_fiscal: 3 }
+        domicilio:    { ext: 5, us: 5, gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 8, regimen_fiscal: 6 },
+        nacionalidad: { ext: 3,        gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 },
+        nacimiento:   { ext: 3,        gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 }
       },
       edad_min: 20, edad_max: 75, puntaje_edad_menor: 10, puntaje_edad_mayor: 7
     },
-    // Persona moral y fideicomiso: tipo 15, PEP 25, actividad 17,
-    // dueno beneficiario 13, domicilio 10, pais de constitucion 10,
-    // antiguedad 10. No hay pais de nacimiento, y en lugar de la edad de una
-    // persona esta la antiguedad de la entidad: una recien constituida es la
-    // senal clasica de empresa de fachada, y pesa lo mismo que la edad en la
-    // matriz de persona fisica.
+    // Persona moral y fideicomiso: tipo 10, PEP 25, actividad 20, dueno
+    // beneficiario 15, domicilio 10, pais de constitucion 10, antiguedad 10.
     PM: {
-      tipo_cliente: { 'PM_SIMP': 8, 'PM_MEX': 12, 'FIDEICOMISO': 15 },
+      tipo_cliente: { 'PM_SIMP': 5, 'PM_MEX': 8, 'FIDEICOMISO': 10 },
       pep: { 'NO APLICA': 0, 'Inactivo': 12, 'Vencido': 4, 'Activo': 25, 'Familiar': 25, 'Relacionado a PEP': 25 },
-      puntaje_actividad: 17,
-      dueno_beneficiario: { 'SI': 13, 'NO': 0 },
+      puntaje_actividad: 20,
+      dueno_beneficiario: { 'SI': 15, 'NO': 0 },
       geografia: {
-        domicilio:    { ext: 3, us: 3, gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 },
+        domicilio:    { ext: 5, us: 5, gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 8, regimen_fiscal: 6 },
         nacionalidad: { ext: 3,        gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 }
       },
       antiguedad_min: 3, puntaje_antiguedad: 10
     }
+  },
+  // Dimension transaccional, con lo que el cliente declara en su perfil. Por
+  // decision del usuario no cuentan el tipo de acto, el monto (casi todas las
+  // operaciones rebasan los umbrales) ni la cuenta de origen o destino. Cada
+  // variante se lee sobre su propio tope para llegar a 100: compraventa no
+  // tiene frecuencia y arrendamiento solo admite pesos o dolares.
+  transaccional: {
+    efectivo:     { NUNCA: 0, OCASIONAL: 18, HABITUAL: 35 },        // arrendamiento
+    efectivo_cv:  { NINGUNO: 0, MENOR: 18, MAYOR: 35 },             // compraventa, contra la mitad del limite legal de efectivo
+    origen:       { ACTIVIDAD: 0, AHORRO: 5, VENTA_BIENES: 10, HERENCIA: 15, PRESTAMO: 15, OTRO: 25 },
+    moneda:       { MXN: 0, USD: 8, OTRA: 15 },
+    volumen_arr:  { UNA: 0, VARIAS: 15 },
+    volumen_cv:   { '1': 0, '2_5': 8, '5_MAS': 15 },
+    frecuencia:   { MENSUAL: 0, TRIMESTRAL: 3, SEMESTRAL: 3, ANUAL: 5 },   // solo arrendamiento
+    contrapartes: { PROPIAS: 0, TERCEROS: 5 }   // en arrendamiento sale del tipo de pago
   },
   // Lo que comparten las dos matrices: el catalogo de actividades, el mapa de
   // estados y los umbrales. Son la misma realidad para cualquier cliente.
@@ -8517,6 +8736,9 @@ var CFG_EBR = {
   umbral_medio: 40,
   escala: 100                // marca de que los pesos ya estan reescalados
 };
+// Copia intacta de los valores del modelo 2, para migrar configuraciones
+// guardadas con el modelo anterior.
+var EBR_MODELO2 = JSON.parse(JSON.stringify({ matriz: CFG_EBR.matriz, transaccional: CFG_EBR.transaccional }));
 
 // La matriz que le toca a un cliente por su naturaleza.
 function matrizEBR(tipo) {
@@ -8736,6 +8958,39 @@ function migrarAntiguedad(cargado) {
   return true;
 }
 
+// Una configuracion guardada antes del modelo 2 trae los pesos anteriores en
+// sus matrices. Se pasan a los del modelo 2 conservando lo que es del usuario y
+// pidio conservar: los umbrales de edad y de antiguedad y los puntos de cada
+// estatus PEP. Estados, actividades y umbrales de nivel viven fuera de las
+// matrices y no se tocan. La parte transaccional no existia, asi que queda la
+// del codigo. Como las demas migraciones, solo cambia la memoria: se conserva
+// cuando el usuario pulsa "Guardar cambios".
+var MIGRACION_V2 = false;
+function migrarModeloV2(cargado) {
+  if (!cargado || Number(cargado.modelo) === 2) return null;
+  var viejo = CFG_EBR.matriz || {};
+  var nuevo = JSON.parse(JSON.stringify(EBR_MODELO2.matriz));
+  ['PF', 'PM'].forEach(function(k){
+    var v = viejo[k] || {};
+    if (v.pep && Object.keys(v.pep).length) nuevo[k].pep = JSON.parse(JSON.stringify(v.pep));
+  });
+  var vPF = viejo.PF || {}, vPM = viejo.PM || {};
+  if (vPF.edad_min !== undefined) nuevo.PF.edad_min = vPF.edad_min;
+  if (vPF.edad_max !== undefined) nuevo.PF.edad_max = vPF.edad_max;
+  if (vPM.antiguedad_min !== undefined) nuevo.PM.antiguedad_min = vPM.antiguedad_min;
+  CFG_EBR.matriz = nuevo;
+  if (!cargado.transaccional) CFG_EBR.transaccional = JSON.parse(JSON.stringify(EBR_MODELO2.transaccional));
+  CFG_EBR.modelo = 2;
+  MIGRACION_V2 = true;
+  console.info('[EBR] configuracion pasada al modelo 2: reglas, dimension cliente y dimension transaccional');
+  return true;
+}
+function migracionV2Pendiente() {
+  if (!MIGRACION_V2) return false;
+  try { return Number(JSON.parse(localStorage.getItem('ebr_config') || '{}').modelo) !== 2; }
+  catch (e) { return true; }
+}
+
 function migrarJurisdicciones(cargado) {
   if (!cargado || cargado.geografia) return null;
   CFG_EBR.geografia = {
@@ -8778,6 +9033,7 @@ function migracionEBRPendiente() {
   migrarJurisdicciones(obj);
   migrarMatrices(obj);
   migrarAntiguedad(obj);
+  migrarModeloV2(obj);
 })();
 
 // ── PERFIL TRANSACCIONAL ──────────────────────────────────────
@@ -9034,6 +9290,7 @@ function cargarConfigUMA() {
         migrarJurisdicciones(ebr);
         migrarMatrices(ebr);
         migrarAntiguedad(ebr);
+        migrarModeloV2(ebr);
       } catch(e) { console.warn('EBR config parse error', e); }
     }
     if (cfg.perfil_config) {
@@ -10823,7 +11080,7 @@ function correoRechazado(cliente) {
 function evaluarAprobacionCliente(datos) {
   var motivos = [];
   var scrMatches = scrEvaluarClienteCompleto(datos) || [];
-  if (datos.riesgo === 'Alto') motivos.push('Riesgo alto' + (datos.puntaje_ebr ? ' ('+datos.puntaje_ebr+' pts)' : ''));
+  if (datos.riesgo === 'Alto') motivos.push('Riesgo alto' + (datos.riesgo_motivo ? ': ' + datos.riesgo_motivo : (datos.puntaje_ebr ? ' ('+datos.puntaje_ebr+' pts)' : '')));
   if (scrMatches.length) {
     var partes = scrMatches.map(function(c){ return c.parte; }).filter(function(v,i,s){ return s.indexOf(v)===i; });
     motivos.push('Coincidencia en screening (' + scrMatches.length + ') en: ' + partes.join(', '));
