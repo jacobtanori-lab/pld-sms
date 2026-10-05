@@ -6318,6 +6318,8 @@ var PTX_EFECTIVO   = [['NUNCA','Nunca'],['OCASIONAL','Ocasional'],['HABITUAL','H
 var PTX_ORIGEN     = [['ACTIVIDAD','Ingresos por actividad'],['AHORRO','Ahorro'],['VENTA_BIENES','Venta de bienes'],['HERENCIA','Herencia o donacion'],['PRESTAMO','Prestamo'],['OTRO','Otro']];
 var PTX_CV_PAGO    = [['CONTADO_PROPIOS','Contado con recursos propios'],['CONTADO_PARCIAL','Contado en parcialidades'],['CREDITO_BANCO','Credito bancario'],['CREDITO_OTRO','Credito de otra entidad u organismo de vivienda'],['MIXTO','Mixto']];
 var PTX_CV_NUMOPS  = [['1','Una operacion'],['2_5','Entre 2 y 5 operaciones'],['5_MAS','Mas de 5 operaciones']];
+var PTX_CONTRAPARTES = [['PROPIAS','Solo cuentas propias'],['TERCEROS','Cuentas de terceros']];
+var PTX_MONEDA     = [['MXN','MXN - Pesos'],['USD','USD - Dolares'],['OTRA','Otra divisa']];
 
 function ptxEtiqueta(cat, v) {
   for (var i = 0; i < cat.length; i++) if (cat[i][0] === v) return cat[i][1];
@@ -6360,6 +6362,7 @@ function htmlPerfilTx(d) {
     + '<option value="MXN"' + (d.renta_moneda !== 'USD' ? ' selected' : '') + '>MXN - Pesos</option>'
     + '<option value="USD"' + (d.renta_moneda === 'USD' ? ' selected' : '') + '>USD - Dolares</option>'
     + '</select></div>'
+    + fg('Contrapartes', null, false) + sel('ptx_arr_contrapartes', PTX_CONTRAPARTES, d.ptx_arr_contrapartes)
     + fg('Uso de efectivo', null, false) + sel('ptx_arr_efectivo', PTX_EFECTIVO, d.ptx_arr_efectivo)
     + fg('Origen de los recursos', null, false) + sel('ptx_arr_origen', PTX_ORIGEN, d.ptx_arr_origen, ' onchange="ptxOtro(this,\'ptx-arr-otro\')"')
     + otro('ptx_arr_origen_otro', d.ptx_arr_origen_otro, 'ptx-arr-otro', d.ptx_arr_origen === 'OTRO' ? '' : 'display:none')
@@ -6368,6 +6371,8 @@ function htmlPerfilTx(d) {
   var cv = '<div class="fgrid ptx-cv" style="' + (esArr ? 'display:none' : '') + '">'
     + fg('Tipo de pago', null, false) + sel('ptx_cv_pago', PTX_CV_PAGO, d.ptx_cv_pago)
     + fg('Numero de operaciones', null, false) + sel('ptx_cv_numops', PTX_CV_NUMOPS, d.ptx_cv_numops)
+    + fg('Moneda de pago', null, false) + sel('ptx_cv_moneda', PTX_MONEDA, d.ptx_cv_moneda)
+    + fg('Contrapartes', null, false) + sel('ptx_cv_contrapartes', PTX_CONTRAPARTES, d.ptx_cv_contrapartes)
     + fg('Monto que se pagara en efectivo (MXN)', null, false) + num('ptx_cv_efectivo_mxn', d.ptx_cv_efectivo_mxn, '0.00')
     + fg('Origen de los recursos', null, false) + sel('ptx_cv_origen', PTX_ORIGEN, d.ptx_cv_origen, ' onchange="ptxOtro(this,\'ptx-cv-otro\')"')
     + otro('ptx_cv_origen_otro', d.ptx_cv_origen_otro, 'ptx-cv-otro', d.ptx_cv_origen === 'OTRO' ? '' : 'display:none')
@@ -6397,6 +6402,7 @@ function renderPerfilTx(c) {
       + fcHtml('Operaciones esperadas en el periodo', ptxEtiqueta(PTX_ARR_NUMOPS, c.ptx_arr_numops))
       + fcHtml('Frecuencia esperada', ptxEtiqueta(PTX_FREC, c.ptx_arr_frec))
       + fcHtml('Monto esperado por operacion (renta)', c.renta_monto ? fmtMXN(c.renta_monto) + (c.renta_moneda === 'USD' ? ' USD' : ' MXN') : '-')
+      + fcHtml('Contrapartes', ptxEtiqueta(PTX_CONTRAPARTES, c.ptx_arr_contrapartes))
       + fcHtml('Uso de efectivo', ptxEtiqueta(PTX_EFECTIVO, c.ptx_arr_efectivo))
       + fcHtml('Origen de los recursos', ptxEtiqueta(PTX_ORIGEN, c.ptx_arr_origen) + (c.ptx_arr_origen === 'OTRO' && c.ptx_arr_origen_otro ? ': ' + capEsc(c.ptx_arr_origen_otro) : ''));
   } else {
@@ -6404,12 +6410,14 @@ function renderPerfilTx(c) {
       + fcHtml('Numero de operaciones', ptxEtiqueta(PTX_CV_NUMOPS, c.ptx_cv_numops))
       + fcHtml('Frecuencia', 'No aplica')
       + fcHtml('Monto esperado por operacion', 'No aplica')
+      + fcHtml('Moneda de pago', ptxEtiqueta(PTX_MONEDA, c.ptx_cv_moneda))
+      + fcHtml('Contrapartes', ptxEtiqueta(PTX_CONTRAPARTES, c.ptx_cv_contrapartes))
       + fcHtml('Monto a pagar en efectivo', c.ptx_cv_efectivo_mxn ? fmtMXN(c.ptx_cv_efectivo_mxn) : '-')
       + fcHtml('Origen de los recursos', ptxEtiqueta(PTX_ORIGEN, c.ptx_cv_origen) + (c.ptx_cv_origen === 'OTRO' && c.ptx_cv_origen_otro ? ': ' + capEsc(c.ptx_cv_origen_otro) : ''));
   }
   var vacio = esArr
-    ? !(c.ptx_arr_pago || c.ptx_arr_numops || c.ptx_arr_frec || c.renta_monto || c.ptx_arr_efectivo || c.ptx_arr_origen)
-    : !(c.ptx_cv_pago || c.ptx_cv_numops || c.ptx_cv_efectivo_mxn || c.ptx_cv_origen);
+    ? !(c.ptx_arr_pago || c.ptx_arr_numops || c.ptx_arr_frec || c.renta_monto || c.ptx_arr_efectivo || c.ptx_arr_origen || c.ptx_arr_contrapartes)
+    : !(c.ptx_cv_pago || c.ptx_cv_numops || c.ptx_cv_efectivo_mxn || c.ptx_cv_origen || c.ptx_cv_moneda || c.ptx_cv_contrapartes);
   var aviso = vacio
     ? '<div style="margin:0 0 10px;padding:8px 10px;border-left:3px solid var(--am);font-size:12px;color:var(--tx2)">Este expediente no tiene perfil transaccional capturado. Se llena al editar el expediente, en la seccion del final.</div>'
     : '';
