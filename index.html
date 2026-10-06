@@ -5495,6 +5495,7 @@ function dashRender(D, esTodas, entId) {
   // ── Newsletter (al final del panel) ──
   html += dashNewsletterCard(D.blog || [], !!App.listas['PLD_Blog']);
 
+  if (ROLES_REVAL.indexOf(App.rol) >= 0) html = bannerRevaluacion(cli) + html;
   el.innerHTML = html;
 }
 
@@ -5938,6 +5939,414 @@ function blogEliminar(id){
 }
 
 // ================================================================
+//  REVALORACION DE RIESGO
+// ================================================================
+// Calendario acordado con el usuario el 5 de octubre de 2026: todos los
+// clientes se revaloran en enero y julio; los de riesgo Alto, ademas, en abril
+// y octubre. Cada ciclo usa las operaciones de los seis meses anteriores al
+// mes en que se realiza.
+//
+// La dimension cliente se recalcula con los datos vigentes del expediente. La
+// transaccional deja de leer solo lo declarado y lee lo observado en las
+// operaciones de la ventana: efectivo, volumen, frecuencia y moneda. El origen
+// de los recursos y las contrapartes siguen como se declararon, porque las
+// operaciones no los registran. Un cliente sin operaciones en la ventana
+// conserva su perfil declarado. Donde lo observado no coincide con lo
+// declarado se anota una desviacion, y al cerrar la revaloracion del cliente
+// se levanta una alerta.
+//
+// Cada revaloracion queda como registro en su propia lista de SharePoint.
+// Subir de nivel la aprueba quien revalora (solo administrador o supervisor),
+// bajar exige justificacion escrita, y nada baja solo: todo cambio pasa por
+// una persona. Los clientes sin cambios y sin desviaciones se confirman en
+// bloque.
+var LISTA_REVAL   = 'PLD_RevaluacionRiesgo';
+var ESTATUS_REVAL = ['Activo', 'Inactivo'];
+var ROLES_REVAL   = ['admin', 'supervisor'];
+var MESES_REVAL   = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+
+// Ciclo que se realiza en un mes de ciclo (1, 4, 7 o 10) de un anio.
+function cicloReval(anio, mes) {
+  var hy = anio, hm = mes - 1;
+  if (hm < 1) { hm += 12; hy--; }
+  var dy = hy, dm = hm - 5;
+  if (dm < 1) { dm += 12; dy--; }
+  var fin = new Date(hy, hm, 0).getDate();
+  return {
+    clave: anio + '-' + pad(mes), anio: anio, mes: mes,
+    alcance: (mes === 1 || mes === 7) ? 'TODOS' : 'ALTO',
+    desde: dy + '-' + pad(dm) + '-01', hasta: hy + '-' + pad(hm) + '-' + pad(fin),
+    nombre: MESES_REVAL[mes - 1] + ' de ' + anio
+  };
+}
+// Los ultimos n ciclos, del mas reciente al mas viejo, sin pasar del mes actual.
+function ciclosRecientes(n) {
+  var h = new Date(), y = h.getFullYear(), m = h.getMonth() + 1;
+  var mc = m >= 10 ? 10 : m >= 7 ? 7 : m >= 4 ? 4 : 1, out = [];
+  while (out.length < n) { out.push(cicloReval(y, mc)); mc -= 3; if (mc < 1) { mc = 10; y--; } }
+  return out;
+}
+function siguienteCicloReval() {
+  var h = new Date(), y = h.getFullYear(), m = h.getMonth() + 1;
+  var mc = m < 4 ? 4 : m < 7 ? 7 : m < 10 ? 10 : 13;
+  if (mc === 13) { mc = 1; y++; }
+  return cicloReval(y, mc);
+}
+function fechaLargaReval(iso) {
+  var p = String(iso || '').split('-');
+  return p.length === 3 ? (+p[2]) + ' de ' + MESES_REVAL[+p[1] - 1] + ' de ' + p[0] : iso;
+}
+function alcanceTextoReval(cic) {
+  return cic.alcance === 'TODOS' ? 'todos los clientes' : 'clientes de riesgo Alto';
+}
+
+function clientesDelCiclo(cic, clientes) {
+  return (clientes || []).filter(function(c){
+    if (ESTATUS_REVAL.indexOf(c.estatus || 'Activo') < 0) return false;
+    return cic.alcance === 'TODOS' || c.riesgo === 'Alto';
+  });
+}
+
+function opsDelClienteReval(c, ops, desde, hasta) {
+  var d = desde.replace(/-/g, ''), h = hasta.replace(/-/g, '');
+  return (ops || []).filter(function(o){
+    var mismo = (o.id_cliente_ref && String(o.id_cliente_ref) === String(c.id))
+      || (!o.id_cliente_ref && c.num_cliente && String(o.num_cliente) === String(c.num_cliente));
+    var f = fechaXML(o.fecha_pago);
+    return mismo && f && f >= d && f <= h;
+  });
+}
+
+// Lo que realmente paso en la ventana.
+function observadoReval(ops) {
+  var o = { n: ops.length, meses: {}, efectivoN: 0, efectivoMXN: 0, totalMXN: 0, monedas: {} };
+  ops.forEach(function(op){
+    var m = (op.monto_mxn !== undefined && op.monto_mxn !== null && op.monto_mxn !== '')
+      ? (parseFloat(op.monto_mxn) || 0)
+      : montoAMXN(op.total_operacion || op.monto || 0, op.moneda, op.fecha_pago).mxn;
+    o.totalMXN += m;
+    var f = fechaXML(op.fecha_pago);
+    if (f) o.meses[f.substring(0, 6)] = true;
+    if (String(op.instrumento_monetario) === '1') { o.efectivoN++; o.efectivoMXN += m; }   // 1 = Efectivo
+    var mon = String(op.moneda || '1');
+    o.monedas[mon === '1' ? 'MXN' : mon === '2' ? 'USD' : 'OTRA'] = true;
+  });
+  o.numMeses = Object.keys(o.meses).length;
+  o.moneda = o.monedas.OTRA ? 'OTRA' : o.monedas.USD ? 'USD' : 'MXN';
+  return o;
+}
+
+// Copia del expediente con lo observado en lugar de lo declarado, y la lista
+// de desviaciones entre una cosa y otra.
+function aplicarObservadoReval(c, ob) {
+  var d = JSON.parse(JSON.stringify(c)), desv = [];
+  if (!ob.n) return { datos: d, desv: desv };
+  var mas = function(orden, a, b){ return orden.indexOf(a) > orden.indexOf(b); };
+  var pesos = function(v){ return '$' + Math.round(v).toLocaleString('es-MX'); };
+  var pct = parseFloat(CFG_PERFIL.pct_desviacion) || 0;
+
+  if (c.es_arrendamiento === 'SI') {
+    var ORD_EF = ['NUNCA', 'OCASIONAL', 'HABITUAL'];
+    var ef = !ob.efectivoN ? 'NUNCA' : (ob.efectivoN / ob.n >= 0.5 ? 'HABITUAL' : 'OCASIONAL');
+    if (ef !== 'NUNCA' && (!c.ptx_arr_efectivo || mas(ORD_EF, ef, c.ptx_arr_efectivo)))
+      desv.push('Efectivo en ' + ob.efectivoN + ' de ' + ob.n + ' operaciones; declaro uso de efectivo '
+        + (c.ptx_arr_efectivo ? ptxEtiqueta(PTX_EFECTIVO, c.ptx_arr_efectivo).toLowerCase() : 'sin dato'));
+    d.ptx_arr_efectivo = ef;
+
+    var vol = ob.n > ob.numMeses ? 'VARIAS' : 'UNA';
+    if (vol === 'VARIAS' && c.ptx_arr_numops !== 'VARIAS')
+      desv.push(ob.n + ' operaciones en ' + ob.numMeses + ' meses: mas de una por periodo; declaro una sola exhibicion');
+    d.ptx_arr_numops = vol;
+
+    var frec = ob.numMeses >= 4 ? 'MENSUAL' : ob.numMeses >= 2 ? 'TRIMESTRAL' : (c.ptx_arr_frec === 'ANUAL' ? 'ANUAL' : 'SEMESTRAL');
+    if (c.ptx_arr_frec && ((c.ptx_arr_frec === 'MENSUAL') !== (frec === 'MENSUAL')))
+      desv.push('Pagos en ' + ob.numMeses + ' de 6 meses; declaro frecuencia ' + ptxEtiqueta(PTX_FREC, c.ptx_arr_frec).toLowerCase());
+    d.ptx_arr_frec = frec;
+
+    var monDecl = c.renta_moneda === 'USD' ? 'USD' : 'MXN';
+    if (ob.moneda !== monDecl) desv.push('Pagos en ' + (ob.moneda === 'OTRA' ? 'otra divisa' : ob.moneda) + '; la renta se declaro en ' + monDecl);
+    d.renta_moneda = ob.moneda === 'MXN' ? 'MXN' : 'USD';
+  } else {
+    var decl = parseFloat(c.ptx_cv_efectivo_mxn) || 0;
+    if (ob.efectivoMXN > 0 && ob.efectivoMXN > decl * (1 + pct / 100))
+      desv.push('Efectivo por ' + pesos(ob.efectivoMXN) + '; declaro ' + pesos(decl));
+    d.ptx_cv_efectivo_mxn = ob.efectivoMXN;
+
+    // El volumen declarado es el de toda la compra, que puede pasar de la
+    // ventana: se toma el mayor de los dos para no bajar el riesgo por eso.
+    var ORD_VOL = ['1', '2_5', '5_MAS'];
+    var volcv = ob.n > 5 ? '5_MAS' : ob.n >= 2 ? '2_5' : '1';
+    if (c.ptx_cv_numops && mas(ORD_VOL, volcv, c.ptx_cv_numops))
+      desv.push(ob.n + ' operaciones; declaro ' + ptxEtiqueta(PTX_CV_NUMOPS, c.ptx_cv_numops).toLowerCase());
+    d.ptx_cv_numops = (c.ptx_cv_numops && mas(ORD_VOL, c.ptx_cv_numops, volcv)) ? c.ptx_cv_numops : volcv;
+
+    if (c.ptx_cv_moneda && ob.moneda !== c.ptx_cv_moneda)
+      desv.push('Pagos en ' + (ob.moneda === 'OTRA' ? 'otra divisa' : ob.moneda) + '; declaro ' + ptxEtiqueta(PTX_MONEDA, c.ptx_cv_moneda));
+    d.ptx_cv_moneda = ob.moneda;
+  }
+  return { datos: d, desv: desv };
+}
+
+function evaluarReval(c, ops) {
+  var ob = observadoReval(ops);
+  var ap = aplicarObservadoReval(c, ob);
+  var r = calcEBR(ap.datos);
+  var ant = c.riesgo || '';
+  var ia = NIVELES_EBR.indexOf(ant), in_ = NIVELES_EBR.indexOf(r.nivel);
+  var cambio = ia < 0 ? 'nuevo' : in_ > ia ? 'sube' : in_ < ia ? 'baja' : 'igual';
+  return { c: c, ob: ob, desv: ap.desv, res: r, anterior: ant, cambio: cambio, fuente: ob.n ? 'observado' : 'declarado', registro: null };
+}
+
+// Aviso del panel principal: el ciclo en curso tiene clientes sin revalorar.
+function bannerRevaluacion(clientes) {
+  var cic = ciclosRecientes(1)[0];
+  var pend = clientesDelCiclo(cic, clientes).filter(function(c){ return c.ciclo_ult_revaluacion !== cic.clave; }).length;
+  if (!pend) return '';
+  return '<div class="alerta-banner" style="background:#fff4e5;border:1px solid #c98a12;color:#7a5200;margin-bottom:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+    + '<div style="flex:1;min-width:220px"><strong>Revaloracion de ' + cic.nombre + ' pendiente.</strong> '
+    + pend + (pend === 1 ? ' cliente' : ' clientes') + ' por revalorar (' + alcanceTextoReval(cic) + ').</div>'
+    + '<button class="btn btn-sm" onclick="pgRevaluacion(\'' + cic.clave + '\')">Ir a la revaloracion</button></div>';
+}
+
+function pgRevaluacion(clave) {
+  if (ROLES_REVAL.indexOf(App.rol) < 0) { sinAcceso(); return; }
+  document.querySelectorAll('.nav-item').forEach(function(e){ e.classList.remove('on'); });
+  var navCli = document.getElementById('nav-clientes'); if (navCli) navCli.classList.add('on');
+  var ciclos = ciclosRecientes(4);
+  var cic = ciclos.filter(function(x){ return x.clave === clave; })[0] || ciclos[0];
+  var sig = siguienteCicloReval();
+  setSB('<div class="sb-sec">Revaloracion de riesgo</div>'
+    + ciclos.map(function(x){
+        return '<div class="sb-item' + (x.clave === cic.clave ? ' on' : '') + '" onclick="pgRevaluacion(\'' + x.clave + '\')">'
+          + x.nombre.charAt(0).toUpperCase() + x.nombre.slice(1) + (x.alcance === 'ALTO' ? ' · Alto' : ' · Todos') + '</div>';
+      }).join('')
+    + '<div class="sb-sec">Clientes</div><div class="sb-item" onclick="irA(\'clientes\')">Volver a clientes</div>');
+  setMain('<div class="phdr"><div><div class="ptit">Revaloracion de riesgo, ' + cic.nombre + '</div>'
+    + '<div class="psub">' + alcanceTextoReval(cic).charAt(0).toUpperCase() + alcanceTextoReval(cic).slice(1)
+    + ' · operaciones del ' + fechaLargaReval(cic.desde) + ' al ' + fechaLargaReval(cic.hasta)
+    + ' · siguiente ciclo: ' + sig.nombre + ', ' + alcanceTextoReval(sig) + '</div></div></div>'
+    + '<div id="reval-ct"><div class="empty"><div class="spin" style="margin:0 auto 10px"></div>Preparando la revaloracion...</div></div>');
+
+  var entId = App.entidadActual ? App.entidadActual.id : null;
+  var esTodas = !entId || entId === 'TODAS';
+  var D = {}, pend = 3;
+  var listo = function() {
+    if (--pend > 0) return;
+    var evals = clientesDelCiclo(cic, D.cli).map(function(c){
+      var ev = evaluarReval(c, opsDelClienteReval(c, D.ops, cic.desde, cic.hasta));
+      ev.registro = D.reg.filter(function(r){ return String(r.id_cliente_ref) === String(c.id); }).pop() || null;
+      return ev;
+    });
+    // Pendientes primero; entre ellos, los que suben o tienen desviaciones.
+    var peso = function(e){ return (e.registro ? 100 : 0) + (e.cambio === 'sube' || e.cambio === 'nuevo' ? 0 : e.cambio === 'baja' ? 1 : e.desv.length ? 2 : 3); };
+    evals.sort(function(a, b){ return peso(a) - peso(b); });
+    App._reval = { ciclo: cic, evals: evals };
+    renderReval();
+  };
+  spGet('PLD_Clientes', function(l){
+    l = l || [];
+    D.cli = esTodas ? filtrarPermitidas(l) : l.filter(function(c){ return c.entidad_id === entId; });
+    App.clientes = D.cli;
+    listo();
+  });
+  spGet('PLD_Ops_Liq', function(l){ D.ops = l || []; listo(); });
+  spGet(LISTA_REVAL, function(l){ D.reg = (l || []).filter(function(r){ return r.ciclo === cic.clave; }); listo(); });
+}
+
+function renderReval() {
+  var R = App._reval, el = document.getElementById('reval-ct');
+  if (!el || !R) return;
+  var hayLista = !!App.listas[LISTA_REVAL];
+  var pend = R.evals.filter(function(e){ return !e.registro; });
+  var cuenta = function(fn){ return pend.filter(fn).length; };
+  var enBloque = cuenta(function(e){ return e.cambio === 'igual' && !e.desv.length; });
+
+  var aviso = hayLista ? '' :
+    '<div class="alerta-banner" style="background:#fff4e5;border:1px solid #c98a12;color:#7a5200;margin-bottom:12px">'
+    + '<strong>Configuracion pendiente.</strong> Falta crear en SharePoint la lista <strong>' + LISTA_REVAL + '</strong> '
+    + 'con una columna <em>Datos</em> de texto multilinea. Mientras no exista se puede revisar el resultado, pero no guardarlo.</div>';
+
+  var dato = function(n, etq, color) {
+    return '<div style="min-width:110px"><div style="font-size:22px;font-weight:700;color:' + (color || 'var(--tx)') + '">' + n + '</div>'
+      + '<div style="font-size:11px;color:var(--tx3);text-transform:uppercase;letter-spacing:.04em">' + etq + '</div></div>';
+  };
+  var resumen = '<div class="card"><div class="card-b" style="display:flex;gap:20px;flex-wrap:wrap;align-items:center">'
+    + dato(R.evals.length, 'En el ciclo')
+    + dato(pend.length, 'Por revalorar', pend.length ? 'var(--am)' : 'var(--vd)')
+    + dato(cuenta(function(e){ return e.cambio === 'sube' || e.cambio === 'nuevo'; }), 'Suben', 'var(--rj)')
+    + dato(cuenta(function(e){ return e.cambio === 'baja'; }), 'Bajan')
+    + dato(cuenta(function(e){ return e.desv.length > 0; }), 'Con desviaciones', 'var(--am)')
+    + dato(R.evals.filter(function(e){ return !e.ob.n; }).length, 'Sin operaciones')
+    + '<div style="flex:1"></div>'
+    + (enBloque && hayLista
+        ? '<button class="btn btn-p" onclick="confirmarRevalEnBloque()">Confirmar ' + enBloque + ' sin cambios</button>'
+        : '')
+    + '</div></div>';
+
+  var filas = R.evals.map(function(e, i){
+    var r = e.res;
+    var estado = e.registro
+      ? '<span class="pill p-vd">' + capEsc(e.registro.estado) + '</span>'
+      : '<span class="pill p-gr">Pendiente</span>';
+    var cambio = e.cambio === 'igual' ? '' : '<div style="font-size:11px;color:var(--tx3)">' + (e.cambio === 'nuevo' ? 'sin nivel previo' : e.cambio) + '</div>';
+    return '<tr>'
+      + '<td>' + capEsc(nombreCliente(e.c)) + '<div style="font-size:11px;color:var(--tx3)">#' + nStr(e.c.num_cliente) + ' · ' + labelTipo(e.c.tipo) + '</div></td>'
+      + '<td>' + (e.anterior ? '<span class="pill ' + pR(e.anterior) + '">' + e.anterior + '</span>' : '-') + '</td>'
+      + '<td><span class="pill ' + pR(r.nivel) + '">' + r.nivel + '</span>' + cambio + '</td>'
+      + '<td class="mono">' + r.puntaje_cliente + '</td>'
+      + '<td class="mono">' + r.puntaje_tx + (e.fuente === 'declarado' ? ' <span style="font-size:11px;color:var(--tx3)" title="Sin operaciones en la ventana: se usa el perfil declarado">declarado</span>' : '') + '</td>'
+      + '<td class="mono">' + e.ob.n + '</td>'
+      + '<td>' + (e.desv.length ? '<span class="pill p-am">' + e.desv.length + '</span>' : '-') + '</td>'
+      + '<td>' + estado + '</td>'
+      + '<td><button class="btn btn-sm" onclick="verReval(' + i + ')">' + (e.registro ? 'Ver' : 'Revisar') + '</button></td>'
+      + '</tr>';
+  }).join('');
+  var tabla = R.evals.length
+    ? '<div class="card"><div style="overflow-x:auto"><table><thead><tr>'
+      + '<th>Cliente</th><th>Nivel anterior</th><th>Nivel nuevo</th><th>Cliente pts</th><th>Operacion pts</th><th>Operaciones</th><th>Desviaciones</th><th>Estado</th><th></th>'
+      + '</tr></thead><tbody>' + filas + '</tbody></table></div></div>'
+    : '<div class="card"><div class="empty">No hay clientes en este ciclo (' + alcanceTextoReval(R.ciclo) + ', estatus activo o inactivo).</div></div>';
+
+  el.innerHTML = aviso + resumen + '<div id="reval-det"></div>' + tabla;
+  etiquetarTablasMovil(el);
+}
+
+function verReval(i) {
+  var R = App._reval, e = R && R.evals[i], det = document.getElementById('reval-det');
+  if (!e || !det) return;
+  var r = e.res, ob = e.ob, reg = e.registro;
+  var pesos = function(v){ return '$' + Math.round(v).toLocaleString('es-MX'); };
+  var obs = ob.n
+    ? ob.n + ' operaciones en ' + ob.numMeses + (ob.numMeses === 1 ? ' mes' : ' meses') + ' por ' + pesos(ob.totalMXN)
+      + '. Efectivo en ' + ob.efectivoN + (ob.efectivoN ? ', por ' + pesos(ob.efectivoMXN) : '')
+      + '. Moneda: ' + Object.keys(ob.monedas).join(', ') + '.'
+    : 'Sin operaciones en la ventana. La dimension transaccional usa el perfil declarado.';
+  var accion = '';
+  if (reg) {
+    accion = '<div style="font-size:13px;color:var(--tx2)">' + capEsc(reg.estado) + ' por ' + capEsc(reg.evaluado_por || '') + ' el ' + capEsc(reg.fecha_evaluacion || '')
+      + (reg.justificacion ? '. Justificacion: ' + capEsc(reg.justificacion) : '') + '</div>';
+  } else if (!App.listas[LISTA_REVAL]) {
+    accion = '<div style="font-size:13px;color:var(--tx3)">Para guardar falta crear la lista ' + LISTA_REVAL + '.</div>';
+  } else {
+    var etq = e.cambio === 'igual' ? 'Confirmar nivel ' + r.nivel
+            : e.cambio === 'baja' ? 'Aprobar baja a ' + r.nivel
+            : 'Aprobar nivel ' + r.nivel;
+    accion = '<div class="fg full" style="margin-bottom:8px"><label class="lbl">' + (e.cambio === 'baja' ? 'Justificacion (obligatoria para bajar de nivel)' : 'Comentario (opcional)') + '</label>'
+      + '<textarea class="txa" id="reval-just" rows="2" style="width:100%"></textarea></div>'
+      + '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-p" onclick="decidirReval(' + i + ')">' + etq + '</button>'
+      + '<button class="btn" onclick="document.getElementById(\'reval-det\').innerHTML=\'\'">Cerrar</button></div>'
+      + (e.desv.length ? '<div style="font-size:11px;color:var(--tx3);margin-top:6px">Al guardar se levanta una alerta con las desviaciones.</div>' : '');
+  }
+  det.innerHTML = '<div class="card" style="border-left:4px solid ' + (r.nivel === 'Alto' ? 'var(--rj)' : r.nivel === 'Medio' ? 'var(--am)' : 'var(--vd)') + '">'
+    + '<div class="card-h"><span class="card-t">' + capEsc(nombreCliente(e.c)) + '</span>'
+    + '<button class="btn btn-sm" onclick="abrirFicha(\'' + e.c.id + '\')">Ver expediente</button></div>'
+    + '<div class="card-b">'
+    + fgHtml(
+        fcHtml('Nivel', (e.anterior ? 'de ' + e.anterior + ' a ' : '') + r.nivel)
+      + fcHtml('Motivo', capEsc(r.motivo))
+      + fcHtml('Dimension cliente', r.puntaje_cliente + ' puntos, ' + r.nivel_cliente)
+      + fcHtml('Dimension transaccional', r.puntaje_tx + ' puntos, ' + r.nivel_tx + (e.fuente === 'declarado' ? ', con el perfil declarado' : ', con lo observado'))
+      + fcHtml('Reglas', r.reglas.length ? capEsc(r.reglas.map(function(x){ return x.motivo + ': ' + x.nivel; }).join('; ')) : 'Ninguna')
+      + fcHtml('Observado', capEsc(obs)))
+    + (e.desv.length
+        ? '<div style="margin:10px 0"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Desviaciones del perfil declarado</div>'
+          + '<ul style="margin:0;padding-left:18px;font-size:13px;color:var(--tx2);line-height:1.6">' + e.desv.map(function(x){ return '<li>' + capEsc(x) + '</li>'; }).join('') + '</ul></div>'
+        : '')
+    + '<div style="margin-top:10px">' + accion + '</div>'
+    + '</div></div>';
+  det.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function decidirReval(i) {
+  var e = App._reval && App._reval.evals[i];
+  if (!e || e.registro) return;
+  var just = ((document.getElementById('reval-just') || {}).value || '').trim();
+  if (e.cambio === 'baja' && just.length < 10) { toast('Para bajar de nivel escribe una justificacion', 'w'); return; }
+  pensador('Guardando la revaloracion...');
+  guardarReval(e, just, function(ok){
+    pensadorOff();
+    if (!ok) { toast('No se pudo guardar la revaloracion', 'e'); return; }
+    toast('Revaloracion guardada: ' + nombreCliente(e.c) + ', ' + e.res.nivel, 's');
+    renderReval();
+  });
+}
+
+function confirmarRevalEnBloque() {
+  var R = App._reval; if (!R) return;
+  var lista = R.evals.filter(function(e){ return !e.registro && e.cambio === 'igual' && !e.desv.length; });
+  if (!lista.length) return;
+  if (!confirm('Se confirmara el nivel actual de ' + lista.length + ' clientes que no cambian de nivel ni tienen desviaciones.\n\n¿Continuar?')) return;
+  var i = 0, ok = 0;
+  // De uno en uno: en paralelo SharePoint responde 429.
+  (function sig(){
+    if (i >= lista.length) { pensadorOff(); toast(ok + ' revaloraciones confirmadas', 's'); renderReval(); return; }
+    pensador('Confirmando ' + (i + 1) + ' de ' + lista.length + '...');
+    guardarReval(lista[i++], '', function(r){ if (r) ok++; sig(); });
+  })();
+}
+
+function guardarReval(e, texto, cb) {
+  if (!App.listas[LISTA_REVAL]) { toast('Falta crear la lista ' + LISTA_REVAL + ' en SharePoint', 'e'); cb(false); return; }
+  var c = e.c, cic = App._reval.ciclo, r = e.res, ob = e.ob;
+  var r2 = function(v){ return Math.round(v * 100) / 100; };
+  var reg = {
+    Title: 'REV-' + cic.clave + '-' + (c.num_cliente || c.id),
+    ciclo: cic.clave, ciclo_nombre: cic.nombre, alcance: cic.alcance,
+    ventana_desde: cic.desde, ventana_hasta: cic.hasta,
+    id_cliente_ref: c.id, num_cliente: c.num_cliente || '', nombre_cliente: nombreCliente(c), tipo: c.tipo,
+    entidad_id: c.entidad_id || '', entidad_nombre: c.entidad_nombre || '',
+    nivel_anterior: e.anterior, nivel_nuevo: r.nivel, cambio: e.cambio,
+    puntaje_cliente: r.puntaje_cliente, nivel_cliente: r.nivel_cliente,
+    puntaje_tx: r.puntaje_tx, nivel_tx: r.nivel_tx, fuente_tx: e.fuente,
+    reglas: r.reglas.map(function(x){ return x.motivo + ': ' + x.nivel; }), motivo: r.motivo,
+    operaciones: ob.n, meses_con_operaciones: ob.numMeses || 0,
+    efectivo_operaciones: ob.efectivoN, efectivo_mxn: r2(ob.efectivoMXN), total_mxn: r2(ob.totalMXN),
+    moneda_observada: ob.n ? ob.moneda : '',
+    desviaciones: e.desv,
+    estado: e.cambio === 'igual' ? 'Confirmada' : 'Aprobada',
+    justificacion: texto || '',
+    evaluado_por: App.cuenta ? App.cuenta.username : '', fecha_evaluacion: hoy(), modelo: 2
+  };
+  spCreate(LISTA_REVAL, reg, function(item){
+    if (!item) { cb(false); return; }
+    var c2 = JSON.parse(JSON.stringify(c));
+    c2.riesgo = r.nivel;
+    c2.puntaje_ebr = r.puntaje;
+    c2.puntaje_ebr_cliente = r.puntaje_cliente;
+    c2.puntaje_ebr_tx = r.puntaje_tx;
+    c2.riesgo_motivo = r.motivo;
+    c2.riesgo_modelo = 2;
+    c2.ciclo_ult_revaluacion = cic.clave;
+    c2.fecha_ult_revaluacion = hoy();
+    spUpdate('PLD_Clientes', c.id, c2, function(res){
+      if (!res || res.error) { cb(false); return; }
+      Object.keys(c2).forEach(function(k){ c[k] = c2[k]; });
+      e.registro = reg;
+      if (e.desv.length) alertaDesviacionReval(e, reg);
+      cb(true);
+    });
+  });
+}
+
+function alertaDesviacionReval(e, reg) {
+  var c = e.c;
+  spCreate('PLD_Alertas', {
+    Title: 'ALT-REV-' + Date.now(),
+    nombre_cliente: nombreCliente(c), num_cliente: c.num_cliente || '', id_cliente_ref: c.id,
+    categoria: 'Perfil transaccional',
+    tipo: 'Revaloracion: desviacion del perfil',
+    nivel: reg.nivel_nuevo === 'Alto' ? 'Alto' : 'Medio',
+    descripcion: 'Revaloracion de ' + reg.ciclo_nombre + ', con operaciones del ' + fechaLargaReval(reg.ventana_desde)
+      + ' al ' + fechaLargaReval(reg.ventana_hasta) + '. Lo observado no coincide con el perfil declarado:\n'
+      + e.desv.map(function(x){ return '• ' + x; }).join('\n'),
+    estatus: 'Abierta', estatus_atencion: 'Pendiente',
+    asesor_id: c.asesor_id || '', asesor_nombre: c.asesor_nombre || '',
+    registrado_por: App.cuenta ? App.cuenta.username : '', fecha_registro: hoy(),
+    entidad_id: c.entidad_id || '', entidad_nombre: c.entidad_nombre || ''
+  }, null);
+}
+
+// ================================================================
 //  CLIENTES - LISTA
 // ================================================================
 function pgClientes() {
@@ -5956,7 +6365,10 @@ function pgClientes() {
     +'<div class="sb-sec">Filtrar riesgo</div>'
     +'<div class="sb-item" onclick="tabRiesgo(\'Alto\')">Alto</div>'
     +'<div class="sb-item" onclick="tabRiesgo(\'Medio\')">Medio</div>'
-    +'<div class="sb-item" onclick="tabRiesgo(\'Bajo\')">Bajo</div>');
+    +'<div class="sb-item" onclick="tabRiesgo(\'Bajo\')">Bajo</div>'
+    +(ROLES_REVAL.indexOf(App.rol) >= 0
+        ? '<div class="sb-sec">Riesgo</div><div class="sb-item" onclick="pgRevaluacion()">Revaloracion de riesgo</div>'
+        : ''));
   setMain('<div class="phdr">'
     +'<div><div class="ptit">Clientes - Expedientes KYC/KYB</div><div class="psub">LFPIORPI - Debida diligencia</div></div>'
     +'<button class="btn btn-p" onclick="abrirNuevoCliente()">+ Nuevo cliente</button>'
@@ -7323,6 +7735,7 @@ function renderFicha(c) {
     +'</div>'
     +'<div class="psub">'+labelTipo(c.tipo)+' - '+(c.entidad_nombre||c.entidad_id||'')
     +' - Alta: '+String(c.fecha_alta||'-').substring(0,10)+(c.fecha_baja?' - Baja: '+String(c.fecha_baja).substring(0,10):'')
+    +(c.fecha_ult_revaluacion?' - Revalorado: '+String(c.fecha_ult_revaluacion).substring(0,10):'')
     +(c.asesor_nombre?' · <span style="color:var(--az)">Asesor: '+c.asesor_nombre+'</span>':'')+'</div>'
     +'</div>'
     +'<div style="display:flex;gap:8px">'
