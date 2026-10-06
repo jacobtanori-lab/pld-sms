@@ -4240,6 +4240,14 @@ function ebrActCat() {
 // Cual de las dos matrices se esta editando en la pantalla de configuracion.
 var EBR_MATRIZ = 'PF';
 
+// Lo que se muestra en la pestana de persona moral simplificada, que no tiene
+// factores que editar.
+function ebrSimpHtml() {
+  return '<div style="padding:12px 14px;border:1px dashed var(--brd2);border-radius:var(--r);font-size:13px;color:var(--tx2);line-height:1.6;margin-bottom:12px">'
+    + 'La persona moral simplificada es una entidad regulada y siempre mexicana. No tiene factores de cliente ni le aplican las reglas determinantes: '
+    + 'es riesgo Bajo salvo que su perfil transaccional indique otra cosa. Su nivel lo decide la dimension transaccional, que se edita en su tarjeta.</div>';
+}
+
 // Tarjeta de reglas determinantes. Son fijas, acordadas con el usuario; se
 // muestran para que quien configure sepa que pasan por encima del puntaje.
 function ebrReglasHtml() {
@@ -4255,7 +4263,8 @@ function ebrReglasHtml() {
     + fila('Familiar de PEP o relacionado con PEP', 'Medio como minimo', 'p-am')
     + fila('Pais con contramedidas del GAFI o sancion del Consejo de Seguridad en el domicilio, la nacionalidad o el nacimiento. En persona moral, el pais de constitucion', 'Alto', 'p-rj')
     + '<div style="font-size:12px;color:var(--tx3);margin-top:8px;line-height:1.6">El nivel final es el mayor entre el de la dimension cliente, '
-    + 'el de la dimension transaccional y el que fijen estas reglas. Los umbrales de arriba se aplican a cada dimension por separado.</div>'
+    + 'el de la dimension transaccional y el que fijen estas reglas. Los umbrales de arriba se aplican a cada dimension por separado. '
+    + 'Estas reglas no aplican a la persona moral simplificada.</div>'
     + '</div></div>';
 }
 
@@ -4322,9 +4331,11 @@ function pgConfigEBR() {
   var e = CFG_EBR;
   var M = (CFG_EBR.matriz || {})[EBR_MATRIZ] || {};
   var esPF = (EBR_MATRIZ === 'PF');
-  var tipoLabels = esPF
-    ? { 'PF_MEX':'Persona Física Nacional','PF_EXT':'Persona Física Extranjera' }
-    : { 'PM_SIMP':'Persona Moral Simplificada','PM_MEX':'Persona Moral Nacional','FIDEICOMISO':'Fideicomiso' };
+  var esSIMP = (EBR_MATRIZ === 'SIMP'), esFID = (EBR_MATRIZ === 'FID');
+  var tipoLabels = esPF ? { 'PF_MEX':'Persona Física Nacional','PF_EXT':'Persona Física Extranjera' }
+    : esSIMP ? { 'PM_SIMP':'Persona Moral Simplificada' }
+    : esFID  ? { 'FIDEICOMISO':'Fideicomiso' }
+    : { 'PM_MEX':'Persona Moral Nacional' };
   var pepLabels  = ['NO APLICA','Inactivo','Vencido','Activo','Familiar','Relacionado a PEP'];
 
   function fldNum(id, val, min, max) {
@@ -4367,8 +4378,8 @@ function pgConfigEBR() {
 
   var avisoV2 = migracionV2Pendiente()
     ? '<div class="card" style="border-left:4px solid var(--am)"><div class="card-b">'
-      + '<div style="font-weight:600;margin-bottom:6px">Configuracion actualizada al modelo 2</div>'
-      + '<div style="font-size:13px;color:var(--tx2);line-height:1.6">Se agregaron las reglas determinantes y la dimension transaccional, '
+      + '<div style="font-weight:600;margin-bottom:6px">Configuracion actualizada al modelo vigente</div>'
+      + '<div style="font-size:13px;color:var(--tx2);line-height:1.6">Se agregaron las matrices propias de persona moral simplificada y de fideicomiso. Si venia de antes del modelo 2, tambien las reglas determinantes y la dimension transaccional, '
       + 'y los pesos de las matrices pasaron a los del modelo 2. Se conservaron los umbrales de edad y antiguedad, los puntos por estatus PEP, '
       + 'los estados y las actividades. El cambio esta solo en pantalla: pulsa <strong>Guardar cambios</strong> para conservarlo.</div>'
       + '</div></div>'
@@ -4395,21 +4406,21 @@ function pgConfigEBR() {
     + ebrReglasHtml()
     // — Puntajes por indicador, por matriz —
     +'<div class="card"><div class="card-h"><span class="card-t">Dimension cliente</span>'
-    +'<span style="font-size:12px;color:var(--tx3)">Tope de esta matriz: '+topeMatriz(EBR_MATRIZ)+' de '+ESCALA_EBR+' puntos</span></div>'
+    +'<span style="font-size:12px;color:var(--tx3)">'+(esSIMP ? 'Sin factores de cliente' : 'Tope de esta matriz: '+topeMatriz(EBR_MATRIZ)+' de '+ESCALA_EBR+' puntos')+'</span></div>'
     +'<div class="card-b">'
     + pestanasMatriz()
-    +(esPF ? '' : '<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Tipo de cliente</div>'
+    +(EBR_MATRIZ !== 'PM' ? '' : '<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Tipo de cliente</div>'
     +Object.keys(tipoLabels).map(function(k){ return rowIndicador(tipoLabels[k],'tipo_'+k,(M.tipo_cliente||{})[k]||0); }).join('')+'</div>')
-    +'<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Estatus PEP</div>'
-    +pepLabels.map(function(k){ return rowIndicador(k,'pep_'+k.replace(/ /g,'_'),(M.pep||{})[k]||0); }).join('')+'</div>'
-    +'<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Actividad economica</div>'
+    +(esSIMP ? ebrSimpHtml() : '<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Estatus PEP</div>'
+    +pepLabels.map(function(k){ return rowIndicador(k,'pep_'+k.replace(/ /g,'_'),(M.pep||{})[k]||0); }).join('')+'</div>')
+    +((esSIMP || esFID) ? '' : '<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Actividad economica</div>'
     +rowIndicador('Actividad listada como de alto riesgo','puntaje_actividad',M.puntaje_actividad||0)
-    +'<div style="font-size:11px;color:var(--tx3);margin-top:4px">El catalogo de actividades es comun a las dos matrices; lo que cambia es cuanto pesa. Se edita mas abajo.</div></div>'
+    +'<div style="font-size:11px;color:var(--tx3);margin-top:4px">El catalogo de actividades es comun a las dos matrices; lo que cambia es cuanto pesa. Se edita mas abajo.</div></div>')
     + geografiaHtml()
-    +'<div style="margin-bottom:4px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Declaracion de Dueño Beneficiario</div>'
+    +(esSIMP ? '' : '<div style="margin-bottom:4px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Declaracion de Dueño Beneficiario</div>'
     +rowIndicador('Existe dueño beneficiario distinto del cliente (SI)','db_SI',(M.dueno_beneficiario||{})['SI']||0)
-    +rowIndicador('No existe dueño beneficiario distinto (NO)','db_NO',(M.dueno_beneficiario||{})['NO']||0)+'</div>'
-    + (esPF
+    +rowIndicador('No existe dueño beneficiario distinto (NO)','db_NO',(M.dueno_beneficiario||{})['NO']||0)+'</div>')
+    + (esSIMP ? '' : esPF
       ? '<div style="margin-bottom:4px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Edad del cliente</div>'
         +'<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--brd);flex-wrap:wrap"><span style="font-size:13px;color:var(--tx2)">Menor a</span>'+fldNum('edad_min',M.edad_min||0,0,130)+'<span style="font-size:13px;color:var(--tx2)">a&ntilde;os &rarr; suma</span>'+fldNum('puntaje_edad_menor',M.puntaje_edad_menor||0,0,200)+'<span style="font-size:12px;color:var(--tx3)">puntos</span></div>'
         +'<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--brd);flex-wrap:wrap"><span style="font-size:13px;color:var(--tx2)">Mayor a</span>'+fldNum('edad_max',M.edad_max||0,0,130)+'<span style="font-size:13px;color:var(--tx2)">a&ntilde;os &rarr; suma</span>'+fldNum('puntaje_edad_mayor',M.puntaje_edad_mayor||0,0,200)+'<span style="font-size:12px;color:var(--tx3)">puntos</span></div>'
@@ -4628,12 +4639,14 @@ function pestanasMatriz() {
       + ';padding:10px 12px;border-radius:var(--r);border:1px solid ' + (on ? 'var(--az)' : 'var(--brd)')
       + ';background:' + (on ? 'var(--az3)' : 'transparent') + '">'
       + '<div style="font-size:13px;font-weight:600;color:' + (on ? 'var(--az)' : 'var(--tx2)') + '">' + etq + '</div>'
-      + '<div style="font-size:11px;color:var(--tx3)">' + sub + ' · tope ' + topeMatriz(clave) + '</div>'
+      + '<div style="font-size:11px;color:var(--tx3)">' + sub + (clave === 'SIMP' ? ' · solo perfil' : ' · tope ' + topeMatriz(clave)) + '</div>'
       + '</button>';
   };
   return '<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">'
     + uno('PF', 'Persona fisica', 'Nacional y extranjera')
-    + uno('PM', 'Persona moral y fideicomiso', 'Nacional, simplificada y fideicomiso')
+    + uno('PM', 'Persona moral', 'Nacional')
+    + uno('SIMP', 'Persona moral simplificada', 'Entidades reguladas')
+    + uno('FID', 'Fideicomiso', 'Sin actividad ni constitucion')
     + '</div>';
 }
 
@@ -4701,7 +4714,10 @@ function recogerMatrizEnPantalla() {
 // un vinculo repetido pese mas que uno aislado.
 function geografiaHtml() {
   var G = ((CFG_EBR.matriz || {})[EBR_MATRIZ] || {}).geografia || {};
-  var campos = (EBR_MATRIZ === 'PF')
+  if (EBR_MATRIZ === 'SIMP') return '';
+  var campos = (EBR_MATRIZ === 'FID')
+    ? [['domicilio', 'Pais del domicilio', 'Si el fideicomiso tiene domicilio en Mexico no cuenta aqui: cuenta el puntaje de su estado, en la tarjeta de mas abajo.']]
+    : (EBR_MATRIZ === 'PF')
     ? [
         ['domicilio',    'Pais del domicilio', 'Si el cliente vive en Mexico no cuenta aqui: cuenta el puntaje de su estado, en la tarjeta de mas abajo.'],
         ['nacionalidad', 'Nacionalidad',       'Campo "pais de nacionalidad" del expediente.'],
@@ -4953,7 +4969,7 @@ function guardarEBR() {
   // lo que se le haya editado antes de cambiar de pestana.
   recogerMatrizEnPantalla();
   recogerTxEnPantalla();
-  CFG_EBR.modelo = 2;
+  CFG_EBR.modelo = MODELO_EBR;
   // actividades_alto_riesgo ya se mantiene actualizado en memoria por ebrAgregarActividad/ebrQuitarActividad
   // Los puntajes por estado no se leen de la pantalla: ipmCiclarEstado los
   // escribe directamente en CFG_EBR.estados_puntaje conforme se pulsan, que es
@@ -6305,7 +6321,7 @@ function guardarReval(e, texto, cb) {
     desviaciones: e.desv,
     estado: e.cambio === 'igual' ? 'Confirmada' : 'Aprobada',
     justificacion: texto || '',
-    evaluado_por: App.cuenta ? App.cuenta.username : '', fecha_evaluacion: hoy(), modelo: 2
+    evaluado_por: App.cuenta ? App.cuenta.username : '', fecha_evaluacion: hoy(), modelo: MODELO_EBR
   };
   spCreate(LISTA_REVAL, reg, function(item){
     if (!item) { cb(false); return; }
@@ -6315,7 +6331,7 @@ function guardarReval(e, texto, cb) {
     c2.puntaje_ebr_cliente = r.puntaje_cliente;
     c2.puntaje_ebr_tx = r.puntaje_tx;
     c2.riesgo_motivo = r.motivo;
-    c2.riesgo_modelo = 2;
+    c2.riesgo_modelo = MODELO_EBR;
     c2.ciclo_ult_revaluacion = cic.clave;
     c2.fecha_ult_revaluacion = hoy();
     spUpdate('PLD_Clientes', c.id, c2, function(res){
@@ -6524,16 +6540,32 @@ function calcEBR(d) {
            puntaje_tx: pt, nivel_tx: nt, reglas: reglas, motivo: motivos.join(' · ') };
 }
 
+// Domicilio que cuenta para el riesgo. La persona fisica extranjera no tiene
+// las casillas de domicilio de las demas: captura su pais de residencia y,
+// aparte, un domicilio en Mexico si lo tiene. Cuenta el pais de residencia; si
+// reside en Mexico, cuenta el estado de su domicilio mexicano.
+function domicilioDePersona(d) {
+  if (d.tipo === 'PF_EXT' && (d.res_pais_dom !== undefined || d.tiene_dom_mx !== undefined)) {
+    var pais = d.res_pais_dom || (d.tiene_dom_mx === 'SI' ? 'MEXICO' : '');
+    if (pais && normPais(pais) !== 'MEXICO') return { pais: pais, estado: '' };
+    return { pais: 'MEXICO', estado: d.tiene_dom_mx === 'SI' ? (d.mx_estado || '') : '' };
+  }
+  return { pais: d.pais_dom || 'MEXICO', estado: d.estado || '' };
+}
+
 // Reglas determinantes. Cada una fija un nivel minimo con su motivo.
 function reglasEBR(d) {
   var r = [];
+  // La persona moral simplificada es una entidad regulada y siempre mexicana:
+  // por decision del usuario su nivel lo decide solo su perfil transaccional.
+  if (d.tipo === 'PM_SIMP') return r;
   var pep = d.estatus_pep || 'NO APLICA';
   if (pep === 'Activo') r.push({ nivel: 'Alto', motivo: 'PEP activo' });
   else if (pep === 'Familiar') r.push({ nivel: 'Medio', motivo: 'familiar de PEP' });
   else if (pep === 'Relacionado a PEP') r.push({ nivel: 'Medio', motivo: 'relacionado con PEP' });
   var esFisica = (d.tipo === 'PF_MEX' || d.tipo === 'PF_EXT');
   var paises = paisesDePersona(d);
-  var campos = [['el domicilio', d.pais_dom || 'MEXICO'],
+  var campos = [['el domicilio', domicilioDePersona(d).pais],
                 [esFisica ? 'la nacionalidad' : 'el pais de constitucion', paises.nacionalidad]];
   if (paises.nacimiento) campos.push(['el pais de nacimiento', paises.nacimiento]);
   campos.forEach(function(c){
@@ -6551,6 +6583,7 @@ function reglasEBR(d) {
 function calcEBRCliente(d) {
   var p = 0;
   var M = matrizEBR(d.tipo);
+  if (M.sin_factores) return 0;
   // Tipo de cliente
   p += (M.tipo_cliente && M.tipo_cliente[d.tipo] !== undefined) ? M.tipo_cliente[d.tipo] : 0;
   // Estatus PEP
@@ -6569,9 +6602,10 @@ function calcEBRCliente(d) {
   var paises = paisesDePersona(d);
   // Domicilio. Viviendo en Mexico cuenta el puntaje del estado, sembrado con
   // la clasificacion del Indice de Paz Mexico; viviendo fuera, el del pais.
-  var paisDom = d.pais_dom || 'MEXICO';
+  var dom = domicilioDePersona(d);
+  var paisDom = dom.pais;
   if (normPais(paisDom) === 'MEXICO') {
-    var estDom = d.estado || '';
+    var estDom = dom.estado;
     if (estDom) {
       if (CFG_EBR.estados_puntaje && Object.keys(CFG_EBR.estados_puntaje).length) {
         p += Number(CFG_EBR.estados_puntaje[estDom]) || 0;
@@ -6899,9 +6933,10 @@ function htmlArrendamiento(d) {
   // La respuesta decide la fraccion: SI es arrendamiento (Fr. XV) y NO es
   // compraventa de inmueble (Fr. V). Cada rama pide lo suyo, y el perfil
   // transaccional de mas abajo tambien cambia con ella.
-  return fg('Cliente de arrendamiento',null,false)
+  return fg('Cliente de arrendamiento',null,true)
     +'<select class="sel" name="es_arrendamiento" onchange="toggleArrendamiento(this.value)">'
-    +'<option value="NO"'+(!esArr?' selected':'')+'>NO - Compraventa de inmueble (Fr. V)</option>'
+    +(d.es_arrendamiento ? '' : '<option value="" selected>-- Seleccionar --</option>')
+    +'<option value="NO"'+(d.es_arrendamiento==='NO'?' selected':'')+'>NO - Compraventa de inmueble (Fr. V)</option>'
     +'<option value="SI"'+(esArr?' selected':'')+'>SI - Cliente de arrendamiento (Fr. XV)</option>'
     +'</select></div>'
     +'<div class="fg full cv-campo" style="'+visCV+'"><label class="lbl">Nombre del fraccionamiento o bien inmueble</label>'
@@ -6961,32 +6996,32 @@ function htmlPerfilTx(d) {
     return '<input class="inp mono" type="number" min="0" step="0.01" name="' + name + '" value="' + capEsc(v || '') + '" placeholder="' + ph + '"></div>';
   };
   var otro = function(name, v, cls, vis) {
-    return '<div class="fg full ' + cls + '" style="' + vis + '"><label class="lbl">Especifique el origen</label>'
+    return '<div class="fg full ' + cls + '" style="' + vis + '"><label class="lbl">Especifique el origen <span class="req">*</span></label>'
       + '<input class="inp" name="' + name + '" value="' + capEsc(v || '') + '" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>';
   };
 
   var arr = '<div class="fgrid ptx-arr" style="' + (esArr ? '' : 'display:none') + '">'
-    + fg('Tipo de pago', null, false) + sel('ptx_arr_pago', PTX_ARR_PAGO, d.ptx_arr_pago)
-    + fg('Numero de operaciones esperadas en el periodo', null, false) + sel('ptx_arr_numops', PTX_ARR_NUMOPS, d.ptx_arr_numops)
-    + fg('Frecuencia esperada', null, false) + sel('ptx_arr_frec', PTX_FREC, d.ptx_arr_frec)
-    + fg('Monto esperado de la operacion (valor de la renta)', null, false) + num('renta_monto', d.renta_monto, '0.00')
-    + fg('Moneda de la renta', null, false)
+    + fg('Tipo de pago', null, true) + sel('ptx_arr_pago', PTX_ARR_PAGO, d.ptx_arr_pago)
+    + fg('Numero de operaciones esperadas en el periodo', null, true) + sel('ptx_arr_numops', PTX_ARR_NUMOPS, d.ptx_arr_numops)
+    + fg('Frecuencia esperada', null, true) + sel('ptx_arr_frec', PTX_FREC, d.ptx_arr_frec)
+    + fg('Monto esperado de la operacion (valor de la renta)', null, true) + num('renta_monto', d.renta_monto, '0.00')
+    + fg('Moneda de la renta', null, true)
     + '<select class="sel" name="renta_moneda">'
     + '<option value="MXN"' + (d.renta_moneda !== 'USD' ? ' selected' : '') + '>MXN - Pesos</option>'
     + '<option value="USD"' + (d.renta_moneda === 'USD' ? ' selected' : '') + '>USD - Dolares</option>'
     + '</select></div>'
-    + fg('Uso de efectivo', null, false) + sel('ptx_arr_efectivo', PTX_EFECTIVO, d.ptx_arr_efectivo)
-    + fg('Origen de los recursos', null, false) + sel('ptx_arr_origen', PTX_ORIGEN, d.ptx_arr_origen, ' onchange="ptxOtro(this,\'ptx-arr-otro\')"')
+    + fg('Uso de efectivo', null, true) + sel('ptx_arr_efectivo', PTX_EFECTIVO, d.ptx_arr_efectivo)
+    + fg('Origen de los recursos', null, true) + sel('ptx_arr_origen', PTX_ORIGEN, d.ptx_arr_origen, ' onchange="ptxOtro(this,\'ptx-arr-otro\')"')
     + otro('ptx_arr_origen_otro', d.ptx_arr_origen_otro, 'ptx-arr-otro', d.ptx_arr_origen === 'OTRO' ? '' : 'display:none')
     + '</div>';
 
   var cv = '<div class="fgrid ptx-cv" style="' + (esArr ? 'display:none' : '') + '">'
-    + fg('Tipo de pago', null, false) + sel('ptx_cv_pago', PTX_CV_PAGO, d.ptx_cv_pago)
-    + fg('Numero de operaciones', null, false) + sel('ptx_cv_numops', PTX_CV_NUMOPS, d.ptx_cv_numops)
-    + fg('Moneda de pago', null, false) + sel('ptx_cv_moneda', PTX_MONEDA, d.ptx_cv_moneda)
-    + fg('Contrapartes', null, false) + sel('ptx_cv_contrapartes', PTX_CONTRAPARTES, d.ptx_cv_contrapartes)
-    + fg('Monto que se pagara en efectivo (MXN)', null, false) + num('ptx_cv_efectivo_mxn', d.ptx_cv_efectivo_mxn, '0.00')
-    + fg('Origen de los recursos', null, false) + sel('ptx_cv_origen', PTX_ORIGEN, d.ptx_cv_origen, ' onchange="ptxOtro(this,\'ptx-cv-otro\')"')
+    + fg('Tipo de pago', null, true) + sel('ptx_cv_pago', PTX_CV_PAGO, d.ptx_cv_pago)
+    + fg('Numero de operaciones', null, true) + sel('ptx_cv_numops', PTX_CV_NUMOPS, d.ptx_cv_numops)
+    + fg('Moneda de pago', null, true) + sel('ptx_cv_moneda', PTX_MONEDA, d.ptx_cv_moneda)
+    + fg('Contrapartes', null, true) + sel('ptx_cv_contrapartes', PTX_CONTRAPARTES, d.ptx_cv_contrapartes)
+    + fg('Monto que se pagara en efectivo (MXN)', null, true) + num('ptx_cv_efectivo_mxn', d.ptx_cv_efectivo_mxn, '0.00')
+    + fg('Origen de los recursos', null, true) + sel('ptx_cv_origen', PTX_ORIGEN, d.ptx_cv_origen, ' onchange="ptxOtro(this,\'ptx-cv-otro\')"')
     + otro('ptx_cv_origen_otro', d.ptx_cv_origen_otro, 'ptx-cv-otro', d.ptx_cv_origen === 'OTRO' ? '' : 'display:none')
     + '<div class="fg full" style="font-size:11px;color:var(--tx3)">Frecuencia y monto esperado no aplican en compraventa: cada operacion se registra con su propio importe.</div>'
     + '</div>';
@@ -7546,7 +7581,7 @@ function submitCliente(tipo, idEx) {
   datos.puntaje_ebr_cliente = riesgo.puntaje_cliente;
   datos.puntaje_ebr_tx = riesgo.puntaje_tx;
   datos.riesgo_motivo = riesgo.motivo;
-  datos.riesgo_modelo = 2;
+  datos.riesgo_modelo = MODELO_EBR;
 
   // Asegurar que las listas de screening estén cargadas (última versión en SharePoint)
   // antes de cotejar — sin importar quién ni cuándo las cargó ese día.
@@ -9091,7 +9126,7 @@ var ESCALA_EBR = 100;
 // mas alto. Entre factores si se suma: un vinculo repetido en varios campos
 // pesa mas que uno aislado, que es lo que pide el indicador 4.1 de la guia.
 var CFG_EBR = {
-  modelo: 2,
+  modelo: 3,
   matriz: {
     // Persona fisica: PEP 25, actividad 20, dueno beneficiario 15, domicilio
     // 10, nacionalidad 10, nacimiento 10, edad 10. No hay tipo de cliente: ser
@@ -9110,10 +9145,10 @@ var CFG_EBR = {
       },
       edad_min: 20, edad_max: 75, puntaje_edad_menor: 10, puntaje_edad_mayor: 7
     },
-    // Persona moral y fideicomiso: tipo 10, PEP 25, actividad 20, dueno
-    // beneficiario 15, domicilio 10, pais de constitucion 10, antiguedad 10.
+    // Persona moral nacional: tipo 8, PEP 25, actividad 20, dueno beneficiario
+    // 15, domicilio 10, pais de constitucion 10, antiguedad 10.
     PM: {
-      tipo_cliente: { 'PM_SIMP': 5, 'PM_MEX': 8, 'FIDEICOMISO': 10 },
+      tipo_cliente: { 'PM_MEX': 8 },
       pep: { 'NO APLICA': 0, 'Inactivo': 12, 'Vencido': 4, 'Activo': 25, 'Familiar': 25, 'Relacionado a PEP': 25 },
       puntaje_actividad: 20,
       dueno_beneficiario: { 'SI': 15, 'NO': 0 },
@@ -9122,6 +9157,21 @@ var CFG_EBR = {
         nacionalidad: { ext: 3,        gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 }
       },
       antiguedad_min: 3, puntaje_antiguedad: 10
+    },
+    // Persona moral simplificada: entidad regulada, siempre mexicana. No tiene
+    // factores de cliente; su nivel lo decide solo el perfil transaccional y
+    // tampoco le aplican las reglas determinantes.
+    SIMP: { sin_factores: true },
+    // Fideicomiso: no tiene actividad economica reportable ni pais de
+    // constitucion propio. PEP 35, dueno beneficiario 30, antiguedad 25,
+    // domicilio 10, con las mismas bandas de estados.
+    FID: {
+      pep: { 'NO APLICA': 0, 'Inactivo': 17, 'Vencido': 6, 'Activo': 35, 'Familiar': 35, 'Relacionado a PEP': 35 },
+      dueno_beneficiario: { 'SI': 30, 'NO': 0 },
+      geografia: {
+        domicilio: { ext: 5, us: 5, gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 8, regimen_fiscal: 6 }
+      },
+      antiguedad_min: 3, puntaje_antiguedad: 25
     }
   },
   // Dimension transaccional, con lo que el cliente declara en su perfil. Por
@@ -9155,6 +9205,11 @@ var EBR_MODELO2 = JSON.parse(JSON.stringify({ matriz: CFG_EBR.matriz, transaccio
 
 // La matriz que le toca a un cliente por su naturaleza.
 function matrizEBR(tipo) {
+  var clave = (tipo === 'PF_MEX' || tipo === 'PF_EXT') ? 'PF'
+            : tipo === 'PM_SIMP' ? 'SIMP'
+            : tipo === 'FIDEICOMISO' ? 'FID' : 'PM';
+  var M = (CFG_EBR.matriz || {})[clave];
+  if (M) return M;
   var esFisica = (tipo === 'PF_MEX' || tipo === 'PF_EXT');
   return ((CFG_EBR.matriz || {})[esFisica ? 'PF' : 'PM']) || {};
 }
@@ -9380,7 +9435,7 @@ function migrarAntiguedad(cargado) {
 // cuando el usuario pulsa "Guardar cambios".
 var MIGRACION_V2 = false;
 function migrarModeloV2(cargado) {
-  if (!cargado || Number(cargado.modelo) === 2) return null;
+  if (!cargado || Number(cargado.modelo) >= 2) return null;
   var viejo = CFG_EBR.matriz || {};
   var nuevo = JSON.parse(JSON.stringify(EBR_MODELO2.matriz));
   ['PF', 'PM'].forEach(function(k){
@@ -9398,9 +9453,25 @@ function migrarModeloV2(cargado) {
   console.info('[EBR] configuracion pasada al modelo 2: reglas, dimension cliente y dimension transaccional');
   return true;
 }
+// Modelo 3: matrices propias para la persona moral simplificada y el
+// fideicomiso, que salen de la matriz de persona moral. Una configuracion
+// guardada con el modelo 2 no las trae: se agregan las del codigo y se quitan
+// de la persona moral los tipos que ya no le corresponden.
+var MODELO_EBR = 3;
+function migrarModeloV3(cargado) {
+  if (!cargado || Number(cargado.modelo) >= MODELO_EBR) return null;
+  var m = CFG_EBR.matriz = CFG_EBR.matriz || {};
+  if (!m.SIMP) m.SIMP = JSON.parse(JSON.stringify(EBR_MODELO2.matriz.SIMP));
+  if (!m.FID)  m.FID  = JSON.parse(JSON.stringify(EBR_MODELO2.matriz.FID));
+  if (m.PM && m.PM.tipo_cliente) { delete m.PM.tipo_cliente.PM_SIMP; delete m.PM.tipo_cliente.FIDEICOMISO; }
+  CFG_EBR.modelo = MODELO_EBR;
+  MIGRACION_V2 = true;
+  console.info('[EBR] configuracion pasada al modelo 3: matrices de persona moral simplificada y fideicomiso');
+  return true;
+}
 function migracionV2Pendiente() {
   if (!MIGRACION_V2) return false;
-  try { return Number(JSON.parse(localStorage.getItem('ebr_config') || '{}').modelo) !== 2; }
+  try { return Number(JSON.parse(localStorage.getItem('ebr_config') || '{}').modelo) < MODELO_EBR; }
   catch (e) { return true; }
 }
 
@@ -9447,6 +9518,7 @@ function migracionEBRPendiente() {
   migrarMatrices(obj);
   migrarAntiguedad(obj);
   migrarModeloV2(obj);
+  migrarModeloV3(obj);
 })();
 
 // ── PERFIL TRANSACCIONAL ──────────────────────────────────────
@@ -9585,7 +9657,7 @@ function paisesDePersona(d) {
 // explicar el puntaje en vez de solo mostrarlo.
 function vinculosJurisdiccion(d) {
   var campos = [
-    ['domicilio',           d.pais_dom  || ''],
+    ['domicilio',           d.tipo === 'PF_EXT' ? (domicilioDePersona(d).pais || '') : (d.pais_dom || '')],
     ['pais de nacimiento',  d.pais_nac  || ''],
     ['nacionalidad',        d.pais_nac2 || '']
   ];
@@ -9704,6 +9776,7 @@ function cargarConfigUMA() {
         migrarMatrices(ebr);
         migrarAntiguedad(ebr);
         migrarModeloV2(ebr);
+        migrarModeloV3(ebr);
       } catch(e) { console.warn('EBR config parse error', e); }
     }
     if (cfg.perfil_config) {
