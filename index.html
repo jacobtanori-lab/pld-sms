@@ -11309,8 +11309,13 @@ function generarConstanciaScreeningPDF(cliente, rep){
   txt('PLD Corporativo SMS — ' + (cliente.entidad_nombre||cliente.entidad_id||''), 8);
   sep();
   txt('Fecha y hora: ' + new Date().toLocaleString('es-MX'), 8, true);
-  txt('Cliente: ' + (cliente.num_cliente||'') + ' — ' + nombreClienteDatos(cliente), 8);
-  txt('Tipo: ' + labelTipo(cliente.tipo) + (cliente.rfc?('   RFC: '+cliente.rfc):''), 8);
+  if (cliente._manual) {
+    txt('Nombre consultado: ' + cliente._manual, 8);
+    txt('Búsqueda manual, sin expediente asociado', 8);
+  } else {
+    txt('Cliente: ' + (cliente.num_cliente||'') + ' — ' + nombreClienteDatos(cliente), 8);
+    txt('Tipo: ' + labelTipo(cliente.tipo) + (cliente.rfc?('   RFC: '+cliente.rfc):''), 8);
+  }
   txt('Generado por: ' + (App.cuenta ? (App.cuenta.name||App.cuenta.username) : '') , 8);
   txt('Umbral de similitud aplicado: ' + rep.umbral + '%', 8);
   sep();
@@ -11337,6 +11342,60 @@ function generarConstanciaScreeningPDF(cliente, rep){
   txt('Documento generado automáticamente por el sistema PLD Corporativo SMS como constancia del cotejo contra listas de sanciones y personas políticamente expuestas. No admite modificaciones.', 6.5);
 
   return doc.output('arraybuffer');
+}
+
+// ── Constancia a demanda, desde la pantalla de screening ─────
+// La del alta se genera sola al guardar el expediente; estas la generan cuando
+// el usuario la pide. "Por cliente" usa el mismo reporte que el alta: todas
+// las partes del expediente contra todas las listas activas. La busqueda
+// manual documenta el nombre consultado con las listas y el umbral de esa
+// busqueda.
+function _descargarPDFScreening(buf, base) {
+  var ts = new Date().toISOString().replace(/[:.]/g,'-').substring(0,19);
+  var nom = String(base||'').replace(/[^a-zA-Z0-9_\-]/g,'_').substring(0,40);
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([buf], {type:'application/pdf'}));
+  a.download = 'Constancia_Screening_' + nom + '_' + ts + '.pdf';
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+
+function scrPDFManual() {
+  var u = App._scrUltimaManual;
+  if (!u) { toast('Primero realiza una busqueda','w'); return; }
+  cargarJsPDF(function(){
+    if (!(window.jspdf && window.jspdf.jsPDF)) return;
+    var rep = {
+      listas: u.resultados.map(function(r){ return { nombre: r.lista, total: r.total || 0 }; }),
+      nombres: [{ parte: 'Busqueda manual', nombre: u.nombre }],
+      umbral: u.umbral,
+      resultados: u.resultados.filter(function(r){ return r.matches.length; }).map(function(r){
+        return { parte: 'Busqueda manual', nombre: u.nombre, lista: r.lista, matches: r.matches.slice(0,5) };
+      })
+    };
+    var cliente = { _manual: u.nombre, entidad_nombre: App.entidadActual ? App.entidadActual.nombre : '' };
+    _descargarPDFScreening(generarConstanciaScreeningPDF(cliente, rep), u.nombre);
+    toast('Constancia descargada','s');
+  });
+}
+
+function scrPDFCliente(guardar) {
+  var sel = document.getElementById('scr-sel-cliente');
+  var cli = (App.clientes||[]).find(function(c){ return c.id === (sel ? sel.value : ''); });
+  if (!cli) { toast('Selecciona un cliente','w'); return; }
+  if (!(App._scrData || []).some(function(l){ return l.activa && l._datos && l._datos.length; })) {
+    toast('No hay listas cargadas: la constancia saldria sin cotejo','w'); return;
+  }
+  if (guardar) {
+    if (!confirm('Se guardara la constancia en "Otros documentos soporte" del expediente de ' + nombreCliente(cli) + '.\n\n¿Continuar?')) return;
+    subirConstanciaScreening(cli);
+    return;
+  }
+  cargarJsPDF(function(){
+    if (!(window.jspdf && window.jspdf.jsPDF)) return;
+    _descargarPDFScreening(generarConstanciaScreeningPDF(cli, screeningReporte(cli)), nStr(cli.num_cliente) + '_' + nombreClienteDatos(cli));
+    toast('Constancia descargada','s');
+  });
 }
 
 // Genera y sube la constancia a "Otros documentos soporte" del expediente
@@ -14354,8 +14413,10 @@ function scrLanzarBusquedaManual() {
   scrEjecutar(nombre, '', nombre, function(resultados) {
     var ct2 = document.getElementById('scr-resultados');
     if (!ct2) return;
+    App._scrUltimaManual = { nombre: nombre, resultados: resultados, umbral: SCR.umbralMatch };
     ct2.innerHTML = '<div class="card"><div class="card-h"><span class="card-t">Resultados para: ' + nombre + '</span>'
-      + '<span style="font-size:11px;color:var(--tx3)">' + new Date().toLocaleString('es-MX') + '</span></div>'
+      + '<span style="display:flex;align-items:center;gap:10px"><span style="font-size:11px;color:var(--tx3)">' + new Date().toLocaleString('es-MX') + '</span>'
+      + '<button class="btn btn-sm" onclick="scrPDFManual()">📄 Constancia PDF</button></span></div>'
       + '<div style="padding:12px 16px"><div id="scr-res-inner"></div></div></div>';
     scrRenderResultados(nombre, resultados, 'scr-res-inner', false);
     scrActualizarEstadoListas();
@@ -14382,7 +14443,9 @@ function scrVistaCliente() {
     + '<input class="inp" id="scr-input-nombre-cli" placeholder="Se llenará al seleccionar cliente">'
     + '</div>'
     + '</div>'
-    + '<div style="padding:12px 16px;border-top:1px solid var(--brd);display:flex;justify-content:flex-end">'
+    + '<div style="padding:12px 16px;border-top:1px solid var(--brd);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'
+    + '<button class="btn" onclick="scrPDFCliente(false)" title="Cliente y partes relacionadas contra todas las listas activas, como la constancia del alta">📄 Descargar constancia</button>'
+    + '<button class="btn" onclick="scrPDFCliente(true)">Guardar en el expediente</button>'
     + '<button class="btn btn-p" onclick="scrLanzarBusquedaCliente()">🔍 Buscar</button>'
     + '</div></div>'
     + '<div id="scr-resultados-cli" style="margin-top:0"></div>');
