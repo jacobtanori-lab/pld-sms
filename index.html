@@ -7527,7 +7527,10 @@ function htmlParteFid(pref, p, idx) {
     + fg('Nombre o razon social', null, true) + fi(pref + '_' + idx + '_nombre', capEsc(p.nombre || ''), '')
     + fg('RFC', null, false) + fi(pref + '_' + idx + '_rfc', capEsc(p.rfc || ''), '', 'mono')
     + fg('Tipo', null, true) + fs(pref + '_' + idx + '_tipo', opts(pref === 'fte' ? TIPOS_FTE : TIPOS_FSA, p.tipo || ''))
-    + fg('Pais de nacionalidad o constitucion', null, true) + fs(pref + '_' + idx + '_pais', optsPais(p.pais || 'Mexico'))
+    // Sin pais guardado (parte nueva o capturada antes de existir el campo) el
+    // campo aparece vacio y obliga a elegir, para no registrar Mexico por omision.
+    + fg('Pais de nacionalidad o constitucion', null, true) + fs(pref + '_' + idx + '_pais',
+        p.pais ? optsPais(p.pais) : '<option value="" selected>-- Seleccionar --</option>' + optsPais('__sin_pais__'))
     + '</div></div>';
 }
 function htmlListaPartesFid(d, pref) {
