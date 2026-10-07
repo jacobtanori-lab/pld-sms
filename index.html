@@ -4261,7 +4261,8 @@ function ebrReglasHtml() {
     + '<div class="card-b">'
     + fila('PEP activo', 'Alto', 'p-rj')
     + fila('Familiar de PEP o relacionado con PEP', 'Medio como minimo', 'p-am')
-    + fila('Pais con contramedidas del GAFI o sancion del Consejo de Seguridad en el domicilio, la nacionalidad o el nacimiento. En persona moral, el pais de constitucion', 'Alto', 'p-rj')
+    + fila('Pais con sanciones del Consejo de Seguridad en el domicilio, la nacionalidad o el nacimiento. En persona moral, el pais de constitucion', 'Alto', 'p-rj')
+    + fila('Pais con llamado del GAFI a aplicar contramedidas en cualquiera de esos campos. Por politica no se acepta', 'Bloquea el alta', 'p-rj')
     + '<div style="font-size:12px;color:var(--tx3);margin-top:8px;line-height:1.6">El nivel final es el mayor entre el de la dimension cliente, '
     + 'el de la dimension transaccional y el que fijen estas reglas. Los umbrales de arriba se aplican a cada dimension por separado. '
     + 'Estas reglas no aplican a la persona moral simplificada.</div>'
@@ -4379,7 +4380,7 @@ function pgConfigEBR() {
   var avisoV2 = migracionV2Pendiente()
     ? '<div class="card" style="border-left:4px solid var(--am)"><div class="card-b">'
       + '<div style="font-weight:600;margin-bottom:6px">Configuracion actualizada al modelo vigente</div>'
-      + '<div style="font-size:13px;color:var(--tx2);line-height:1.6">Se agregaron las matrices propias de persona moral simplificada y de fideicomiso. Si venia de antes del modelo 2, tambien las reglas determinantes y la dimension transaccional, '
+      + '<div style="font-size:13px;color:var(--tx2);line-height:1.6">Se retiraron las contramedidas del GAFI, que por politica bloquean el alta, y se ajustaron los pesos de persona moral. Segun la version de la que venia, tambien se agregaron las matrices de persona moral simplificada y fideicomiso, las reglas determinantes y la dimension transaccional, '
       + 'y los pesos de las matrices pasaron a los del modelo 2. Se conservaron los umbrales de edad y antiguedad, los puntos por estatus PEP, '
       + 'los estados y las actividades. El cambio esta solo en pantalla: pulsa <strong>Guardar cambios</strong> para conservarlo.</div>'
       + '</div></div>'
@@ -4409,7 +4410,7 @@ function pgConfigEBR() {
     +'<span style="font-size:12px;color:var(--tx3)">'+(esSIMP ? 'Sin factores de cliente' : 'Tope de esta matriz: '+topeMatriz(EBR_MATRIZ)+' de '+ESCALA_EBR+' puntos')+'</span></div>'
     +'<div class="card-b">'
     + pestanasMatriz()
-    +(EBR_MATRIZ !== 'PM' ? '' : '<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Tipo de cliente</div>'
+    +(!Object.keys(M.tipo_cliente || {}).length || EBR_MATRIZ === 'PF' ? '' : '<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Tipo de cliente</div>'
     +Object.keys(tipoLabels).map(function(k){ return rowIndicador(tipoLabels[k],'tipo_'+k,(M.tipo_cliente||{})[k]||0); }).join('')+'</div>')
     +(esSIMP ? ebrSimpHtml() : '<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Estatus PEP</div>'
     +pepLabels.map(function(k){ return rowIndicador(k,'pep_'+k.replace(/ /g,'_'),(M.pep||{})[k]||0); }).join('')+'</div>')
@@ -4612,7 +4613,15 @@ function ebrSimular() {
     mock.ptx_cv_contrapartes = v('sim-contra');
   }
   var res = calcEBR(mock);
+  var prohibidos = vinculosProhibidos(mock);
   var color = res.nivel === 'Alto' ? 'var(--rj)' : res.nivel === 'Medio' ? 'var(--am)' : 'var(--vd,#16a34a)';
+  if (prohibidos.length) {
+    var ctp = document.getElementById('ebr-sim-result');
+    if (ctp) ctp.innerHTML = '<span style="color:var(--rj)">No se acepta por politica</span>'
+      + '<div style="font-size:13px;color:var(--tx2);font-weight:400;margin-top:6px">Contramedidas del GAFI en '
+      + prohibidos.map(function(v){ return capEsc(v.campo + ', ' + v.pais); }).join('; ') + '. El alta se bloquea.</div>';
+    return;
+  }
   var ct = document.getElementById('ebr-sim-result');
   if (ct) ct.innerHTML = '<span style="color:'+color+'">'+res.nivel+'</span>'
     +'<div style="font-size:13px;color:var(--tx2);font-weight:400;margin-top:6px;line-height:1.7">'
@@ -4727,7 +4736,7 @@ function geografiaHtml() {
         ['domicilio',    'Pais del domicilio',  'Si la entidad tiene domicilio en Mexico no cuenta aqui: cuenta el puntaje de su estado, en la tarjeta de mas abajo.'],
         ['nacionalidad', 'Pais de constitucion','Campo "pais de nacionalidad" del expediente, que en una persona moral o fideicomiso es donde se constituyo.']
       ];
-  var cats = ['gafi_contramedidas','csnu_sanciones','gafi_vigilancia','regimen_fiscal'];
+  var cats = ['csnu_sanciones','gafi_vigilancia','regimen_fiscal'];
 
   var num = function(id, val) {
     return '<input class="inp mono" id="ebr-' + id + '" type="number" min="0" max="100" step="1" value="'
@@ -6553,6 +6562,24 @@ function domicilioDePersona(d) {
   return { pais: d.pais_dom || 'MEXICO', estado: d.estado || '' };
 }
 
+// Politica de la empresa: no se aceptan clientes vinculados a una
+// jurisdiccion con llamado del GAFI a aplicar contramedidas, sea por su
+// domicilio, nacionalidad, pais de nacimiento o pais de constitucion.
+// Devuelve los vinculos encontrados, para bloquear el alta y explicar por que.
+function vinculosProhibidos(d) {
+  var esFisica = (d.tipo === 'PF_MEX' || d.tipo === 'PF_EXT');
+  var paises = paisesDePersona(d);
+  var campos = [['domicilio', domicilioDePersona(d).pais],
+                [esFisica ? 'nacionalidad' : 'pais de constitucion', paises.nacionalidad]];
+  if (paises.nacimiento) campos.push(['pais de nacimiento', paises.nacimiento]);
+  var out = [];
+  campos.forEach(function(c){
+    if (!c[1] || normPais(c[1]) === 'MEXICO') return;
+    if (jurisdiccionesDe(c[1]).indexOf('gafi_contramedidas') >= 0) out.push({ campo: c[0], pais: c[1] });
+  });
+  return out;
+}
+
 // Reglas determinantes. Cada una fija un nivel minimo con su motivo.
 function reglasEBR(d) {
   var r = [];
@@ -6571,9 +6598,10 @@ function reglasEBR(d) {
   campos.forEach(function(c){
     if (!c[1] || normPais(c[1]) === 'MEXICO') return;
     var cats = jurisdiccionesDe(c[1]);
-    var cm = cats.indexOf('gafi_contramedidas') >= 0, cs = cats.indexOf('csnu_sanciones') >= 0;
-    if (cm || cs) r.push({ nivel: 'Alto',
-      motivo: (cm ? 'contramedidas del GAFI' : 'sanciones del Consejo de Seguridad') + ' en ' + c[0] + ', ' + c[1] });
+    // Las contramedidas del GAFI ya no puntuan: por politica esos clientes no
+    // se aceptan y el alta se bloquea en la validacion (vinculosProhibidos).
+    if (cats.indexOf('csnu_sanciones') >= 0) r.push({ nivel: 'Alto',
+      motivo: 'sanciones del Consejo de Seguridad en ' + c[0] + ', ' + c[1] });
   });
   return r;
 }
@@ -7565,6 +7593,13 @@ function validarCliente(frm, datos, tipo) {
   [['rl_rfc','RFC del representante legal'],['df_rfc','RFC del delegado fiduciario'],['db_rfc','RFC del dueño beneficiario']].forEach(function(par){
     var v = (datos[par[0]] || '').trim();
     if (v && v.length !== 13) bloq.push(par[1] + ' debe tener 13 caracteres; tiene ' + v.length);
+  });
+
+  // Politica: no se aceptan clientes vinculados a jurisdicciones con llamado
+  // del GAFI a aplicar contramedidas. Bloquea siempre, tambien como prospecto.
+  vinculosProhibidos(datos).forEach(function(v){
+    bloq.push('Por politica no se aceptan clientes vinculados a jurisdicciones con llamado del GAFI a aplicar contramedidas: '
+      + v.campo + ', ' + v.pais);
   });
 
   // CURP: 18 caracteres exactos en los campos que SON una CURP (curp, rl_curp,
@@ -9253,7 +9288,7 @@ var ESCALA_EBR = 100;
 // mas alto. Entre factores si se suma: un vinculo repetido en varios campos
 // pesa mas que uno aislado, que es lo que pide el indicador 4.1 de la guia.
 var CFG_EBR = {
-  modelo: 3,
+  modelo: 4,
   matriz: {
     // Persona fisica: PEP 25, actividad 20, dueno beneficiario 15, domicilio
     // 10, nacionalidad 10, nacimiento 10, edad 10. No hay tipo de cliente: ser
@@ -9266,24 +9301,26 @@ var CFG_EBR = {
       puntaje_actividad: 20,
       dueno_beneficiario: { 'SI': 15, 'NO': 0 },
       geografia: {
-        domicilio:    { ext: 5, us: 5, gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 8, regimen_fiscal: 6 },
-        nacionalidad: { ext: 3,        gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 },
-        nacimiento:   { ext: 3,        gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 }
+        domicilio:    { ext: 5, us: 5, csnu_sanciones: 10, gafi_vigilancia: 8, regimen_fiscal: 6 },
+        nacionalidad: { ext: 3,        csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 },
+        nacimiento:   { ext: 3,        csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 }
       },
       edad_min: 20, edad_max: 75, puntaje_edad_menor: 10, puntaje_edad_mayor: 7
     },
-    // Persona moral nacional: tipo 8, PEP 25, actividad 20, dueno beneficiario
-    // 15, domicilio 10, pais de constitucion 10, antiguedad 10.
+    // Persona moral nacional: PEP 30, actividad 20, dueno beneficiario 15,
+    // domicilio 10, pais de constitucion 10, antiguedad 15. Sin tipo de
+    // cliente: con un solo tipo en la matriz eran puntos que recibia toda
+    // persona moral por igual; se repartieron entre PEP y antiguedad.
     PM: {
-      tipo_cliente: { 'PM_MEX': 8 },
-      pep: { 'NO APLICA': 0, 'Inactivo': 12, 'Vencido': 4, 'Activo': 25, 'Familiar': 25, 'Relacionado a PEP': 25 },
+      tipo_cliente: {},
+      pep: { 'NO APLICA': 0, 'Inactivo': 14, 'Vencido': 5, 'Activo': 30, 'Familiar': 30, 'Relacionado a PEP': 30 },
       puntaje_actividad: 20,
       dueno_beneficiario: { 'SI': 15, 'NO': 0 },
       geografia: {
-        domicilio:    { ext: 5, us: 5, gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 8, regimen_fiscal: 6 },
-        nacionalidad: { ext: 3,        gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 7, regimen_fiscal: 4 }
+        domicilio:    { ext: 5, us: 5, csnu_sanciones: 10, gafi_vigilancia: 8, regimen_fiscal: 6 },
+        nacionalidad: { ext: 3,        csnu_sanciones: 10, gafi_vigilancia: 10, regimen_fiscal: 7 }
       },
-      antiguedad_min: 3, puntaje_antiguedad: 10
+      antiguedad_min: 3, puntaje_antiguedad: 15
     },
     // Persona moral simplificada: entidad regulada, siempre mexicana. No tiene
     // factores de cliente; su nivel lo decide solo el perfil transaccional y
@@ -9296,7 +9333,7 @@ var CFG_EBR = {
       pep: { 'NO APLICA': 0, 'Inactivo': 17, 'Vencido': 6, 'Activo': 35, 'Familiar': 35, 'Relacionado a PEP': 35 },
       dueno_beneficiario: { 'SI': 30, 'NO': 0 },
       geografia: {
-        domicilio: { ext: 5, us: 5, gafi_contramedidas: 10, csnu_sanciones: 10, gafi_vigilancia: 8, regimen_fiscal: 6 }
+        domicilio: { ext: 5, us: 5, csnu_sanciones: 10, gafi_vigilancia: 8, regimen_fiscal: 6 }
       },
       antiguedad_min: 3, puntaje_antiguedad: 25
     }
@@ -9584,14 +9621,39 @@ function migrarModeloV2(cargado) {
 // fideicomiso, que salen de la matriz de persona moral. Una configuracion
 // guardada con el modelo 2 no las trae: se agregan las del codigo y se quitan
 // de la persona moral los tipos que ya no le corresponden.
-var MODELO_EBR = 3;
+var MODELO_EBR = 4;
+// Modelo 4: se retiran las contramedidas del GAFI de todas las matrices (por
+// politica esos clientes no se aceptan); en persona moral el pais de
+// constitucion sube vigilancia a 10 y regimen fiscal a 7, se quita el tipo de
+// cliente y sus puntos pasan a PEP (30, 14, 5) y antiguedad (15).
+function migrarModeloV4(cargado) {
+  if (!cargado || Number(cargado.modelo) >= 4) return null;
+  var m = CFG_EBR.matriz || {};
+  Object.keys(m).forEach(function(k){
+    var G = (m[k] || {}).geografia || {};
+    Object.keys(G).forEach(function(campo){ if (G[campo]) delete G[campo].gafi_contramedidas; });
+  });
+  if (m.PM) {
+    m.PM.tipo_cliente = {};
+    m.PM.pep = { 'NO APLICA': 0, 'Inactivo': 14, 'Vencido': 5, 'Activo': 30, 'Familiar': 30, 'Relacionado a PEP': 30 };
+    m.PM.puntaje_antiguedad = 15;
+    if (m.PM.geografia && m.PM.geografia.nacionalidad) {
+      m.PM.geografia.nacionalidad.gafi_vigilancia = 10;
+      m.PM.geografia.nacionalidad.regimen_fiscal = 7;
+    }
+  }
+  CFG_EBR.modelo = 4;
+  MIGRACION_V2 = true;
+  console.info('[EBR] configuracion pasada al modelo 4: sin contramedidas del GAFI y nuevos pesos de persona moral');
+  return true;
+}
 function migrarModeloV3(cargado) {
-  if (!cargado || Number(cargado.modelo) >= MODELO_EBR) return null;
+  if (!cargado || Number(cargado.modelo) >= 3) return null;
   var m = CFG_EBR.matriz = CFG_EBR.matriz || {};
   if (!m.SIMP) m.SIMP = JSON.parse(JSON.stringify(EBR_MODELO2.matriz.SIMP));
   if (!m.FID)  m.FID  = JSON.parse(JSON.stringify(EBR_MODELO2.matriz.FID));
   if (m.PM && m.PM.tipo_cliente) { delete m.PM.tipo_cliente.PM_SIMP; delete m.PM.tipo_cliente.FIDEICOMISO; }
-  CFG_EBR.modelo = MODELO_EBR;
+  CFG_EBR.modelo = 3;
   MIGRACION_V2 = true;
   console.info('[EBR] configuracion pasada al modelo 3: matrices de persona moral simplificada y fideicomiso');
   return true;
@@ -9646,6 +9708,7 @@ function migracionEBRPendiente() {
   migrarAntiguedad(obj);
   migrarModeloV2(obj);
   migrarModeloV3(obj);
+  migrarModeloV4(obj);
 })();
 
 // ── PERFIL TRANSACCIONAL ──────────────────────────────────────
@@ -9904,6 +9967,7 @@ function cargarConfigUMA() {
         migrarAntiguedad(ebr);
         migrarModeloV2(ebr);
         migrarModeloV3(ebr);
+        migrarModeloV4(ebr);
       } catch(e) { console.warn('EBR config parse error', e); }
     }
     if (cfg.perfil_config) {
