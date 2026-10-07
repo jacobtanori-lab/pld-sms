@@ -4262,7 +4262,7 @@ function ebrReglasHtml() {
     + fila('PEP activo', 'Alto', 'p-rj')
     + fila('Familiar de PEP o relacionado con PEP', 'Medio como minimo', 'p-am')
     + fila('Pais con sanciones del Consejo de Seguridad en el domicilio, la nacionalidad o el nacimiento. En persona moral, el pais de constitucion', 'Alto', 'p-rj')
-    + fila('Pais con llamado del GAFI a aplicar contramedidas en cualquiera de esos campos. Por politica no se acepta', 'Bloquea el alta', 'p-rj')
+    + fila('Pais con llamado del GAFI a aplicar contramedidas en cualquiera de esos campos, o en la nacionalidad o el nacimiento de beneficiarios controladores y dueno beneficiario, o en el pais de un fideicomitente. Por politica no se acepta', 'Bloquea el alta', 'p-rj')
     + '<div style="font-size:12px;color:var(--tx3);margin-top:8px;line-height:1.6">El nivel final es el mayor entre el de la dimension cliente, '
     + 'el de la dimension transaccional y el que fijen estas reglas. Los umbrales de arriba se aplican a cada dimension por separado. '
     + 'Estas reglas no aplican a la persona moral simplificada.</div>'
@@ -6580,6 +6580,35 @@ function vinculosProhibidos(d) {
   return out;
 }
 
+// La misma politica aplicada a las personas relacionadas: beneficiarios
+// controladores (pais de nacimiento y nacionalidad), dueno beneficiario
+// declarado (los mismos dos) y fideicomitentes (pais de nacionalidad o
+// constitucion). Devuelve { parte, campo, pais } por cada vinculo.
+function vinculosProhibidosPartes(d) {
+  var out = [];
+  var revisa = function(parte, campo, pais) {
+    if (!pais || normPais(pais) === 'MEXICO') return;
+    if (jurisdiccionesDe(pais).indexOf('gafi_contramedidas') >= 0) out.push({ parte: parte, campo: campo, pais: pais });
+  };
+  var nom = function(p){ return [p.nombre, p.ap_pat, p.ap_mat].filter(Boolean).join(' '); };
+  (d.beneficiarios || []).forEach(function(bc, i){
+    var parte = 'beneficiario controlador #' + (i + 1) + (nom(bc) ? ' ' + nom(bc) : '');
+    revisa(parte, 'pais de nacimiento', bc.pais_nac);
+    revisa(parte, 'nacionalidad', bc.pais_nac2);
+  });
+  if (d.tiene_dueno_ben === 'SI') {
+    var pdb = 'dueno beneficiario' + (nom({ nombre: d.db_nombre, ap_pat: d.db_ap_pat, ap_mat: d.db_ap_mat }) ? ' ' + nom({ nombre: d.db_nombre, ap_pat: d.db_ap_pat, ap_mat: d.db_ap_mat }) : '');
+    revisa(pdb, 'pais de nacimiento', d.db_pais_nac);
+    revisa(pdb, 'nacionalidad', d.db_pais_nac2);
+  }
+  if (d.tipo === 'FIDEICOMISO') {
+    partesFid(d, 'fte').forEach(function(p, i){
+      revisa('fideicomitente #' + (i + 1) + (p.nombre ? ' ' + p.nombre : ''), 'pais de nacionalidad o constitucion', p.pais);
+    });
+  }
+  return out;
+}
+
 // Reglas determinantes. Cada una fija un nivel minimo con su motivo.
 function reglasEBR(d) {
   var r = [];
@@ -7482,6 +7511,9 @@ function htmlParteFid(pref, p, idx) {
     + fg('Nombre o razon social', null, true) + fi(pref + '_' + idx + '_nombre', capEsc(p.nombre || ''), '')
     + fg('RFC', null, false) + fi(pref + '_' + idx + '_rfc', capEsc(p.rfc || ''), '', 'mono')
     + fg('Tipo', null, true) + fs(pref + '_' + idx + '_tipo', opts(pref === 'fte' ? TIPOS_FTE : TIPOS_FSA, p.tipo || ''))
+    + (pref === 'fte'
+        ? fg('Pais de nacionalidad o constitucion', null, true) + fs(pref + '_' + idx + '_pais', optsPais(p.pais || 'Mexico'))
+        : '')
     + '</div></div>';
 }
 function htmlListaPartesFid(d, pref) {
@@ -7597,6 +7629,10 @@ function validarCliente(frm, datos, tipo) {
 
   // Politica: no se aceptan clientes vinculados a jurisdicciones con llamado
   // del GAFI a aplicar contramedidas. Bloquea siempre, tambien como prospecto.
+  vinculosProhibidosPartes(datos).forEach(function(v){
+    bloq.push('Por politica no se aceptan personas vinculadas a jurisdicciones con llamado del GAFI a aplicar contramedidas: '
+      + v.parte + ', ' + v.campo + ', ' + v.pais);
+  });
   vinculosProhibidos(datos).forEach(function(v){
     bloq.push('Por politica no se aceptan clientes vinculados a jurisdicciones con llamado del GAFI a aplicar contramedidas: '
       + v.campo + ', ' + v.pais);
@@ -8372,7 +8408,7 @@ function renderFID(c) {
         if (!lista.length) return fcHtml(etq, '');
         return lista.map(function(p, i){
           return fcHtml(etq + (lista.length > 1 ? ' #' + (i + 1) : ''),
-            capEsc(p.nombre || '') + (p.tipo ? ' · ' + capEsc(p.tipo) : '') + (p.rfc ? ' · RFC ' + capEsc(p.rfc) : ''));
+            capEsc(p.nombre || '') + (p.tipo ? ' · ' + capEsc(p.tipo) : '') + (p.pais ? ' · ' + capEsc(p.pais) : '') + (p.rfc ? ' · RFC ' + capEsc(p.rfc) : ''));
         }).join('');
       }).join('')
     +fcHtml('Objeto',c.objeto_fideicomiso)+fcHtml('Bien fideicomitido',c.bien_fideicomitido));
