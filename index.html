@@ -7301,14 +7301,10 @@ function htmlFormFIDEICOMISO(d) {
     +fg('Fecha de constitucion',null,true)+fi('fecha_const',d.fecha_const||'','DD-MM-AAAA')
     +fiFull('Objeto del fideicomiso','objeto_fideicomiso',d.objeto_fideicomiso||'','Descripcion del objeto',true)
     +fiFull('Bien o derecho fideicomitido','bien_fideicomitido',d.bien_fideicomitido||'','Descripcion del bien')
-    +secHdr('Fideicomitente')
-    +fg('Nombre o razon social del Fideicomitente',null,true)+fi('fideicomitente_nombre',d.fideicomitente_nombre||'','')
-    +fg('RFC del Fideicomitente',null,false)+fi('fideicomitente_rfc',d.fideicomitente_rfc||'','','mono')
-    +fg('Tipo de Fideicomitente',null,true)+fs('fideicomitente_tipo',opts(['Persona fisica mexicana','Persona fisica extranjera','Persona moral mexicana','Persona moral extranjera','Entidad publica'],d.fideicomitente_tipo||''))
-    +secHdr('Fideicomisario')
-    +fg('Nombre o razon social del Fideicomisario',null,true)+fi('fideicomisario_nombre',d.fideicomisario_nombre||'','')
-    +fg('RFC del Fideicomisario',null,false)+fi('fideicomisario_rfc',d.fideicomisario_rfc||'','','mono')
-    +fg('Tipo de Fideicomisario',null,true)+fs('fideicomisario_tipo',opts(['Persona fisica mexicana','Persona fisica extranjera','Persona moral mexicana','Persona moral extranjera','Entidad publica','Beneficiario del propio fideicomiso'],d.fideicomisario_tipo||''))
+    +'</div>'
+    +'<div class="card-b" style="padding-top:4px">'
+    + htmlListaPartesFid(d, 'fte')
+    + htmlListaPartesFid(d, 'fsa')
     +'</div></div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Delegado Fiduciario</span></div>'
     +'<div class="fgrid">'
@@ -7331,6 +7327,17 @@ function htmlFormFIDEICOMISO(d) {
     +'</div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Declaracion de Dueno Beneficiario</span></div>'
     +htmlDuenoBen(d)
+    +'</div>'
+    +'<div class="card">'
+    +'<div class="card-h"><span class="card-t">Beneficiarios controladores (Art. 23 Quinquies 1)</span>'
+    +'<button type="button" class="btn btn-sm btn-p" onclick="addBC(true)">+ Agregar</button></div>'
+    +'<div class="card-b" style="padding-bottom:0"><div style="font-size:12px;color:var(--tx3);line-height:1.6">'
+    +'Persona fisica que, en ultima instancia, ejerce el control efectivo sobre el fideicomiso. Puede tener el caracter de '
+    +'fiduciario, fideicomitente, fideicomisario, protector o miembro del comite tecnico u organo equivalente. '
+    +'Es distinto de la declaracion de dueno beneficiario de arriba.</div></div>'
+    +'<div class="card-b" id="bcs-cont">'+(d.beneficiarios&&d.beneficiarios.length
+        ? d.beneficiarios.map(function(bc,i){ return htmlBC(bc,i,true); }).join('')
+        : '<p style="font-size:12px;color:var(--tx3)">Sin beneficiarios controladores. Agregar con el boton "+".</p>')+'</div>'
     +'</div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Observaciones</span></div>'
     +'<div class="fgrid">'+ftxt('Observaciones generales','observaciones',d.observaciones||'')+'</div></div>'
@@ -7357,13 +7364,25 @@ function btnGuardar(idEx, tipo) {
 // ================================================================
 //  BENEFICIARIOS CONTROLADORES
 // ================================================================
-function htmlBC(bc, idx) {
+// conFigura: en un fideicomiso cada beneficiario controlador indica que figura
+// ocupa (Art. 23 Quinquies 1) y, si es fideicomitente o fideicomisario, cual.
+var FIGURAS_BC_FID = ['Fideicomitente','Fideicomisario','Fiduciario','Protector','Miembro del comite tecnico u organo equivalente','Otra persona con control efectivo'];
+function htmlBC(bc, idx, conFigura) {
   var oPaises = optsPais(bc.pais_nac||'Mexico');
   var oTiposId = opts(LISTAS.tiposId,bc.tipo_id||'');
+  var conParte = (bc.figura === 'Fideicomitente' || bc.figura === 'Fideicomisario');
   return '<div class="bc-blk" id="bc-'+idx+'">'
     +'<div class="bc-hdr">Beneficiario controlador #'+(idx+1)
     +'<button type="button" class="btn btn-r btn-xs" onclick="delBC('+idx+')">Eliminar</button></div>'
     +'<div class="fgrid">'
+    +(conFigura
+      ? fg('Figura que ejerce el control',null,true)
+        +'<select class="sel" name="bc_'+idx+'_figura" onchange="bcFiguraCambio(this)">'+opts(FIGURAS_BC_FID, bc.figura||'')+'</select></div>'
+        +'<div class="fg bc-parte-wrap" style="display:'+(conParte?'':'none')+'"><label class="lbl">Cual de ellos</label>'
+        +'<select class="sel" name="bc_'+idx+'_figura_parte" onfocus="bcPartesOpciones(this)">'
+        +(bc.figura_parte ? '<option value="'+capEsc(bc.figura_parte)+'" selected>'+capEsc(bc.figura_parte)+'</option>' : '<option value="">-- Seleccionar --</option>')
+        +'</select></div>'
+      : '')
     +fg('Apellido paterno',null,true)+fi('bc_'+idx+'_ap_pat',bc.ap_pat||'','')
     +fg('Apellido materno',null,true)+fi('bc_'+idx+'_ap_mat',bc.ap_mat||'','')
     +fiFull('Nombre(s)','bc_'+idx+'_nombre',bc.nombre||'','Sin abreviaturas',true)
@@ -7380,7 +7399,7 @@ function htmlBC(bc, idx) {
     +'</div></div>';
 }
 
-function addBC() {
+function addBC(conFigura) {
   var cont = document.getElementById('bcs-cont');
   if (!cont) return;
   var bcRows = cont.querySelectorAll('.bc-blk');
@@ -7388,7 +7407,7 @@ function addBC() {
   // Limpiar mensaje de "sin beneficiarios"
   if (idx === 0) cont.innerHTML = '';
   var div = document.createElement('div');
-  div.innerHTML = htmlBC({}, idx);
+  div.innerHTML = htmlBC({}, idx, !!conFigura);
   cont.appendChild(div.firstElementChild);
 }
 
@@ -7409,6 +7428,101 @@ function delBC(idx) {
       el.name = el.name.replace(/bc_\d+_/, 'bc_'+i+'_');
     });
   });
+}
+
+// ── PARTES DEL FIDEICOMISO ────────────────────────────────────
+// Un fideicomiso puede tener varios fideicomitentes y varios fideicomisarios.
+// Se guardan como listas (fideicomitentes, fideicomisarios) y el primero de
+// cada una tambien en los campos sueltos de siempre, que usan la exportacion y
+// los expedientes guardados antes del cambio.
+var TIPOS_FTE = ['Persona fisica mexicana','Persona fisica extranjera','Persona moral mexicana','Persona moral extranjera','Entidad publica'];
+var TIPOS_FSA = TIPOS_FTE.concat(['Beneficiario del propio fideicomiso']);
+function _claveParteFid(pref) { return pref === 'fte' ? 'fideicomitente' : 'fideicomisario'; }
+function partesFid(d, pref) {
+  var k = _claveParteFid(pref), lista = d[k + 's'];
+  if (lista && lista.length) return lista;
+  if (d[k + '_nombre'] || d[k + '_rfc'] || d[k + '_tipo'])
+    return [{ nombre: d[k + '_nombre'] || '', rfc: d[k + '_rfc'] || '', tipo: d[k + '_tipo'] || '' }];
+  return [];
+}
+function htmlParteFid(pref, p, idx) {
+  var etq = pref === 'fte' ? 'Fideicomitente' : 'Fideicomisario';
+  return '<div class="bc-blk" id="' + pref + '-' + idx + '">'
+    + '<div class="bc-hdr">' + etq + ' #' + (idx + 1)
+    + (idx > 0 ? '<button type="button" class="btn btn-r btn-xs" onclick="delParteFid(\'' + pref + '\',' + idx + ')">Eliminar</button>' : '')
+    + '</div><div class="fgrid">'
+    + fg('Nombre o razon social', null, true) + fi(pref + '_' + idx + '_nombre', capEsc(p.nombre || ''), '')
+    + fg('RFC', null, false) + fi(pref + '_' + idx + '_rfc', capEsc(p.rfc || ''), '', 'mono')
+    + fg('Tipo', null, true) + fs(pref + '_' + idx + '_tipo', opts(pref === 'fte' ? TIPOS_FTE : TIPOS_FSA, p.tipo || ''))
+    + '</div></div>';
+}
+function htmlListaPartesFid(d, pref) {
+  var etq = pref === 'fte' ? 'fideicomitente' : 'fideicomisario';
+  var lista = partesFid(d, pref);
+  if (!lista.length) lista = [{}];
+  return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:10px 0 6px">'
+    + '<div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px">' + etq + 's</div>'
+    + '<button type="button" class="btn btn-sm btn-p" onclick="addParteFid(\'' + pref + '\')">+ Agregar ' + etq + '</button></div>'
+    + '<div id="' + pref + '-cont">' + lista.map(function(p, i){ return htmlParteFid(pref, p, i); }).join('') + '</div>';
+}
+function addParteFid(pref) {
+  var cont = document.getElementById(pref + '-cont');
+  if (!cont) return;
+  var div = document.createElement('div');
+  div.innerHTML = htmlParteFid(pref, {}, cont.querySelectorAll('.bc-blk').length);
+  cont.appendChild(div.firstElementChild);
+}
+function delParteFid(pref, idx) {
+  var el = document.getElementById(pref + '-' + idx); if (el) el.remove();
+  var cont = document.getElementById(pref + '-cont'); if (!cont) return;
+  var etq = pref === 'fte' ? 'Fideicomitente' : 'Fideicomisario';
+  var re = new RegExp('^' + pref + '_\\d+_');
+  cont.querySelectorAll('.bc-blk').forEach(function(row, i){
+    row.id = pref + '-' + i;
+    var hdr = row.querySelector('.bc-hdr'); if (hdr) hdr.firstChild.textContent = etq + ' #' + (i + 1);
+    var btn = row.querySelector('.btn-r'); if (btn) btn.setAttribute('onclick', 'delParteFid(\'' + pref + '\',' + i + ')');
+    row.querySelectorAll('[name]').forEach(function(x){ x.name = x.name.replace(re, pref + '_' + i + '_'); });
+  });
+}
+function recogerPartesFid(pref) {
+  var out = [], cont = document.getElementById(pref + '-cont');
+  if (!cont) return out;
+  cont.querySelectorAll('.bc-blk').forEach(function(row, i){
+    var p = {};
+    row.querySelectorAll('[name]').forEach(function(x){ p[x.name.replace(pref + '_' + i + '_', '')] = x.value; });
+    p.nombre = String(p.nombre || '').toUpperCase().trim();
+    p.rfc = String(p.rfc || '').toUpperCase().trim();
+    if (p.nombre || p.rfc || p.tipo) out.push(p);
+  });
+  return out;
+}
+// La figura del beneficiario controlador: "cual de ellos" solo aplica a
+// fideicomitentes y fideicomisarios, y se llena con los capturados arriba.
+function bcFiguraCambio(sel) {
+  var blk = sel.closest('.bc-blk'); if (!blk) return;
+  var wrap = blk.querySelector('.bc-parte-wrap'), parte = blk.querySelector('[name$="_figura_parte"]');
+  var aplica = (sel.value === 'Fideicomitente' || sel.value === 'Fideicomisario');
+  if (wrap) wrap.style.display = aplica ? '' : 'none';
+  if (parte) { parte.innerHTML = '<option value="">-- Seleccionar --</option>'; if (aplica) bcPartesOpciones(parte); }
+}
+function bcPartesOpciones(sel) {
+  var blk = sel.closest('.bc-blk'); if (!blk) return;
+  var fig = (blk.querySelector('[name$="_figura"]') || {}).value;
+  var pref = fig === 'Fideicomitente' ? 'fte' : fig === 'Fideicomisario' ? 'fsa' : '';
+  if (!pref) return;
+  var actual = sel.value;
+  var nombres = [];
+  document.querySelectorAll('#' + pref + '-cont [name$="_nombre"]').forEach(function(x){
+    var v = String(x.value || '').toUpperCase().trim(); if (v && nombres.indexOf(v) < 0) nombres.push(v);
+  });
+  sel.innerHTML = '<option value="">-- Seleccionar --</option>' + nombres.map(function(n){
+    return '<option value="' + capEsc(n) + '"' + (n === actual ? ' selected' : '') + '>' + capEsc(n) + '</option>';
+  }).join('');
+}
+
+// Una columna de la exportacion con todos los fideicomitentes o fideicomisarios.
+function _partesTxt(c, pref, campo) {
+  return partesFid(c, pref).map(function(p){ return p[campo] || ''; }).join(' | ');
 }
 
 function recogerBCs() {
@@ -7522,10 +7636,17 @@ function submitCliente(tipo, idEx) {
   var frm = document.getElementById('frm'); if(!frm) return;
   var datos = {tipo: tipo};
   frm.querySelectorAll('[name]').forEach(function(el) {
-    if (el.name.indexOf('bc_')!==0) datos[el.name] = el.value;
+    if (!/^(bc|fte|fsa)_\d+_/.test(el.name)) datos[el.name] = el.value;
   });
 
-  if (tipo === 'PM_MEX') datos.beneficiarios = recogerBCs();
+  if (tipo === 'PM_MEX' || tipo === 'FIDEICOMISO') datos.beneficiarios = recogerBCs();
+  if (tipo === 'FIDEICOMISO') {
+    ['fte', 'fsa'].forEach(function(pref){
+      var k = _claveParteFid(pref), lista = recogerPartesFid(pref), p0 = lista[0] || {};
+      datos[k + 's'] = lista;
+      datos[k + '_nombre'] = p0.nombre || ''; datos[k + '_rfc'] = p0.rfc || ''; datos[k + '_tipo'] = p0.tipo || '';
+    });
+  }
 
   // ── Normalizar a MAYÚSCULAS los campos de texto (no selects, no correos) ──
   function esCorreo(k){ k=(k||'').toLowerCase(); return k.indexOf('email')>=0 || k.indexOf('correo')>=0; }
@@ -7537,7 +7658,7 @@ function submitCliente(tipo, idEx) {
   });
   // Beneficiarios controladores (mismos criterios; sus selects no se tocan)
   if (datos.beneficiarios && datos.beneficiarios.length) {
-    var camposBCNoUpper = {tipo_id:1, autoridad_id:1, pais_nac:1, pais_nac2:1};
+    var camposBCNoUpper = {tipo_id:1, autoridad_id:1, pais_nac:1, pais_nac2:1, figura:1};
     datos.beneficiarios.forEach(function(bc){
       Object.keys(bc).forEach(function(k){
         if (typeof bc[k]==='string' && !esCorreo(k) && !camposBCNoUpper[k]) bc[k] = bc[k].toUpperCase();
@@ -7783,7 +7904,7 @@ function renderFicha(c) {
     +'<div class="ftab on" onclick="fichaTab(this,\'fd-datos\')">Datos generales</div>'
     +'<div class="ftab" onclick="fichaTab(this,\'fd-dom\')">Domicilio</div>'
     +(c.tipo==='PM_MEX'?'<div class="ftab" onclick="fichaTab(this,\'fd-rl\')">Representante legal</div><div class="ftab" onclick="fichaTab(this,\'fd-bcs\')">Beneficiarios</div>':'')
-    +(c.tipo==='FIDEICOMISO'?'<div class="ftab" onclick="fichaTab(this,\'fd-fid\')">Fideicomiso</div><div class="ftab" onclick="fichaTab(this,\'fd-df\')">Delegado fiduciario</div>':'')
+    +(c.tipo==='FIDEICOMISO'?'<div class="ftab" onclick="fichaTab(this,\'fd-fid\')">Fideicomiso</div><div class="ftab" onclick="fichaTab(this,\'fd-df\')">Delegado fiduciario</div><div class="ftab" onclick="fichaTab(this,\'fd-bcs\')">Beneficiarios controladores</div>':'')
     +(c.tipo==='PM_SIMP'?'<div class="ftab" onclick="fichaTab(this,\'fd-rl\')">Representante / funcionario</div>':'')
     +'<div class="ftab" onclick="fichaTab(this,\'fd-duen\')">Dueno beneficiario</div>'
     +'<div class="ftab" onclick="fichaTab(this,\'fd-docs\');renderDocs()">Documentos</div>'
@@ -8200,6 +8321,7 @@ function renderBCS(bcs) {
         +fcHtml('Nombre de la identificacion',bc.tipo_id)+fcHtml('No. identificacion',bc.num_id)
         +fcHtml('Autoridad',bc.autoridad_id)
         +fcHtml('% participacion',bc.pct?bc.pct+'%':'')
+        +(bc.figura ? fcHtml('Figura que ejerce el control', capEsc(bc.figura + (bc.figura_parte ? ': ' + bc.figura_parte : ''))) : '')
         +fcHtml('Como ejerce el control',bc.control))
       +'</div></div>';
   }).join('');
@@ -8209,10 +8331,15 @@ function renderFID(c) {
   return fgHtml(
     fcHtml('No. fideicomiso',c.num_fideicomiso)+fcHtml('RFC',c.rfc)
     +fcHtml('Fiduciario',c.fiduciario)+fcHtml('Fecha de constitucion',c.fecha_const)
-    +fcHtml('Fideicomitente',c.fideicomitente_nombre)+fcHtml('Tipo fideicomitente',c.fideicomitente_tipo)
-    +fcHtml('RFC fideicomitente',c.fideicomitente_rfc)
-    +fcHtml('Fideicomisario',c.fideicomisario_nombre)+fcHtml('Tipo fideicomisario',c.fideicomisario_tipo)
-    +fcHtml('RFC fideicomisario',c.fideicomisario_rfc)
+    +['fte','fsa'].map(function(pref){
+        var etq = pref === 'fte' ? 'Fideicomitente' : 'Fideicomisario';
+        var lista = partesFid(c, pref);
+        if (!lista.length) return fcHtml(etq, '');
+        return lista.map(function(p, i){
+          return fcHtml(etq + (lista.length > 1 ? ' #' + (i + 1) : ''),
+            capEsc(p.nombre || '') + (p.tipo ? ' · ' + capEsc(p.tipo) : '') + (p.rfc ? ' · RFC ' + capEsc(p.rfc) : ''));
+        }).join('');
+      }).join('')
     +fcHtml('Objeto',c.objeto_fideicomiso)+fcHtml('Bien fideicomitido',c.bien_fideicomitido));
 }
 
@@ -11306,8 +11433,10 @@ function _nombresAScreening(datos) {
   if (datos.tiene_dueno_ben === 'SI')
     add('Dueño beneficiario', nom([datos.db_nombre, datos.db_ap_pat, datos.db_ap_mat]));
   add('Fiduciario', datos.fiduciario);
-  add('Fideicomitente', datos.fideicomitente_nombre);
-  add('Fideicomisario', datos.fideicomisario_nombre);
+  ['fte', 'fsa'].forEach(function(pref){
+    var etq = pref === 'fte' ? 'Fideicomitente' : 'Fideicomisario', lista = partesFid(datos, pref);
+    lista.forEach(function(p, i){ add(etq + (lista.length > 1 ? ' #' + (i + 1) : ''), p.nombre); });
+  });
   (datos.beneficiarios || []).forEach(function(bc, i){
     add('Beneficiario controlador #'+(i+1), nom([bc.nombre, bc.ap_pat, bc.ap_mat]));
   });
@@ -12835,7 +12964,7 @@ function _generarXLSX() {
     var colsFid = ['Num. Cliente','Num fideicomiso','RFC','Fiduciario','Fecha const','Objeto','Bien fideicomitido','Fideicomitente','Fideicomitente RFC','Fideicomitente tipo','Fideicomisario','Fideicomisario RFC','Fideicomisario tipo'];
     var filasFid = [];
     clientes.forEach(function(c){
-      if (c.tipo==='FIDEICOMISO') filasFid.push([nStr(c.num_cliente),c.num_fideicomiso||'',c.rfc||'',c.fiduciario||'',c.fecha_const||'',c.objeto_fideicomiso||'',c.bien_fideicomitido||'',c.fideicomitente_nombre||'',c.fideicomitente_rfc||'',c.fideicomitente_tipo||'',c.fideicomisario_nombre||'',c.fideicomisario_rfc||'',c.fideicomisario_tipo||'']);
+      if (c.tipo==='FIDEICOMISO') filasFid.push([nStr(c.num_cliente),c.num_fideicomiso||'',c.rfc||'',c.fiduciario||'',c.fecha_const||'',c.objeto_fideicomiso||'',c.bien_fideicomitido||'',_partesTxt(c,'fte','nombre'),_partesTxt(c,'fte','rfc'),_partesTxt(c,'fte','tipo'),_partesTxt(c,'fsa','nombre'),_partesTxt(c,'fsa','rfc'),_partesTxt(c,'fsa','tipo')]);
     });
 
     // ── HOJA 6: Alertas (detalle, 1 fila por alerta) ──
