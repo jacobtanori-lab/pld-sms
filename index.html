@@ -4262,7 +4262,7 @@ function ebrReglasHtml() {
     + fila('PEP activo', 'Alto', 'p-rj')
     + fila('Familiar de PEP o relacionado con PEP', 'Medio como minimo', 'p-am')
     + fila('Pais con sanciones del Consejo de Seguridad en el domicilio, la nacionalidad o el nacimiento. En persona moral, el pais de constitucion', 'Alto', 'p-rj')
-    + fila('Pais con llamado del GAFI a aplicar contramedidas en cualquiera de esos campos, o en la nacionalidad o el nacimiento de beneficiarios controladores, dueno beneficiario, representante legal o delegado fiduciario, o en el pais de un fideicomitente. Por politica no se acepta', 'Bloquea el alta', 'p-rj')
+    + fila('Pais con llamado del GAFI a aplicar contramedidas en cualquiera de esos campos, o en la nacionalidad o el nacimiento de beneficiarios controladores, dueno beneficiario, representante legal o delegado fiduciario, o en el pais de un fideicomitente o fideicomisario. Por politica no se acepta', 'Bloquea el alta', 'p-rj')
     + '<div style="font-size:12px;color:var(--tx3);margin-top:8px;line-height:1.6">El nivel final es el mayor entre el de la dimension cliente, '
     + 'el de la dimension transaccional y el que fijen estas reglas. Los umbrales de arriba se aplican a cada dimension por separado. '
     + 'Estas reglas no aplican a la persona moral simplificada.</div>'
@@ -6582,8 +6582,9 @@ function vinculosProhibidos(d) {
 
 // La misma politica aplicada a las personas relacionadas: beneficiarios
 // controladores, dueno beneficiario declarado, representante legal y delegado
-// fiduciario (pais de nacimiento y nacionalidad) y fideicomitentes (pais de
-// nacionalidad o constitucion). Devuelve { parte, campo, pais } por vinculo.
+// fiduciario (pais de nacimiento y nacionalidad), y fideicomitentes y
+// fideicomisarios (pais de nacionalidad o constitucion). Devuelve
+// { parte, campo, pais } por vinculo.
 function vinculosProhibidosPartes(d) {
   var out = [];
   var revisa = function(parte, campo, pais) {
@@ -6616,6 +6617,9 @@ function vinculosProhibidosPartes(d) {
   if (d.tipo === 'FIDEICOMISO') {
     partesFid(d, 'fte').forEach(function(p, i){
       revisa('fideicomitente #' + (i + 1) + (p.nombre ? ' ' + p.nombre : ''), 'pais de nacionalidad o constitucion', p.pais);
+    });
+    partesFid(d, 'fsa').forEach(function(p, i){
+      revisa('fideicomisario #' + (i + 1) + (p.nombre ? ' ' + p.nombre : ''), 'pais de nacionalidad o constitucion', p.pais);
     });
   }
   return out;
@@ -7523,9 +7527,7 @@ function htmlParteFid(pref, p, idx) {
     + fg('Nombre o razon social', null, true) + fi(pref + '_' + idx + '_nombre', capEsc(p.nombre || ''), '')
     + fg('RFC', null, false) + fi(pref + '_' + idx + '_rfc', capEsc(p.rfc || ''), '', 'mono')
     + fg('Tipo', null, true) + fs(pref + '_' + idx + '_tipo', opts(pref === 'fte' ? TIPOS_FTE : TIPOS_FSA, p.tipo || ''))
-    + (pref === 'fte'
-        ? fg('Pais de nacionalidad o constitucion', null, true) + fs(pref + '_' + idx + '_pais', optsPais(p.pais || 'Mexico'))
-        : '')
+    + fg('Pais de nacionalidad o constitucion', null, true) + fs(pref + '_' + idx + '_pais', optsPais(p.pais || 'Mexico'))
     + '</div></div>';
 }
 function htmlListaPartesFid(d, pref) {
