@@ -4262,7 +4262,7 @@ function ebrReglasHtml() {
     + fila('PEP activo', 'Alto', 'p-rj')
     + fila('Familiar de PEP o relacionado con PEP', 'Medio como minimo', 'p-am')
     + fila('Pais con sanciones del Consejo de Seguridad en el domicilio, la nacionalidad o el nacimiento. En persona moral, el pais de constitucion', 'Alto', 'p-rj')
-    + fila('Pais con llamado del GAFI a aplicar contramedidas en cualquiera de esos campos, o en la nacionalidad o el nacimiento de beneficiarios controladores y dueno beneficiario, o en el pais de un fideicomitente. Por politica no se acepta', 'Bloquea el alta', 'p-rj')
+    + fila('Pais con llamado del GAFI a aplicar contramedidas en cualquiera de esos campos, o en la nacionalidad o el nacimiento de beneficiarios controladores, dueno beneficiario, representante legal o delegado fiduciario, o en el pais de un fideicomitente. Por politica no se acepta', 'Bloquea el alta', 'p-rj')
     + '<div style="font-size:12px;color:var(--tx3);margin-top:8px;line-height:1.6">El nivel final es el mayor entre el de la dimension cliente, '
     + 'el de la dimension transaccional y el que fijen estas reglas. Los umbrales de arriba se aplican a cada dimension por separado. '
     + 'Estas reglas no aplican a la persona moral simplificada.</div>'
@@ -6581,9 +6581,9 @@ function vinculosProhibidos(d) {
 }
 
 // La misma politica aplicada a las personas relacionadas: beneficiarios
-// controladores (pais de nacimiento y nacionalidad), dueno beneficiario
-// declarado (los mismos dos) y fideicomitentes (pais de nacionalidad o
-// constitucion). Devuelve { parte, campo, pais } por cada vinculo.
+// controladores, dueno beneficiario declarado, representante legal y delegado
+// fiduciario (pais de nacimiento y nacionalidad) y fideicomitentes (pais de
+// nacionalidad o constitucion). Devuelve { parte, campo, pais } por vinculo.
 function vinculosProhibidosPartes(d) {
   var out = [];
   var revisa = function(parte, campo, pais) {
@@ -6600,6 +6600,18 @@ function vinculosProhibidosPartes(d) {
     var pdb = 'dueno beneficiario' + (nom({ nombre: d.db_nombre, ap_pat: d.db_ap_pat, ap_mat: d.db_ap_mat }) ? ' ' + nom({ nombre: d.db_nombre, ap_pat: d.db_ap_pat, ap_mat: d.db_ap_mat }) : '');
     revisa(pdb, 'pais de nacimiento', d.db_pais_nac);
     revisa(pdb, 'nacionalidad', d.db_pais_nac2);
+  }
+  // Representante legal (persona moral) y delegado fiduciario (fideicomiso):
+  // pais de nacimiento y nacionalidad, cuando el expediente los tiene.
+  if (d.rl_pais_nac || d.rl_pais_nac2) {
+    var prl = 'representante legal' + (nom({ nombre: d.rl_nombre, ap_pat: d.rl_ap_pat, ap_mat: d.rl_ap_mat }) ? ' ' + nom({ nombre: d.rl_nombre, ap_pat: d.rl_ap_pat, ap_mat: d.rl_ap_mat }) : '');
+    revisa(prl, 'pais de nacimiento', d.rl_pais_nac);
+    revisa(prl, 'nacionalidad', d.rl_pais_nac2);
+  }
+  if (d.df_pais_nac || d.df_pais_nac2) {
+    var pdf = 'delegado fiduciario' + (nom({ nombre: d.df_nombre, ap_pat: d.df_ap_pat, ap_mat: d.df_ap_mat }) ? ' ' + nom({ nombre: d.df_nombre, ap_pat: d.df_ap_pat, ap_mat: d.df_ap_mat }) : '');
+    revisa(pdf, 'pais de nacimiento', d.df_pais_nac);
+    revisa(pdf, 'nacionalidad', d.df_pais_nac2);
   }
   if (d.tipo === 'FIDEICOMISO') {
     partesFid(d, 'fte').forEach(function(p, i){
