@@ -6635,6 +6635,11 @@ function reglasEBR(d) {
   if (pep === 'Activo') r.push({ nivel: 'Alto', motivo: 'PEP activo' });
   else if (pep === 'Familiar') r.push({ nivel: 'Medio', motivo: 'familiar de PEP' });
   else if (pep === 'Relacionado a PEP') r.push({ nivel: 'Medio', motivo: 'relacionado con PEP' });
+  pepPartesConfirmadas(d).forEach(function(pp){
+    var quien = pp.parte + (pp.nombre ? ' ' + pp.nombre : '');
+    if (pp.estatus === 'Activo') r.push({ nivel: 'Alto', motivo: 'PEP activo en ' + quien });
+    else if (pp.estatus === 'Familiar' || pp.estatus === 'Relacionado a PEP') r.push({ nivel: 'Medio', motivo: pp.estatus.toLowerCase() + ' en ' + quien });
+  });
   var esFisica = (d.tipo === 'PF_MEX' || d.tipo === 'PF_EXT');
   var paises = paisesDePersona(d);
   var campos = [['el domicilio', domicilioDePersona(d).pais],
@@ -6659,8 +6664,11 @@ function calcEBRCliente(d) {
   if (M.sin_factores) return 0;
   // Tipo de cliente
   p += (M.tipo_cliente && M.tipo_cliente[d.tipo] !== undefined) ? M.tipo_cliente[d.tipo] : 0;
-  // Estatus PEP
-  p += (M.pep && M.pep[d.estatus_pep || 'NO APLICA']) || 0;
+  // Estatus PEP: el del cliente o el de una persona relacionada confirmada
+  // como PEP por listas (persona moral y fideicomiso), el que pese mas.
+  var pepPts = (M.pep && M.pep[d.estatus_pep || 'NO APLICA']) || 0;
+  pepPartesConfirmadas(d).forEach(function(pp){ pepPts = Math.max(pepPts, (M.pep && M.pep[pp.estatus]) || 0); });
+  p += pepPts;
   // Declaración de dueño beneficiario
   var db = d.tiene_dueno_ben || ((d.beneficiarios && d.beneficiarios.length) ? 'SI' : 'NO');
   p += (M.dueno_beneficiario && M.dueno_beneficiario[db] !== undefined) ? M.dueno_beneficiario[db] : 0;
@@ -7155,7 +7163,7 @@ function htmlFormPF_MEX(d) {
     +'<div class="card"><div class="card-h"><span class="card-t">Datos generales del expediente</span></div>'
     +'<div class="fgrid">'
     +fg('Estatus del cliente',null,true)+fs('estatus',opts(LISTAS.estatusC,d.estatus||'Activo'))
-    +fg('Estatus PEP',null,true)+fs('estatus_pep',opts(LISTAS.estatusPEP,d.estatus_pep||'NO APLICA'))
+    +fg('Estatus PEP',null,true)+selectEstatusPEP(d)
     +fg('Fecha de alta',null,true)+fi('fecha_alta',d.fecha_alta||hoy(),'')
     +fg('Fecha de baja',null,false)+fi('fecha_baja',d.fecha_baja||'','Dejar vacio si no aplica')
     +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id"><option value="">-- Sin asignar --</option>'+ASESORES.map(function(a){ return '<option value="'+a.id+'"'+(a.id===d.asesor_id?' selected':'')+'>'+a.nombre+'</option>'; }).join('')+'</select></div>'
@@ -7194,7 +7202,7 @@ function htmlFormPF_EXT(d) {
     +'<div class="card"><div class="card-h"><span class="card-t">Datos generales del expediente</span></div>'
     +'<div class="fgrid">'
     +fg('Estatus del cliente',null,true)+fs('estatus',opts(LISTAS.estatusC,d.estatus||'Activo'))
-    +fg('Estatus PEP',null,true)+fs('estatus_pep',opts(LISTAS.estatusPEP,d.estatus_pep||'NO APLICA'))
+    +fg('Estatus PEP',null,true)+selectEstatusPEP(d)
     +fg('Fecha de alta',null,true)+fi('fecha_alta',d.fecha_alta||hoy(),'')
     +fg('Fecha de baja',null,false)+fi('fecha_baja',d.fecha_baja||'','')
     +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id">'+htmlSelectAsesores(d.asesor_id||'')+'</select></div>'
@@ -7247,7 +7255,7 @@ function htmlFormPM_MEX(d) {
     +'<div class="card"><div class="card-h"><span class="card-t">Datos generales del expediente</span></div>'
     +'<div class="fgrid">'
     +fg('Estatus del cliente',null,true)+fs('estatus',opts(LISTAS.estatusC,d.estatus||'Activo'))
-    +fg('Estatus PEP',null,true)+fs('estatus_pep',opts(LISTAS.estatusPEP,d.estatus_pep||'NO APLICA'))
+    +fg('Estatus PEP',null,true)+selectEstatusPEP(d)
     +fg('Fecha de alta',null,true)+fi('fecha_alta',d.fecha_alta||hoy(),'')
     +fg('Fecha de baja',null,false)+fi('fecha_baja',d.fecha_baja||'','')
     +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id">'+htmlSelectAsesores(d.asesor_id||'')+'</select></div>'
@@ -7311,7 +7319,7 @@ function htmlFormPM_SIMP(d) {
     +'<div class="card"><div class="card-h"><span class="card-t">Datos generales del expediente</span></div>'
     +'<div class="fgrid">'
     +fg('Estatus del cliente',null,true)+fs('estatus',opts(LISTAS.estatusC,d.estatus||'Activo'))
-    +fg('Estatus PEP',null,true)+fs('estatus_pep',opts(LISTAS.estatusPEP,d.estatus_pep||'NO APLICA'))
+    +fg('Estatus PEP',null,true)+selectEstatusPEP(d)
     +fg('Fecha de alta',null,true)+fi('fecha_alta',d.fecha_alta||hoy(),'')
     +fg('Fecha de baja',null,false)+fi('fecha_baja',d.fecha_baja||'','')
     +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id">'+htmlSelectAsesores(d.asesor_id||'')+'</select></div>'
@@ -7359,7 +7367,7 @@ function htmlFormFIDEICOMISO(d) {
     +'<div class="card"><div class="card-h"><span class="card-t">Datos generales del expediente</span></div>'
     +'<div class="fgrid">'
     +fg('Estatus del cliente',null,true)+fs('estatus',opts(LISTAS.estatusC,d.estatus||'Activo'))
-    +fg('Estatus PEP',null,true)+fs('estatus_pep',opts(LISTAS.estatusPEP,d.estatus_pep||'NO APLICA'))
+    +fg('Estatus PEP',null,true)+selectEstatusPEP(d)
     +fg('Fecha de alta',null,true)+fi('fecha_alta',d.fecha_alta||hoy(),'')
     +fg('Fecha de baja',null,false)+fi('fecha_baja',d.fecha_baja||'','')
     +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id">'+htmlSelectAsesores(d.asesor_id||'')+'</select></div>'
@@ -7425,6 +7433,19 @@ function htmlFormBase(tipo, d) {
   if (tipo==='PM_SIMP')    return htmlFormPM_SIMP(d);
   if (tipo==='FIDEICOMISO') return htmlFormFIDEICOMISO(d);
   return '<div class="empty">Tipo no reconocido</div>';
+}
+
+// Estatus PEP en el formulario. Si se confirmo por coincidencia en listas,
+// solo el administrador lo puede cambiar; para los demas queda bloqueado.
+function selectEstatusPEP(d) {
+  var bloq = d.pep_origen === 'listas' && App.rol !== 'admin';
+  return '<select class="sel" name="estatus_pep"' + (bloq ? ' disabled' : '') + '>'
+    + opts(LISTAS.estatusPEP, d.estatus_pep || 'NO APLICA') + '</select>'
+    + (d.pep_origen === 'listas'
+        ? '<span class="fhint">Confirmado por coincidencia en listas' + (d.pep_confirmado_por ? ' por ' + capEsc(d.pep_confirmado_por) : '')
+          + (d.pep_confirmado_fecha ? ' el ' + capEsc(d.pep_confirmado_fecha) : '') + '. Solo un administrador lo puede cambiar.</span>'
+        : '')
+    + '</div>';
 }
 
 function btnGuardar(idEx, tipo) {
@@ -7761,6 +7782,23 @@ function submitCliente(tipo, idEx) {
     return;
   }
 
+  // Campos que pone el sistema y que el formulario no trae: al editar se
+  // conservan del expediente guardado (resoluciones de screening, origen del
+  // estatus PEP, bloqueo, revaloracion, enlaces de constancias).
+  var _orig = null;
+  if (idEx) (App.clientes || []).forEach(function(x){ if (String(x.id) === String(idEx)) _orig = x; });
+  if (_orig) {
+    ['scr_resoluciones','pep_origen','pep_confirmado_por','pep_confirmado_fecha','bloqueo_scr',
+     'ciclo_ult_revaluacion','fecha_ult_revaluacion','curp_qr_url','curp_folio','curp_constancia_fecha','id_cif','rfc_qr_url'
+    ].forEach(function(k){
+      if ((datos[k] === undefined || datos[k] === '') && _orig[k] !== undefined) datos[k] = _orig[k];
+    });
+    // Estatus PEP confirmado por listas: solo el administrador lo cambia.
+    if (_orig.pep_origen === 'listas' && App.rol !== 'admin') datos.estatus_pep = _orig.estatus_pep;
+    // Bloqueado por sanciones: solo el administrador lo desbloquea.
+    if (_orig.bloqueo_scr && App.rol !== 'admin') { datos.estatus = 'Bloqueado'; datos.aprobacion = _orig.aprobacion; }
+  }
+
   // RFC duplicado en la misma entidad: cotejo rapido contra lo que ya esta en
   // memoria, para avisar antes de entrar al screening (el cotejo definitivo,
   // contra SharePoint, va mas abajo).
@@ -7975,7 +8013,8 @@ function renderFicha(c) {
           .map(function(x){ return x.slice(7); });
         return rg.length ? '<span class="pill '+pR(c.riesgo)+'">Por regla: '+capEsc(rg.join(', '))+'</span>' : '';
       })()
-    +((['Activo','Familiar','Relacionado a PEP'].indexOf(c.estatus_pep||'')>=0)?'<span class="pill p-mo">PEP: '+c.estatus_pep+'</span>':'')
+    +((['Activo','Familiar','Relacionado a PEP'].indexOf(c.estatus_pep||'')>=0)?'<span class="pill p-mo">PEP: '+c.estatus_pep+(c.pep_origen==='listas'?' (confirmado en listas)':'')+'</span>':'')
+    +(c.bloqueo_scr?'<span class="pill p-rj">Bloqueado por lista de sanciones</span>':'')
     +'</div>'
     +'<div class="psub">'+labelTipo(c.tipo)+' - '+(c.entidad_nombre||c.entidad_id||'')
     +' - Alta: '+String(c.fecha_alta||'-').substring(0,10)+(c.fecha_baja?' - Baja: '+String(c.fecha_baja).substring(0,10):'')
@@ -7998,6 +8037,7 @@ function renderFicha(c) {
     +'<div class="ftab" onclick="fichaTab(this,\'fd-docs\');renderDocs()">Documentos</div>'
     +'<div class="ftab" onclick="fichaTab(this,\'fd-ops\');renderOpsCliente()">Operaciones</div>'
     +'<div class="ftab" onclick="fichaTab(this,\'fd-ptx\')">Perfil transaccional</div>'
+    +'<div class="ftab" onclick="fichaTab(this,\'fd-scr\')">Screening</div>'
     +'</div>'
     +'<div class="card" style="border-radius:0 0 var(--rl) var(--rl)">'
     +'<div id="fd-datos" class="card-b">'+renderDatosGenerales(c)+'</div>'
@@ -8011,13 +8051,14 @@ function renderFicha(c) {
     +'<div id="fd-docs" class="card-b" style="display:none"><div class="empty"><div class="spin" style="margin:0 auto"></div></div></div>'
     +'<div id="fd-ops" class="card-b" style="display:none"><div class="empty"><div class="spin" style="margin:0 auto"></div></div></div>'
     +'<div id="fd-ptx" class="card-b" style="display:none">'+renderPerfilTx(c)+'</div>'
+    +'<div id="fd-scr" class="card-b" style="display:none">'+renderResolucionesScr(c)+'</div>'
     +'</div>';
   setMain(html);
 }
 
 function fichaTab(el,id) {
   document.querySelectorAll('.ftab').forEach(function(t){t.classList.remove('on');}); el.classList.add('on');
-  ['fd-datos','fd-dom','fd-rl','fd-bcs','fd-fid','fd-df','fd-dom-ext','fd-duen','fd-docs','fd-ops','fd-ptx'].forEach(function(i){
+  ['fd-datos','fd-dom','fd-rl','fd-bcs','fd-fid','fd-df','fd-dom-ext','fd-duen','fd-docs','fd-ops','fd-ptx','fd-scr'].forEach(function(i){
     var e=document.getElementById(i); if(e) e.style.display='none';
   });
   var t=document.getElementById(id); if(t) t.style.display='block';
@@ -8395,6 +8436,27 @@ function renderRL(c) {
     +fcHtml('Nombre de la identificacion',c.rl_tipo_id)+fcHtml('No. identificacion',c.rl_num_id)
     +fcHtml('Autoridad que la emite',c.rl_autoridad_id)
     +fcHtml('Telefono',c.rl_telefono));
+}
+
+// Pestana Screening de la ficha: decisiones tomadas sobre coincidencias.
+function renderResolucionesScr(c) {
+  var l = c.scr_resoluciones || [];
+  var cab = c.bloqueo_scr
+    ? '<div class="alerta-banner" style="background:var(--rj3);border:1px solid var(--rj);color:var(--rj);margin-bottom:10px"><strong>Cliente bloqueado</strong> por coincidencia confirmada en '
+      + capEsc(c.bloqueo_scr.lista || '') + ' (' + capEsc(c.bloqueo_scr.parte || '') + ': ' + capEsc(c.bloqueo_scr.nombre || '') + '), '
+      + capEsc(c.bloqueo_scr.por || '') + ', ' + capEsc(c.bloqueo_scr.fecha || '') + '.</div>'
+    : '';
+  if (!l.length) return cab + '<div class="empty">Sin coincidencias resueltas.</div>';
+  return cab + '<div style="overflow-x:auto"><table><thead><tr><th>Persona</th><th>Lista</th><th>Registro</th><th>Decision</th><th>Fundamento</th><th>Resolvio</th></tr></thead><tbody>'
+    + l.map(function(r){
+        return '<tr><td>' + capEsc(r.parte) + '<div style="font-size:11px;color:var(--tx3)">' + capEsc(r.nombre_evaluado) + '</div></td>'
+          + '<td>' + capEsc(r.lista) + '</td>'
+          + '<td>' + capEsc(r.nombre_lista) + (r.uid ? '<div style="font-size:11px;color:var(--tx3)">ID ' + capEsc(r.uid) + '</div>' : '') + '</td>'
+          + '<td><span class="pill ' + (r.decision === 'CONFIRMADA' ? 'p-rj' : 'p-vd') + '">' + (r.decision === 'CONFIRMADA' ? 'Confirmada' : 'Falso positivo') + '</span>'
+          + (r.estatus_pep ? '<div style="font-size:11px;color:var(--tx3)">PEP ' + capEsc(r.estatus_pep) + '</div>' : '') + '</td>'
+          + '<td style="white-space:normal">' + capEsc(r.fundamento) + '</td>'
+          + '<td>' + capEsc(r.resuelto_por) + '<div style="font-size:11px;color:var(--tx3)">' + capEsc(r.fecha) + '</div></td></tr>';
+      }).join('') + '</tbody></table></div>';
 }
 
 function renderBCS(bcs) {
@@ -8866,10 +8928,125 @@ function renderFichaAlerta(a) {
     +fcHtml('Fecha registro',String(a.fecha_registro||'-').substring(0,10))
     +'</div></div></div>'
 
+    + seccionResolucionScr(a)
     // Sección de atención — distinta para alertas de aprobación vs umbral/otras
-    + (a.requiere_aprobacion ? seccionAprobacionAlerta(a) : seccionAtencionAlerta(a));
+    + (a.requiere_aprobacion ? seccionAprobacionAlerta(a) : (a.resolucion_scr ? '' : seccionAtencionAlerta(a)));
 
   setMain(html);
+}
+
+function _coincidenciasAlerta(a) {
+  try { var l = JSON.parse(a.coincidencias_scr || '[]'); return Array.isArray(l) ? l : []; } catch (e) { return []; }
+}
+function seccionResolucionScr(a) {
+  var lista = _coincidenciasAlerta(a);
+  if (!lista.length) return '';
+  var esAdmin = App.rol === 'admin';
+  var pend = lista.filter(function(c){ return !c.decision; }).length;
+  var filas = lista.map(function(c, i){
+    var esPEP = c.categoria === 'PEP';
+    var cab = '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+      + '<span class="pill ' + (esPEP ? 'p-mo' : 'p-rj') + '">' + (esPEP ? 'PEP' : 'Sancion / fiscal') + '</span>'
+      + '<strong>' + capEsc(c.parte || 'Cliente') + ':</strong> ' + capEsc(c.nombre_evaluado || '')
+      + ' <span style="color:var(--tx3)">coincide con</span> ' + capEsc(c.nombre || '')
+      + ' <span style="color:var(--tx3)">en ' + capEsc(c.lista || '') + ' (' + (c.score || 0) + '%' + (c.uid ? ', ID ' + capEsc(c.uid) : '') + ')</span></div>'
+      + ((c.estatus || c.cargo || c.programa)
+          ? '<div style="font-size:12px;color:var(--tx3);margin-top:2px">' + capEsc([c.programa, c.cargo, c.estatus].filter(Boolean).join(' · ')) + '</div>'
+          : '');
+    var cuerpo;
+    if (c.decision) {
+      cuerpo = '<div style="font-size:12.5px;margin-top:6px"><span class="pill ' + (c.decision === 'CONFIRMADA' ? 'p-rj' : 'p-vd') + '">'
+        + (c.decision === 'CONFIRMADA' ? 'Coincidencia confirmada' : 'Falso positivo') + '</span> '
+        + (c.decision === 'CONFIRMADA' && esPEP ? 'Estatus PEP: ' + capEsc(c.estatus_pep || '') + '. ' : '')
+        + (c.decision === 'CONFIRMADA' && !esPEP ? 'Cliente bloqueado. ' : '')
+        + capEsc(c.fundamento || '') + ' <span style="color:var(--tx3)">(' + capEsc(c.resuelto_por || '') + ', ' + capEsc(c.fecha || '') + ')</span></div>';
+    } else if (esAdmin) {
+      cuerpo = '<div class="fgrid" style="margin-top:6px">'
+        + (esPEP
+            ? '<div class="fg"><label class="lbl">Estatus PEP si se confirma</label><select class="sel" id="scr-pep-' + i + '">'
+              + ESTATUS_PEP_CONFIRMABLE.map(function(o){ return '<option value="' + o + '"' + (o === estatusPEPDeLista(c) ? ' selected' : '') + '>' + o + '</option>'; }).join('')
+              + '</select></div>'
+            : '')
+        + '<div class="fg full"><label class="lbl">Fundamento de la decision <span class="req">*</span></label>'
+        + '<textarea class="txa" id="scr-fund-' + i + '" rows="2" placeholder="Por que es o no es la misma persona: fecha de nacimiento, CURP, RFC, cargo, fuente consultada"></textarea></div>'
+        + '<div class="fg full" style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'
+        + '<button class="btn" onclick="resolverCoincidencia(\'' + a.id + '\',' + i + ',\'FALSO_POSITIVO\')">Falso positivo</button>'
+        + '<button class="btn btn-p" style="background:var(--rj);border-color:var(--rj)" onclick="resolverCoincidencia(\'' + a.id + '\',' + i + ',\'CONFIRMADA\')">'
+        + (esPEP ? 'Confirmar coincidencia' : 'Confirmar y bloquear al cliente') + '</button></div></div>';
+    } else {
+      cuerpo = '<div style="font-size:12px;color:var(--tx3);margin-top:6px">Pendiente de resolucion por un administrador.</div>';
+    }
+    return '<div style="padding:10px 0;border-bottom:1px solid var(--brd)">' + cab + cuerpo + '</div>';
+  }).join('');
+  return '<div class="card"><div class="card-h"><span class="card-t">Coincidencias en listas</span>'
+    + '<span class="pill ' + (pend ? 'p-am' : 'p-vd') + '">' + (pend ? pend + ' por resolver' : 'Todas resueltas') + '</span></div>'
+    + '<div class="card-b">' + filas + '</div></div>';
+}
+
+function resolverCoincidencia(alertaId, i, decision) {
+  if (App.rol !== 'admin') { toast('Solo un administrador puede resolver coincidencias', 'e'); return; }
+  var fundEl = document.getElementById('scr-fund-' + i);
+  var fundamento = fundEl ? fundEl.value.trim() : '';
+  if (!fundamento) { toast('Escribe el fundamento de la decision', 'e'); if (fundEl) fundEl.focus(); return; }
+  var pepEl = document.getElementById('scr-pep-' + i);
+  spGetUno('PLD_Alertas', alertaId, function(a) {
+    if (!a) { toast('Alerta no encontrada', 'e'); return; }
+    var lista = _coincidenciasAlerta(a), c = lista[i];
+    if (!c || c.decision) { toast('Esa coincidencia ya fue resuelta', 'w'); verAlerta(alertaId); return; }
+    var esPEP = c.categoria === 'PEP';
+    if (decision === 'CONFIRMADA' && !esPEP &&
+        !confirm('Confirmar una coincidencia en ' + (c.lista || 'una lista de sanciones') + ' BLOQUEA al cliente.\n\n¿Continuar?')) return;
+    spGetUno('PLD_Clientes', a.id_cliente_ref, function(cli) {
+      if (!cli) { toast('No se encontro el expediente del cliente', 'e'); return; }
+      var quien = App.cuenta ? (App.cuenta.name || App.cuenta.username) : '';
+      var res = {
+        clave: claveCoincidencia(c), decision: decision,
+        parte: c.parte || 'Cliente', nombre_evaluado: c.nombre_evaluado || '',
+        lista: c.lista || '', listaId: c.listaId || '', categoria: c.categoria || '',
+        nombre_lista: c.nombre || '', uid: c.uid || '', score: c.score || 0,
+        estatus_pep: (decision === 'CONFIRMADA' && esPEP) ? ((pepEl && pepEl.value) || estatusPEPDeLista(c)) : '',
+        fundamento: fundamento, resuelto_por: quien, fecha: hoy(), alerta: a.id
+      };
+      var cambios = {};
+      cambios.scr_resoluciones = (cli.scr_resoluciones || []).filter(function(r){ return r.clave !== res.clave; }).concat([res]);
+      if (decision === 'CONFIRMADA' && esPEP && res.parte === 'Cliente') {
+        cambios.estatus_pep = res.estatus_pep;
+        cambios.pep_origen = 'listas';
+        cambios.pep_confirmado_por = quien;
+        cambios.pep_confirmado_fecha = hoy();
+      }
+      if (decision === 'CONFIRMADA' && !esPEP) {
+        cambios.estatus = 'Bloqueado';
+        cambios.aprobacion = 'Bloqueado';
+        cambios.bloqueo_scr = { parte: res.parte, nombre: res.nombre_evaluado, lista: res.lista, uid: res.uid, por: quien, fecha: hoy(), fundamento: fundamento };
+      }
+      var cli2 = Object.assign({}, cli, cambios);
+      var r = calcEBR(cli2);
+      cambios.riesgo = r.nivel; cambios.puntaje_ebr = r.puntaje;
+      cambios.puntaje_ebr_cliente = r.puntaje_cliente; cambios.puntaje_ebr_tx = r.puntaje_tx;
+      cambios.riesgo_motivo = r.motivo; cambios.riesgo_modelo = MODELO_EBR;
+      spPatch('PLD_Clientes', cli.id, cambios, function(okC) {
+        if (!okC || okC.error) { toast('No se pudo actualizar el expediente', 'e'); return; }
+        c.decision = decision; c.estatus_pep = res.estatus_pep; c.fundamento = fundamento; c.resuelto_por = quien; c.fecha = res.fecha;
+        var camposA = { coincidencias_scr: JSON.stringify(lista) };
+        var pend = lista.filter(function(x){ return !x.decision; }).length;
+        if (decision === 'CONFIRMADA' && !esPEP) {
+          Object.assign(camposA, { aprobacion_estado: 'Bloqueado', estatus: 'Cerrada', estatus_atencion: 'Cerrada',
+            comentario_aprobacion: 'Cliente bloqueado por coincidencia confirmada en ' + res.lista + ': ' + fundamento,
+            resuelto_por: quien, fecha_resolucion: hoy() });
+        } else if (!pend && a.resolucion_scr) {
+          Object.assign(camposA, { estatus: 'Cerrada', estatus_atencion: 'Cerrada', resuelto_por: quien, fecha_resolucion: hoy() });
+        }
+        spPatch('PLD_Alertas', a.id, camposA, function() {
+          (App.clientes || []).forEach(function(x){ if (String(x.id) === String(cli.id)) Object.assign(x, cambios); });
+          toast((decision === 'FALSO_POSITIVO' ? 'Falso positivo registrado'
+                 : esPEP ? 'Coincidencia PEP confirmada' : 'Coincidencia confirmada: cliente BLOQUEADO')
+                + '. Riesgo: ' + r.nivel + (r.motivo ? ' (' + r.motivo + ')' : ''), decision === 'FALSO_POSITIVO' ? 's' : 'w');
+          verAlerta(a.id);
+        });
+      });
+    });
+  });
 }
 
 // Sección para alertas de APROBACIÓN de cliente (riesgo alto / screening)
@@ -8877,6 +9054,12 @@ function seccionAprobacionAlerta(a) {
   var est = a.aprobacion_estado || 'Pendiente';
   var pill = est==='Aprobado'?'p-vd':est==='Rechazado'?'p-rj':'p-am';
   var puedeAprobar = App.rol==='admin' && est==='Pendiente';
+  if (est === 'Bloqueado') {
+    return '<div class="card"><div class="card-h"><span class="card-t">Aprobación del cliente</span>'
+      + '<span class="pill p-rj" style="margin-left:8px">Bloqueado</span></div><div class="card-b"><div class="fg2">'
+      + fcHtml('Resolución', a.comentario_aprobacion || 'Cliente bloqueado por coincidencia confirmada en lista de sanciones')
+      + (a.resuelto_por ? fcHtml('Resuelto por', a.resuelto_por) : '') + '</div></div></div>';
+  }
   var h = '<div class="card"><div class="card-h"><span class="card-t">Aprobación del cliente</span>'
     +'<span class="pill '+pill+'" style="margin-left:8px">'+est+'</span></div>'
     +'<div class="card-b"><div class="fg2">'
@@ -11530,9 +11713,10 @@ function scrEvaluarCliente(nombreCliente) {
   conDatos.forEach(function(lista) {
     var matches = scrBuscarEnLista(nombreCliente, lista._datos, SCR.umbralMatch);
     matches.slice(0, 2).forEach(function(m) {
-      coincidencias.push({ lista: lista.nombre, listaId: lista.id,
+      coincidencias.push({ lista: lista.nombre, listaId: lista.id, categoria: lista.categoria || '',
         nombre: m.entrada.nombre, score: m.score,
-        tipo: m.entrada.tipo, uid: m.entrada.uid });
+        tipo: m.entrada.tipo, uid: m.entrada.uid,
+        estatus: m.entrada.estatus || '', cargo: m.entrada.cargo || '', programa: m.entrada.programa || '' });
     });
   });
   return coincidencias;
@@ -11562,12 +11746,48 @@ function _nombresAScreening(datos) {
 
 // Evalúa TODAS las partes del expediente contra las listas de screening.
 // Devuelve coincidencias etiquetadas con la parte (cliente, rep. legal, DB, etc.)
+// ── RESOLUCION DE COINCIDENCIAS ──────────────────────────────
+// Toda coincidencia en listas pasa por una decision del administrador:
+// falso positivo o coincidencia confirmada. La decision queda en el
+// expediente (scr_resoluciones) con quien, cuando y por que, y una vez
+// tomada esa misma coincidencia ya no vuelve a alertar.
+//   - Confirmada en una lista PEP: fija el estatus PEP de esa persona. Si es
+//     el cliente, cambia su estatus PEP y solo el administrador lo puede
+//     modificar despues; si es una persona relacionada de una persona moral o
+//     fideicomiso, cuenta en el modelo de riesgo como si fuera del cliente.
+//   - Confirmada en una lista de sanciones o fiscal: bloquea al cliente.
+// En ambos casos se recalcula el riesgo.
+function claveCoincidencia(c) {
+  return [c.listaId || c.lista || '', c.uid || scrNorm(c.nombre || ''), scrNorm(c.nombre_evaluado || '')].join('|');
+}
+function resolucionDe(datos, c) {
+  var k = claveCoincidencia(c);
+  return (datos.scr_resoluciones || []).filter(function(r){ return r.clave === k; })[0] || null;
+}
+var ESTATUS_PEP_CONFIRMABLE = ['Activo', 'Inactivo', 'Vencido', 'Familiar', 'Relacionado a PEP'];
+// Estatus que trae la lista PEP, llevado a las opciones del expediente.
+function estatusPEPDeLista(c) {
+  var e = String(c.estatus || '').toLowerCase();
+  for (var i = 0; i < ESTATUS_PEP_CONFIRMABLE.length; i++)
+    if (e && ESTATUS_PEP_CONFIRMABLE[i].toLowerCase().indexOf(e) === 0) return ESTATUS_PEP_CONFIRMABLE[i];
+  if (/inact|baja|ex /.test(e)) return 'Inactivo';
+  return 'Activo';
+}
+// Personas relacionadas confirmadas como PEP, en persona moral y fideicomiso.
+function pepPartesConfirmadas(d) {
+  if (d.tipo !== 'PM_MEX' && d.tipo !== 'FIDEICOMISO') return [];
+  return (d.scr_resoluciones || []).filter(function(r){
+    return r.decision === 'CONFIRMADA' && r.categoria === 'PEP' && r.parte !== 'Cliente' && r.estatus_pep;
+  }).map(function(r){ return { parte: r.parte, nombre: r.nombre_evaluado, estatus: r.estatus_pep }; });
+}
+
 function scrEvaluarClienteCompleto(datos) {
   var resultados = [];
   _nombresAScreening(datos).forEach(function(item){
     scrEvaluarCliente(item.nombre).forEach(function(c){
       c.parte = item.parte;
       c.nombre_evaluado = item.nombre;
+      if (resolucionDe(datos, c)) return;   // ya resuelta: no vuelve a alertar
       resultados.push(c);
     });
   });
@@ -11900,7 +12120,7 @@ function crearAlertaAprobacion(datos, evalRes) {
     aprobacion_estado: 'Pendiente',
     nivel: (datos.riesgo === 'Alto' || maxScore >= 90) ? 'Alto' : 'Medio',
     descripcion: desc,
-    coincidencias_scr: scr.length ? JSON.stringify(scr.slice(0,5)) : '',
+    coincidencias_scr: scr.length ? JSON.stringify(scr.slice(0,40)) : '',
     estatus: 'Abierta',
     estatus_atencion: 'Pendiente',
     asesor_id: datos.asesor_id || '',
@@ -11930,11 +12150,15 @@ function aprobarCliente(alertaId) {
   if (!comentario) { toast('Escribe un comentario de aprobación (obligatorio)','e'); if(comEl) comEl.focus(); return; }
   spGetUno('PLD_Alertas', alertaId, function(a) {
     if (!a) { toast('Alerta no encontrada','e'); return; }
+    var coins = _coincidenciasAlerta(a);
+    if (coins.some(function(c){ return !c.decision; })) { toast('Resuelve todas las coincidencias en listas antes de aprobar', 'e'); return; }
+    if (coins.some(function(c){ return c.decision === 'CONFIRMADA' && c.categoria !== 'PEP'; })) { toast('El cliente esta bloqueado por una coincidencia confirmada en lista de sanciones', 'e'); return; }
     spGet('PLD_Clientes', function(listaCli) {
       var cli = null;
       listaCli.forEach(function(c){ if(String(c.id)===String(a.id_cliente_ref) || (a.num_cliente && String(c.num_cliente)===String(a.num_cliente))) cli=c; });
       if (!cli) { toast('Cliente no encontrado','e'); return; }
-      if (!confirm('¿Aprobar y ACTIVAR al cliente "' + nombreClienteDatos(cli) + '"?')) return;
+      if (cli.bloqueo_scr) { toast('El cliente esta bloqueado por una coincidencia confirmada en lista de sanciones', 'e'); return; }
+      if (!confirm('¿Aprobar y ACTIVAR al cliente "' + nombreClienteDatos(cli) + '"?' + (cli.riesgo ? '\n\nNivel de riesgo actual: ' + cli.riesgo : ''))) return;
       // Paso de verificación: re-autenticar antes de aprobar
       reautenticar(function(ok){
         if (!ok) { toast('Aprobación cancelada: no se verificó la identidad','e'); return; }
@@ -14860,6 +15084,7 @@ function scrEjecutarMasivo() {
       if (txt) txt.textContent = 'Completado: ' + clientes.length + ' clientes procesados.';
       if (btn) { btn.disabled = false; btn.textContent = '▶ Iniciar screening masivo'; }
       scrRenderResumenMasivo(resultadosMasivos);
+      scrAlertasResolucionMasivo(clientes);
       return;
     }
 
@@ -14880,6 +15105,40 @@ function scrEjecutarMasivo() {
   }
 
   procesarSiguiente();
+}
+
+// Despues del screening masivo, cada cliente con coincidencias sin resolver
+// (cliente y personas relacionadas, contra todas las listas activas) recibe
+// una alerta de resolucion, salvo que ya tenga una abierta. De uno en uno,
+// porque en paralelo SharePoint responde 429.
+function scrAlertasResolucionMasivo(clientes) {
+  var pendientes = (clientes || []).map(function(c){ return { c: c, m: scrEvaluarClienteCompleto(c) || [] }; })
+    .filter(function(x){ return x.m.length; });
+  if (!pendientes.length) return;
+  var i = 0, creadas = 0;
+  (function sig(){
+    if (i >= pendientes.length) {
+      if (creadas) toast(creadas + ' cliente(s) con coincidencias por resolver: se crearon alertas de resolucion', 'w');
+      return;
+    }
+    var x = pendientes[i++], c = x.c;
+    spAlertasDeCliente(c, function(alts){
+      var abierta = (alts || []).some(function(a){ return a.resolucion_scr && a.estatus !== 'Cerrada'; });
+      if (abierta) { sig(); return; }
+      spCreate('PLD_Alertas', {
+        Title: 'ALT-RES-' + Date.now(),
+        nombre_cliente: nombreCliente(c), num_cliente: c.num_cliente || '', id_cliente_ref: c.id,
+        categoria: 'Screening', tipo: 'Resolucion de coincidencias en listas', resolucion_scr: true,
+        nivel: x.m.some(function(m){ return m.categoria !== 'PEP'; }) ? 'Alto' : 'Medio',
+        descripcion: 'Screening masivo: ' + x.m.length + ' coincidencia(s) por resolver en el cliente o sus personas relacionadas.',
+        coincidencias_scr: JSON.stringify(x.m.slice(0, 40)),
+        estatus: 'Abierta', estatus_atencion: 'Pendiente',
+        asesor_id: c.asesor_id || '', asesor_nombre: c.asesor_nombre || '',
+        registrado_por: App.cuenta ? App.cuenta.username : '', fecha_registro: hoy(),
+        entidad_id: c.entidad_id || '', entidad_nombre: c.entidad_nombre || ''
+      }, function(){ creadas++; sig(); });
+    });
+  })();
 }
 
 function scrRenderResumenMasivo(hits) {
