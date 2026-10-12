@@ -4015,7 +4015,7 @@ function pgConfig(sec) {
     +'<div class="sb-item'+(sec==='ebr'?' on':'')+'" onclick="pgConfig(\'ebr\')">Nivel de Riesgo de clientes</div>'
     +'<div class="sb-item'+(sec==='perfil'?' on':'')+'" onclick="pgConfig(\'perfil\')">Perfil transaccional</div>'
     +(App.rol==='admin' ? '<div class="sb-item'+(sec==='mant'?' on':'')+'" onclick="pgConfig(\'mant\')">Mantenimiento de datos</div>' : ''));
-  if (sec === 'ebr')    { pgConfigEBR(); return; }
+  if (sec === 'ebr')    { EBR_VISTA = modeloEBRActivo(); pgConfigEBR(); return; }
   if (sec === 'perfil') { pgConfigPerfil(); return; }
   if (sec === 'mant')   { pgConfigMantenimiento(); return; }
 
@@ -4240,6 +4240,266 @@ function ebrActCat() {
 // Cual de las dos matrices se esta editando en la pantalla de configuracion.
 var EBR_MATRIZ = 'PF';
 
+// ── Configuracion del modelo por reglas ──────────────────────
+// La pantalla muestra el modelo activo; el otro se puede ver y activar. Los
+// cambios de nivel se escriben en memoria al momento, como los del mapa, y se
+// conservan con "Guardar cambios".
+var EBR_VISTA = 'reglas', EBR_OP = 'cv', EBR_TIPO_VER = 'todos';
+function pgConfigEBR() { if (EBR_VISTA === 'puntos') pgConfigEBRPuntos(); else pgConfigEBRReglas(); }
+
+function ebrModeloHtml() {
+  var activo = modeloEBRActivo();
+  var nom = { reglas: 'por reglas', puntos: 'por puntos (obsoleto)' };
+  var boton = function(m, etq){
+    return '<button class="btn btn-sm' + (EBR_VISTA === m ? ' btn-p' : '') + '" onclick="ebrVerModelo(\'' + m + '\')">' + etq + '</button>';
+  };
+  return '<div class="card" style="border-left:4px solid ' + (activo === 'reglas' ? 'var(--az)' : 'var(--am)') + '"><div class="card-b" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
+    + '<div style="flex:1;min-width:240px"><div style="font-weight:600">Modelo activo: ' + nom[activo] + '</div>'
+    + '<div style="font-size:12px;color:var(--tx3);line-height:1.6">'
+    + (EBR_VISTA === activo
+        ? (activo === 'reglas'
+            ? 'El modelo por puntos se conserva sin uso, con sus pesos guardados, para poder volver a el.'
+            : 'El modelo por reglas sigue configurado y se puede volver a activar.')
+        : 'Estas viendo el modelo ' + nom[EBR_VISTA] + ', que no esta activo. Sus cambios se guardan, pero no se usan hasta activarlo.')
+    + '</div></div>'
+    + boton('reglas', 'Modelo por reglas') + boton('puntos', 'Modelo por puntos')
+    + (EBR_VISTA !== activo ? '<button class="btn btn-sm" style="border-color:var(--am);color:var(--am)" onclick="ebrActivarModelo(\'' + EBR_VISTA + '\')">Activar este modelo</button>' : '')
+    + '</div></div>';
+}
+function ebrVerModelo(m) {
+  if (m === EBR_VISTA) return;
+  if (EBR_VISTA === 'puntos') { recogerMatrizEnPantalla(); recogerTxEnPantalla(); }
+  EBR_VISTA = m;
+  pgConfigEBR();
+}
+function ebrActivarModelo(m) {
+  var nom = m === 'reglas' ? 'por reglas' : 'por puntos';
+  if (!confirm('Se activara el modelo ' + nom + '.\n\nLos expedientes que se creen o editen, las revaloraciones y las resoluciones de screening '
+    + 'se calcularan con el. Los niveles ya guardados no cambian hasta que se recalcule cada expediente.\n\n¿Continuar?')) return;
+  CFG_EBR.modelo_activo = m;
+  if (EBR_VISTA === 'puntos') guardarEBR();
+  else persistirEBR('Modelo ' + nom + ' activado');
+}
+
+function estiloNivelRegla(v) {
+  return v === 'Alto' ? 'background:var(--rj3);color:var(--rj)'
+    : v === 'Medio' ? 'background:var(--am3);color:var(--am)'
+    : v === 'Bajo' ? 'background:var(--vd3);color:var(--vd)'
+    : v === 'Agravante' ? 'background:var(--mo3);color:var(--mo)'
+    : 'color:var(--tx3);font-weight:400';
+}
+
+function ebrMatrizReglasHtml() {
+  var cfg = CFG_EBR.reglas, op = EBR_OP;
+  var cols = TIPOS_REGLA.filter(function(t){ return EBR_TIPO_VER === 'todos' || EBR_TIPO_VER === t; });
+  var tabOp = function(o, etq, sub){
+    var on = (o === op);
+    return '<button onclick="ebrCambiarOp(\'' + o + '\')" style="flex:1;min-width:200px;cursor:pointer;text-align:left'
+      + ';padding:10px 12px;border-radius:var(--r);border:1px solid ' + (on ? 'var(--az)' : 'var(--brd)')
+      + ';background:' + (on ? 'var(--az3)' : 'transparent') + '">'
+      + '<div style="font-size:13px;font-weight:600;color:' + (on ? 'var(--az)' : 'var(--tx2)') + '">' + etq + '</div>'
+      + '<div style="font-size:11px;color:var(--tx3)">' + sub + '</div></button>';
+  };
+  var chip = function(v, etq){
+    return '<button class="btn btn-sm' + (EBR_TIPO_VER === v ? ' btn-p' : '') + '" onclick="ebrVerTipo(\'' + v + '\')">' + etq + '</button>';
+  };
+  var filas = '';
+  GRUPOS_REGLA.forEach(function(g){
+    var rs = REGLAS_EBR.filter(function(r){ return r.g === g.id && cols.some(function(t){ return reglaAplica(r, op, t); }); });
+    if (!rs.length) return;
+    filas += '<tr><td colspan="' + (cols.length + 1) + '" style="background:var(--bg2);font-size:12px;font-weight:600;color:var(--tx1)">'
+      + g.titulo + '<span style="font-weight:400;color:var(--tx3);margin-left:8px">' + g.nota + '</span></td></tr>';
+    rs.forEach(function(r){
+      filas += '<tr><td style="font-size:13px;color:var(--tx2);min-width:240px">' + capEsc(textoRegla(r, op, cfg))
+        + (r.n ? '<div style="font-size:11px;color:var(--tx3)">' + capEsc(r.n) + '</div>' : '') + '</td>';
+      cols.forEach(function(t){
+        if (!reglaAplica(r, op, t)) {
+          filas += '<td style="text-align:center;color:var(--tx3)" title="El expediente de este tipo de persona no tiene el dato">—</td>';
+          return;
+        }
+        var v = cfg.niveles[op][t][r.id];
+        filas += '<td style="text-align:center"><select class="sel" style="width:112px;font-size:12px;font-weight:600;' + estiloNivelRegla(v) + '"'
+          + ' aria-label="' + capEsc(textoRegla(r, op, cfg) + ', ' + TIPOS_REGLA_ETQ[t]) + '"'
+          + ' onchange="ebrNivelRegla(this,\'' + r.id + '\',\'' + t + '\')">'
+          + NIVELES_REGLA.map(function(x){ return '<option' + (x === v ? ' selected' : '') + '>' + x + '</option>'; }).join('')
+          + '</select></td>';
+      });
+      filas += '</tr>';
+    });
+  });
+  return '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">'
+    + tabOp('cv', 'Compraventa de inmueble', 'Fracción V · límite de efectivo 8,025 UMA')
+    + tabOp('arr', 'Arrendamiento de inmueble', 'Fracción XV · límite de efectivo 3,210 UMA al mes')
+    + '</div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'
+    + '<span style="font-size:12px;color:var(--tx3)">Mostrar:</span>'
+    + chip('todos', 'Todos los tipos') + TIPOS_REGLA.map(function(t){ return chip(t, TIPOS_REGLA_ETQ[t]); }).join('')
+    + '</div>'
+    + '<div style="overflow-x:auto;border:1px solid var(--brd);border-radius:var(--r)"><table style="width:100%">'
+    + '<thead><tr><th>Regla</th>' + cols.map(function(t){ return '<th style="text-align:center">' + TIPOS_REGLA_ETQ[t] + '</th>'; }).join('') + '</tr></thead>'
+    + '<tbody>' + filas + '</tbody></table></div>'
+    + '<div style="font-size:11px;color:var(--tx3);margin-top:8px;line-height:1.6">Un guion indica que la regla no existe para ese tipo de persona porque su expediente no tiene el dato. '
+    + '"No aplica" la apaga a proposito. Cambiar una regla de PEP, geografia, estructura o combinaciones del cliente la cambia en las dos operaciones.</div>';
+}
+function ebrCambiarOp(o) { EBR_OP = o; var el = document.getElementById('ebr-matriz'); if (el) el.innerHTML = ebrMatrizReglasHtml(); }
+function ebrVerTipo(v) { EBR_TIPO_VER = v; var el = document.getElementById('ebr-matriz'); if (el) el.innerHTML = ebrMatrizReglasHtml(); }
+function ebrNivelRegla(sel, id, tipo) {
+  var r = REGLAS_EBR.filter(function(x){ return x.id === id; })[0];
+  if (!r) return;
+  var cfg = CFG_EBR.reglas;
+  var delCliente = GRUPOS_REGLA.some(function(g){ return g.id === r.g && g.cliente; });
+  (delCliente ? OPS_REGLA : [EBR_OP]).forEach(function(op){
+    if (reglaAplica(r, op, tipo)) cfg.niveles[op][tipo][id] = sel.value;
+  });
+  sel.style.cssText = 'width:112px;font-size:12px;font-weight:600;' + estiloNivelRegla(sel.value);
+}
+function ebrParamRegla(k, v) {
+  var n = Number(v);
+  if (v === '' || isNaN(n)) return;
+  CFG_EBR.reglas[k] = n;
+  var el = document.getElementById('ebr-matriz');
+  if (el && k !== 'umbral_agravantes') el.innerHTML = ebrMatrizReglasHtml();
+}
+
+function ebrActividadesHtml(nota) {
+  var sel = CFG_EBR.actividades_alto_riesgo || [];
+  var cat = ebrActCat();
+  var tags = sel.length ? sel.map(function(cod) {
+    var entry = cat.filter(function(x){ return x.codigo === cod; })[0];
+    var label = entry ? cod + ' — ' + entry.desc + ' (' + entry.tipo + ')' : cod;
+    return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;margin:2px;border-radius:10px;font-size:11px;background:var(--az3);color:var(--az);border:1px solid var(--az)">'
+      + label
+      + '<button onclick="ebrQuitarActividad(\'' + cod + '\')" style="background:none;border:none;cursor:pointer;color:var(--az);font-size:13px;line-height:1;padding:0 0 0 2px" title="Quitar">×</button>'
+      + '</span>';
+  }).join('') : '<span style="font-size:12px;color:var(--tx3);font-style:italic">Sin actividades agregadas</span>';
+  return '<div class="card"><div class="card-h"><span class="card-t">Actividades economicas de alto riesgo</span>'
+    + '<span style="font-size:12px;color:var(--tx3)">Catalogo Persona Fisica (SAT) + Persona Moral (SCIAN) — texto completo</span></div>'
+    + '<div class="card-b">'
+    + '<div style="font-size:12px;color:var(--tx3);margin-bottom:12px;line-height:1.5">'
+    + 'Esta lista es comun a los dos modelos. ' + (nota || '') + '</div>'
+    + '<input class="inp" id="ebr-act-buscar" placeholder="Buscar por codigo o descripcion..." style="margin-bottom:8px;font-size:12px" oninput="ebrFiltrarAct(this.value)">'
+    + '<div id="ebr-act-lista" style="max-height:320px;overflow-y:auto;border:1px solid var(--brd);border-radius:var(--r);font-size:12px"></div>'
+    + '<div style="margin-top:10px"><div style="font-size:11px;font-weight:600;color:var(--tx3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Actividades seleccionadas como alto riesgo</div>'
+    + '<div id="ebr-act-tags" style="min-height:28px">' + tags + '</div></div>'
+    + '</div></div>';
+}
+
+function pgConfigEBRReglas() {
+  var cfg = CFG_EBR.reglas = cfgReglas();
+  var paso = function(t, d){
+    return '<div style="flex:1;min-width:190px;padding:10px 12px;border:1px solid var(--brd);border-radius:var(--r)">'
+      + '<div style="font-size:13px;font-weight:600;color:var(--tx1);margin-bottom:2px">' + t + '</div>'
+      + '<div style="font-size:12px;color:var(--tx3);line-height:1.5">' + d + '</div></div>';
+  };
+  var fijo = function(t, e){
+    return '<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--brd)">'
+      + '<span style="flex:1;font-size:13px;color:var(--tx2)">' + t + '</span><span class="pill p-gr">' + e + '</span></div>';
+  };
+  var num = function(k, val, min, max){
+    return '<input class="inp mono" type="number" min="' + min + '" max="' + max + '" step="1" value="' + val + '" style="width:70px;text-align:center" onchange="ebrParamRegla(\'' + k + '\',this.value)">';
+  };
+  var simTipos = { PF_MEX: 'Persona física nacional', PF_EXT: 'Persona física extranjera', PM_MEX: 'Persona moral nacional', PM_SIMP: 'Persona moral simplificada', FIDEICOMISO: 'Fideicomiso' };
+  var pepLabels = ['NO APLICA', 'Activo', 'Inactivo', 'Familiar', 'Relacionado a PEP', 'Vencido'];
+  var siNo = function(id){ return '<select class="sel" id="' + id + '"><option value="NO">NO</option><option value="SI">SI</option></select>'; };
+
+  setMain('<div class="phdr"><div><div class="ptit">Nivel de Riesgo de clientes</div>'
+    + '<div class="psub">Modelo por reglas: cada cliente toma el nivel que le dan las reglas que se cumplen</div></div>'
+    + '<button class="btn btn-p" onclick="persistirEBR(\'Configuracion del modelo por reglas guardada\')">Guardar cambios</button></div>'
+    + ebrModeloHtml()
+
+    + '<div class="card"><div class="card-h"><span class="card-t">Como se evalua</span></div><div class="card-b">'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    + paso('Exclusion', 'Si aplica, el cliente o la operacion no se acepta.')
+    + paso('Nivel base', 'El mas alto entre las reglas que se cumplen. Si ninguna, Bajo.')
+    + paso('Combinaciones', 'Dos condiciones a la vez llevan a un nivel propio.')
+    + paso('Agravantes', 'Solos no cambian nada. Juntos, suben un escalon sin pasar de Alto.')
+    + '</div></div></div>'
+
+    + '<div class="card"><div class="card-h"><span class="card-t">Exclusion</span><span style="font-size:12px;color:var(--tx3)">No son reglas: bloquean</span></div><div class="card-b">'
+    + fijo('Contramedidas del GAFI en el cliente o en sus personas relacionadas', 'Bloquea el alta')
+    + fijo('Coincidencia confirmada en una lista de sanciones o en el 69-B del SAT', 'Bloquea al cliente')
+    + fijo('Compraventa: efectivo declarado por encima de 8,025 UMA (art. 32 LFPIORPI)', 'Bloquea el alta')
+    + fijo('Arrendamiento: efectivo por encima de 3,210 UMA al mes (art. 32 LFPIORPI)', 'Se revisara en las operaciones')
+    + '</div></div>'
+
+    + '<div class="card"><div class="card-h"><span class="card-t">Matriz de reglas</span><span style="font-size:12px;color:var(--tx3)">Una por operacion, una columna por tipo de persona</span></div>'
+    + '<div class="card-b"><div id="ebr-matriz">' + ebrMatrizReglasHtml() + '</div></div></div>'
+
+    + '<div class="card"><div class="card-h"><span class="card-t">Parametros</span></div><div class="card-b">'
+    + '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--brd);flex-wrap:wrap"><span style="flex:1;min-width:220px;font-size:13px;color:var(--tx2)">Agravantes necesarios para subir un nivel</span>'
+    + '<select class="sel" style="width:80px" onchange="ebrParamRegla(\'umbral_agravantes\',this.value)">'
+    + [2, 3, 4].map(function(n){ return '<option' + (n === cfg.umbral_agravantes ? ' selected' : '') + '>' + n + '</option>'; }).join('') + '</select></div>'
+    + '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--brd);flex-wrap:wrap"><span style="flex:1;min-width:220px;font-size:13px;color:var(--tx2)">Edad de la persona fisica: menor de</span>'
+    + num('edad_min', cfg.edad_min, 0, 130) + '<span style="font-size:13px;color:var(--tx2)">o mayor de</span>' + num('edad_max', cfg.edad_max, 0, 130) + '<span style="font-size:12px;color:var(--tx3)">años</span></div>'
+    + '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;flex-wrap:wrap"><span style="flex:1;min-width:220px;font-size:13px;color:var(--tx2)">Persona moral o fideicomiso de reciente constitucion: menos de</span>'
+    + num('anios_joven', cfg.anios_joven, 0, 100) + '<span style="font-size:12px;color:var(--tx3)">años</span></div>'
+    + '</div></div>'
+
+    + ebrActividadesHtml('Una actividad listada activa la regla "Actividad economica de alto riesgo".')
+
+    + '<div class="card"><div class="card-h"><span class="card-t">Estado del domicilio</span>'
+    + '<span style="font-size:12px;color:var(--tx3)">Banda por entidad federativa</span></div>'
+    + '<div class="card-b">'
+    + '<div style="padding:8px 10px;border-left:3px solid var(--az);font-size:12px;color:var(--tx2);margin-bottom:10px;line-height:1.6">'
+    + 'En el modelo por reglas, el puntaje de cada estado define su banda: <strong>10</strong> es banda roja, <strong>5</strong> amarilla o naranja y <strong>0</strong> verde. '
+    + 'Es el mismo mapa que usa el modelo por puntos.</div>'
+    + ipmMapaHtml()
+    + '</div></div>'
+
+    + '<div class="card"><div class="card-h"><span class="card-t">Simulador</span>'
+    + '<span style="font-size:12px;color:var(--tx3)">Prueba las reglas con un perfil hipotetico</span></div>'
+    + '<div class="card-b"><div class="fgrid">'
+    + '<div class="fg"><label class="lbl">Tipo de cliente</label><select class="sel" id="sim-tipo">'
+    + Object.keys(simTipos).map(function(k){ return '<option value="' + k + '">' + simTipos[k] + '</option>'; }).join('') + '</select></div>'
+    + '<div class="fg"><label class="lbl">Operacion</label><select class="sel" id="sim-arr"><option value="NO">Compraventa</option><option value="SI">Arrendamiento</option></select></div>'
+    + '<div class="fg"><label class="lbl">Estatus PEP</label><select class="sel" id="sim-pep">'
+    + pepLabels.map(function(k){ return '<option value="' + k + '">' + k + '</option>'; }).join('') + '</select></div>'
+    + '<div class="fg"><label class="lbl">El PEP es extranjero</label>' + siNo('sim-pepext') + '</div>'
+    + '<div class="fg"><label class="lbl">Estado del domicilio</label><select class="sel" id="sim-est">'
+    + '<option value="">Sin especificar</option>' + ipmOpcionesSimulador() + '</select></div>'
+    + '<div class="fg"><label class="lbl">Pais del domicilio</label><select class="sel" id="sim-pdom">' + optsPais('MEXICO') + '</select></div>'
+    + '<div class="fg"><label class="lbl">Nacionalidad (persona fisica)</label><select class="sel" id="sim-nac">' + optsPais('MEXICO') + '</select></div>'
+    + '<div class="fg"><label class="lbl">Pais de nacimiento o de constitucion</label><select class="sel" id="sim-pnacim">' + optsPais('MEXICO') + '</select></div>'
+    + '<div class="fg"><label class="lbl">Actividad economica</label><select class="sel" id="sim-act">'
+    + '<option value="">Normal (no listada como alto riesgo)</option><option value="__alto__">En lista de alto riesgo</option></select></div>'
+    + '<div class="fg"><label class="lbl">Dueño beneficiario</label><select class="sel" id="sim-db"><option value="NO">No declarado</option><option value="SI">Declarado</option></select></div>'
+    + '<div class="fg"><label class="lbl">Edad (persona fisica)</label><input class="inp mono" id="sim-edad" type="number" min="0" max="130" value="35" style="width:90px"></div>'
+    + '<div class="fg"><label class="lbl">Antigüedad en años (moral o fideicomiso)</label><input class="inp mono" id="sim-antig" type="number" min="0" max="200" value="10" style="width:90px"></div>'
+    + '<div class="fg full" style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-top:6px">Perfil transaccional</div>'
+    + '<div class="fg"><label class="lbl">Uso de efectivo</label><select class="sel" id="sim-ef"><option value="0">Nunca o sin efectivo</option><option value="1">Ocasional, o menos de la mitad del limite</option><option value="2">Habitual, o la mitad del limite o mas</option><option value="3">Compraventa: por encima del limite legal</option></select></div>'
+    + '<div class="fg"><label class="lbl">Origen de los recursos</label><select class="sel" id="sim-origen">' + PTX_ORIGEN.map(function(o){ return '<option value="' + o[0] + '">' + o[1] + '</option>'; }).join('') + '</select></div>'
+    + '<div class="fg"><label class="lbl">Moneda</label><select class="sel" id="sim-moneda">' + PTX_MONEDA.map(function(o){ return '<option value="' + o[0] + '">' + o[1] + '</option>'; }).join('') + '</select></div>'
+    + '<div class="fg"><label class="lbl">Volumen</label><select class="sel" id="sim-vol"><option value="0">Una operacion o una sola exhibicion</option><option value="1">De 2 a 5, o varias por periodo</option><option value="2">Mas de 5</option></select></div>'
+    + '<div class="fg"><label class="lbl">Frecuencia, arrendamiento</label><select class="sel" id="sim-frec">' + PTX_FREC.map(function(o){ return '<option value="' + o[0] + '">' + o[1] + '</option>'; }).join('') + '</select></div>'
+    + '<div class="fg"><label class="lbl">Contrapartes</label><select class="sel" id="sim-contra">' + PTX_CONTRAPARTES.map(function(o){ return '<option value="' + o[0] + '">' + o[1] + '</option>'; }).join('') + '</select></div>'
+    + '<div class="fg full" style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-top:6px">Revaloracion</div>'
+    + '<div class="fg"><label class="lbl">Lo observado se desvia de lo declarado</label>' + siNo('sim-desv') + '</div>'
+    + '<div class="fg"><label class="lbl">Uso efectivo sin haberlo declarado</label>' + siNo('sim-efnd') + '</div>'
+    + '</div>'
+    + '<div style="margin-top:16px;text-align:center">'
+    + '<button class="btn btn-p" onclick="ebrSimularReglas()">Calcular nivel de riesgo</button>'
+    + '<div id="ebr-sim-result" style="margin-top:16px;font-size:18px;font-weight:600;min-height:28px"></div>'
+    + '</div></div></div>');
+  setTimeout(function(){ ebrRenderActLista(''); }, 0);
+}
+
+function ebrSimularReglas() {
+  var mock = ebrSimMock();
+  var ct = document.getElementById('ebr-sim-result');
+  if (!ct) return;
+  var prohibidos = vinculosProhibidos(mock);
+  if (prohibidos.length) {
+    ct.innerHTML = '<span style="color:var(--rj)">No se acepta por politica</span>'
+      + '<div style="font-size:13px;color:var(--tx2);font-weight:400;margin-top:6px">Contramedidas del GAFI en '
+      + prohibidos.map(function(v){ return capEsc(v.campo + ', ' + v.pais); }).join('; ') + '. El alta se bloquea.</div>';
+    return;
+  }
+  var res = calcEBRReglas(mock);
+  var color = res.nivel === 'Alto' ? 'var(--rj)' : res.nivel === 'Medio' ? 'var(--am)' : 'var(--vd,#16a34a)';
+  ct.innerHTML = '<span style="color:' + color + '">' + res.nivel + '</span>'
+    + '<div style="font-size:13px;font-weight:400;margin-top:10px;text-align:left">' + htmlReglasRiesgo(res.reglas, res.agravantes, res.subio, res.umbral) + '</div>';
+}
+
 // Lo que se muestra en la pestana de persona moral simplificada, que no tiene
 // factores que editar.
 function ebrSimpHtml() {
@@ -4328,7 +4588,7 @@ function ebrCambiarMatriz(cual) {
   pgConfigEBR();
 }
 
-function pgConfigEBR() {
+function pgConfigEBRPuntos() {
   var e = CFG_EBR;
   var M = (CFG_EBR.matriz || {})[EBR_MATRIZ] || {};
   var esPF = (EBR_MATRIZ === 'PF');
@@ -4388,7 +4648,7 @@ function pgConfigEBR() {
   setMain('<div class="phdr"><div><div class="ptit">Nivel de Riesgo de clientes</div>'
     +'<div class="psub">Parametros del calculo de nivel de riesgo de clientes</div></div>'
     +'<button class="btn btn-p" onclick="guardarEBR()">Guardar cambios</button></div>'
-    + avisoEsc + avisoV2
+    + ebrModeloHtml() + avisoEsc + avisoV2
 
     // — Umbrales —
     +'<div class="card"><div class="card-h"><span class="card-t">Umbrales de clasificacion</span></div>'
@@ -4433,16 +4693,7 @@ function pgConfigEBR() {
 
     + ebrTransaccionalHtml()
     // — Actividades económicas de alto riesgo —
-    +'<div class="card"><div class="card-h"><span class="card-t">Actividades economicas de alto riesgo</span>'
-    +'<span style="font-size:12px;color:var(--tx3)">Catalogo Persona Fisica (SAT) + Persona Moral (SCIAN) — texto completo</span></div>'
-    +'<div class="card-b">'
-    +'<div style="font-size:12px;color:var(--tx3);margin-bottom:12px;line-height:1.5">'
-    +'Esta lista es comun a las dos matrices. El puntaje que aporta una actividad listada se fija arriba, en cada matriz por separado.</div>'
-    +'<input class="inp" id="ebr-act-buscar" placeholder="Buscar por codigo o descripcion..." style="margin-bottom:8px;font-size:12px" oninput="ebrFiltrarAct(this.value)">'
-    +'<div id="ebr-act-lista" style="max-height:320px;overflow-y:auto;border:1px solid var(--brd);border-radius:var(--r);font-size:12px"></div>'
-    +'<div style="margin-top:10px"><div style="font-size:11px;font-weight:600;color:var(--tx3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Actividades seleccionadas como alto riesgo</div>'
-    +'<div id="ebr-act-tags" style="min-height:28px">'+actTagsHtml()+'</div></div>'
-    +'</div></div>'
+    + ebrActividadesHtml('El puntaje que aporta una actividad listada se fija arriba, en cada matriz por separado.')
 
     // — Estado del domicilio, segun el Indice de Paz Mexico —
     +'<div class="card"><div class="card-h"><span class="card-t">Estado del domicilio</span>'
@@ -4578,7 +4829,9 @@ function ebrToggleChip(el) {
 }
 
 
-function ebrSimular() {
+// Perfil hipotetico del simulador, traducido a los campos reales del
+// expediente. Lo comparten el simulador del modelo por puntos y el de reglas.
+function ebrSimMock() {
   var v = function(id){ return (document.getElementById(id)||{}).value || ''; };
   var tipo = v('sim-tipo'), pep = v('sim-pep'), nac = v('sim-nac');
   var act  = v('sim-act'), est = v('sim-est'), pdom = v('sim-pdom'), db = v('sim-db');
@@ -4599,20 +4852,27 @@ function ebrSimular() {
   var limite = (Number(CFG_UMA.DIARIA) || 0) * (Number(CFG_UMA.UMBRAL_INM) || 8025);
   mock.es_arrendamiento = esArr ? 'SI' : 'NO';
   if (esArr) {
-    mock.ptx_arr_efectivo = ['NUNCA', 'OCASIONAL', 'HABITUAL'][ef];
+    mock.ptx_arr_efectivo = ['NUNCA', 'OCASIONAL', 'HABITUAL', 'HABITUAL'][ef];
     mock.ptx_arr_origen = v('sim-origen');
     mock.renta_moneda = v('sim-moneda') === 'MXN' ? 'MXN' : 'USD';
     mock.ptx_arr_numops = vol ? 'VARIAS' : 'UNA';
     mock.ptx_arr_frec = v('sim-frec');
     mock.ptx_arr_pago = v('sim-contra') === 'TERCEROS' ? 'TRANSF_TERCEROS' : 'TRANSF_PROPIA';
   } else {
-    mock.ptx_cv_efectivo_mxn = [0, limite * 0.25, limite * 0.75][ef];
+    mock.ptx_cv_efectivo_mxn = [0, limite * 0.25, limite * 0.75, limite * 1.2][ef];
     mock.ptx_cv_origen = v('sim-origen');
     mock.ptx_cv_moneda = v('sim-moneda');
     mock.ptx_cv_numops = ['1', '2_5', '5_MAS'][vol];
     mock.ptx_cv_contrapartes = v('sim-contra');
   }
-  var res = calcEBR(mock);
+  mock.pep_extranjero = v('sim-pepext') === 'SI' ? 'SI' : 'NO';
+  mock._reval = { desv: v('sim-desv') === 'SI', efNoDecl: v('sim-efnd') === 'SI' };
+  return mock;
+}
+
+function ebrSimular() {
+  var mock = ebrSimMock();
+  var res = calcEBRPuntos(mock);
   var prohibidos = vinculosProhibidos(mock);
   var color = res.nivel === 'Alto' ? 'var(--rj)' : res.nivel === 'Medio' ? 'var(--am)' : 'var(--vd,#16a34a)';
   if (prohibidos.length) {
@@ -4988,6 +5248,17 @@ function guardarEBR() {
   Object.keys(pordef).forEach(function(e){
     if (CFG_EBR.estados_puntaje[e] === undefined) CFG_EBR.estados_puntaje[e] = pordef[e];
   });
+  persistirEBR('Configuracion de nivel de riesgo guardada');
+}
+
+// Guarda la configuracion completa del nivel de riesgo (los dos modelos) en el
+// navegador y en SharePoint, y vuelve a la pantalla.
+function persistirEBR(msg) {
+  CFG_EBR.estados_puntaje = CFG_EBR.estados_puntaje || {};
+  var pordef = ipmPuntajePorDefecto();
+  Object.keys(pordef).forEach(function(e){
+    if (CFG_EBR.estados_puntaje[e] === undefined) CFG_EBR.estados_puntaje[e] = pordef[e];
+  });
   var json = JSON.stringify(CFG_EBR);
   localStorage.setItem('ebr_config', json);
   spGet('PLD_Config', function(lista) {
@@ -4995,9 +5266,9 @@ function guardarEBR() {
     (lista||[]).forEach(function(c){ if(c.Title==='CONFIG_SISTEMA'||c.uma_diaria) item=c; });
     var datos = { Title: 'CONFIG_SISTEMA', ebr_config: json, actualizado_por: App.cuenta.username };
     if (item && item.id) {
-      spPatch('PLD_Config', item.id, datos, function() { toast('Configuracion de nivel de riesgo guardada','s'); pgConfig('ebr'); });
+      spPatch('PLD_Config', item.id, datos, function() { toast(msg,'s'); pgConfig('ebr'); });
     } else {
-      spCreate('PLD_Config', datos, function() { toast('Configuracion de nivel de riesgo guardada','s'); pgConfig('ebr'); });
+      spCreate('PLD_Config', datos, function() { toast(msg,'s'); pgConfig('ebr'); });
     }
   });
 }
@@ -6115,6 +6386,12 @@ function aplicarObservadoReval(c, ob) {
 function evaluarReval(c, ops) {
   var ob = observadoReval(ops);
   var ap = aplicarObservadoReval(c, ob);
+  // Las dos reglas de revaloracion solo pueden cumplirse aqui: desviaciones
+  // contra lo declarado y efectivo observado sin haberlo declarado.
+  var sinEfDecl = c.es_arrendamiento === 'SI'
+    ? (!c.ptx_arr_efectivo || c.ptx_arr_efectivo === 'NUNCA')
+    : !((parseFloat(c.ptx_cv_efectivo_mxn) || 0) > 0);
+  ap.datos._reval = { desv: ap.desv.length > 0, efNoDecl: ob.efectivoN > 0 && sinEfDecl };
   var r = calcEBR(ap.datos);
   var ant = c.riesgo || '';
   var ia = NIVELES_EBR.indexOf(ant), in_ = NIVELES_EBR.indexOf(r.nivel);
@@ -6218,8 +6495,13 @@ function renderReval() {
       + '<td>' + capEsc(nombreCliente(e.c)) + '<div style="font-size:11px;color:var(--tx3)">#' + nStr(e.c.num_cliente) + ' · ' + labelTipo(e.c.tipo) + '</div></td>'
       + '<td>' + (e.anterior ? '<span class="pill ' + pR(e.anterior) + '">' + e.anterior + '</span>' : '-') + '</td>'
       + '<td><span class="pill ' + pR(r.nivel) + '">' + r.nivel + '</span>' + cambio + '</td>'
-      + '<td class="mono">' + r.puntaje_cliente + '</td>'
-      + '<td class="mono">' + r.puntaje_tx + (e.fuente === 'declarado' ? ' <span style="font-size:11px;color:var(--tx3)" title="Sin operaciones en la ventana: se usa el perfil declarado">declarado</span>' : '') + '</td>'
+      + (r.modelo === 'reglas'
+          ? '<td class="mono" title="' + capEsc(r.reglas.filter(function(x){ return x.nv !== 'Agravante'; }).map(function(x){ return x.motivo + ': ' + x.nv; }).join('\n')) + '">'
+            + r.reglas.filter(function(x){ return x.nv !== 'Agravante'; }).length + '</td>'
+            + '<td class="mono">' + r.agravantes + (r.subio ? ' <span style="font-size:11px;color:var(--rj)">sube</span>' : '')
+            + (e.fuente === 'declarado' ? ' <span style="font-size:11px;color:var(--tx3)" title="Sin operaciones en la ventana: se usa el perfil declarado">declarado</span>' : '') + '</td>'
+          : '<td class="mono">' + r.puntaje_cliente + '</td>'
+            + '<td class="mono">' + r.puntaje_tx + (e.fuente === 'declarado' ? ' <span style="font-size:11px;color:var(--tx3)" title="Sin operaciones en la ventana: se usa el perfil declarado">declarado</span>' : '') + '</td>')
       + '<td class="mono">' + e.ob.n + '</td>'
       + '<td>' + (e.desv.length ? '<span class="pill p-am">' + e.desv.length + '</span>' : '-') + '</td>'
       + '<td>' + estado + '</td>'
@@ -6228,7 +6510,9 @@ function renderReval() {
   }).join('');
   var tabla = R.evals.length
     ? '<div class="card"><div style="overflow-x:auto"><table><thead><tr>'
-      + '<th>Cliente</th><th>Nivel anterior</th><th>Nivel nuevo</th><th>Cliente pts</th><th>Operacion pts</th><th>Operaciones</th><th>Desviaciones</th><th>Estado</th><th></th>'
+      + '<th>Cliente</th><th>Nivel anterior</th><th>Nivel nuevo</th>'
+      + (modeloEBRActivo() === 'reglas' ? '<th>Reglas</th><th>Agravantes</th>' : '<th>Cliente pts</th><th>Operacion pts</th>')
+      + '<th>Operaciones</th><th>Desviaciones</th><th>Estado</th><th></th>'
       + '</tr></thead><tbody>' + filas + '</tbody></table></div></div>'
     : '<div class="card"><div class="empty">No hay clientes en este ciclo (' + alcanceTextoReval(R.ciclo) + ', estatus activo o inactivo).</div></div>';
 
@@ -6269,10 +6553,16 @@ function verReval(i) {
     + fgHtml(
         fcHtml('Nivel', (e.anterior ? 'de ' + e.anterior + ' a ' : '') + r.nivel)
       + fcHtml('Motivo', capEsc(r.motivo))
-      + fcHtml('Dimension cliente', r.puntaje_cliente + ' puntos, ' + r.nivel_cliente)
-      + fcHtml('Dimension transaccional', r.puntaje_tx + ' puntos, ' + r.nivel_tx + (e.fuente === 'declarado' ? ', con el perfil declarado' : ', con lo observado'))
-      + fcHtml('Reglas', r.reglas.length ? capEsc(r.reglas.map(function(x){ return x.motivo + ': ' + x.nivel; }).join('; ')) : 'Ninguna')
+      + (r.modelo === 'reglas'
+          ? fcHtml('Perfil transaccional', e.fuente === 'declarado' ? 'El declarado: no hubo operaciones en la ventana' : 'Lo observado en las operaciones de la ventana')
+          : fcHtml('Dimension cliente', r.puntaje_cliente + ' puntos, ' + r.nivel_cliente)
+            + fcHtml('Dimension transaccional', r.puntaje_tx + ' puntos, ' + r.nivel_tx + (e.fuente === 'declarado' ? ', con el perfil declarado' : ', con lo observado'))
+            + fcHtml('Reglas', r.reglas.length ? capEsc(r.reglas.map(function(x){ return x.motivo + ': ' + x.nivel; }).join('; ')) : 'Ninguna'))
       + fcHtml('Observado', capEsc(obs)))
+    + (r.modelo === 'reglas'
+        ? '<div style="margin:10px 0"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Reglas que se cumplen</div>'
+          + htmlReglasRiesgo(r.reglas, r.agravantes, r.subio, r.umbral) + '</div>'
+        : '')
     + (e.desv.length
         ? '<div style="margin:10px 0"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Desviaciones del perfil declarado</div>'
           + '<ul style="margin:0;padding-left:18px;font-size:13px;color:var(--tx2);line-height:1.6">' + e.desv.map(function(x){ return '<li>' + capEsc(x) + '</li>'; }).join('') + '</ul></div>'
@@ -6321,8 +6611,9 @@ function guardarReval(e, texto, cb) {
     id_cliente_ref: c.id, num_cliente: c.num_cliente || '', nombre_cliente: nombreCliente(c), tipo: c.tipo,
     entidad_id: c.entidad_id || '', entidad_nombre: c.entidad_nombre || '',
     nivel_anterior: e.anterior, nivel_nuevo: r.nivel, cambio: e.cambio,
-    puntaje_cliente: r.puntaje_cliente, nivel_cliente: r.nivel_cliente,
-    puntaje_tx: r.puntaje_tx, nivel_tx: r.nivel_tx, fuente_tx: e.fuente,
+    puntaje_cliente: r.modelo === 'reglas' ? '' : r.puntaje_cliente, nivel_cliente: r.nivel_cliente || '',
+    puntaje_tx: r.modelo === 'reglas' ? '' : r.puntaje_tx, nivel_tx: r.nivel_tx || '', fuente_tx: e.fuente,
+    agravantes: r.modelo === 'reglas' ? r.agravantes : '', agravantes_suben: r.modelo === 'reglas' ? r.subio : '',
     reglas: r.reglas.map(function(x){ return x.motivo + ': ' + x.nivel; }), motivo: r.motivo,
     operaciones: ob.n, meses_con_operaciones: ob.numMeses || 0,
     efectivo_operaciones: ob.efectivoN, efectivo_mxn: r2(ob.efectivoMXN), total_mxn: r2(ob.totalMXN),
@@ -6330,17 +6621,12 @@ function guardarReval(e, texto, cb) {
     desviaciones: e.desv,
     estado: e.cambio === 'igual' ? 'Confirmada' : 'Aprobada',
     justificacion: texto || '',
-    evaluado_por: App.cuenta ? App.cuenta.username : '', fecha_evaluacion: hoy(), modelo: MODELO_EBR
+    evaluado_por: App.cuenta ? App.cuenta.username : '', fecha_evaluacion: hoy(), modelo: r.modelo === 'reglas' ? 'reglas' : MODELO_EBR
   };
   spCreate(LISTA_REVAL, reg, function(item){
     if (!item) { cb(false); return; }
     var c2 = JSON.parse(JSON.stringify(c));
-    c2.riesgo = r.nivel;
-    c2.puntaje_ebr = r.puntaje;
-    c2.puntaje_ebr_cliente = r.puntaje_cliente;
-    c2.puntaje_ebr_tx = r.puntaje_tx;
-    c2.riesgo_motivo = r.motivo;
-    c2.riesgo_modelo = MODELO_EBR;
+    aplicarRiesgo(c2, r);
     c2.ciclo_ult_revaluacion = cic.clave;
     c2.fecha_ult_revaluacion = hoy();
     spUpdate('PLD_Clientes', c.id, c2, function(res){
@@ -6534,7 +6820,7 @@ function nivelPorPuntaje(p) {
 // dimension cliente, el de la dimension transaccional y el piso que fijen las
 // reglas determinantes. Devuelve tambien el desglose y el motivo, que se
 // guardan con el expediente para poder explicar la clasificacion.
-function calcEBR(d) {
+function calcEBRPuntos(d) {
   var pc = calcEBRCliente(d), pt = calcEBRTransaccional(d);
   var nc = nivelPorPuntaje(pc), nt = nivelPorPuntaje(pt);
   var reglas = reglasEBR(d);
@@ -6545,7 +6831,7 @@ function calcEBR(d) {
   reglas.forEach(function(r){ if (r.nivel === nivel) motivos.push('Regla: ' + r.motivo); });
   if (nc === nivel) motivos.push('Cliente ' + pc + ' pts');
   if (nt === nivel) motivos.push('Operacion ' + pt + ' pts');
-  return { nivel: nivel, puntaje: Math.max(pc, pt), puntaje_cliente: pc, nivel_cliente: nc,
+  return { modelo: 'puntos', nivel: nivel, puntaje: Math.max(pc, pt), puntaje_cliente: pc, nivel_cliente: nc,
            puntaje_tx: pt, nivel_tx: nt, reglas: reglas, motivo: motivos.join(' · ') };
 }
 
@@ -6586,10 +6872,16 @@ function vinculosProhibidos(d) {
 // fideicomisarios (pais de nacionalidad o constitucion). Devuelve
 // { parte, campo, pais } por vinculo.
 function vinculosProhibidosPartes(d) {
+  return paisesDePartes(d).filter(function(v){ return jurisdiccionesDe(v.pais).indexOf('gafi_contramedidas') >= 0; });
+}
+// Paises extranjeros de las personas relacionadas, campo por campo. Los usan el
+// bloqueo por contramedidas y la regla de persona relacionada de un pais en
+// vigilancia del GAFI o con regimen fiscal preferente.
+function paisesDePartes(d) {
   var out = [];
   var revisa = function(parte, campo, pais) {
     if (!pais || normPais(pais) === 'MEXICO') return;
-    if (jurisdiccionesDe(pais).indexOf('gafi_contramedidas') >= 0) out.push({ parte: parte, campo: campo, pais: pais });
+    out.push({ parte: parte, campo: campo, pais: pais });
   };
   var nom = function(p){ return [p.nombre, p.ap_pat, p.ap_mat].filter(Boolean).join(' '); };
   (d.beneficiarios || []).forEach(function(bc, i){
@@ -6769,6 +7061,285 @@ function calcEBRTransaccional(d) {
   });
   var tope = topeTxEBR(F.arr);
   return tope ? Math.min(ESCALA_EBR, Math.round(p * ESCALA_EBR / tope)) : 0;
+}
+
+// ================================================================
+//  MODELO DE RIESGO POR REGLAS
+// ================================================================
+// Vigente desde el 12 de octubre de 2026. Cada cliente toma el nivel que le dan
+// las reglas que se cumplen, sin sumar puntos. Hay una matriz por operacion
+// (compraventa y arrendamiento) con una columna por tipo de persona; cada celda
+// es el nivel que esa regla da a ese tipo de cliente: Bajo, Medio, Alto,
+// Agravante o No aplica.
+//
+// 1. Nivel base: el mas alto entre las reglas que se cumplen; si ninguna, Bajo.
+// 2. Agravantes: solos no cambian nada; al juntarse los suficientes (2 por
+//    omision) suben el nivel un escalon, sin pasar de Alto.
+//
+// Las reglas del cliente (PEP, geografia, estructura) son las mismas en las dos
+// operaciones; solo el perfil transaccional cambia. Las exclusiones (contramedidas
+// del GAFI, coincidencia confirmada en sanciones) no son reglas: bloquean.
+// El modelo por puntos sigue en calcEBRPuntos, obsoleto pero seleccionable en la
+// configuracion para poder volver a el.
+var NIVELES_REGLA = ['Bajo', 'Medio', 'Alto', 'Agravante', 'No aplica'];
+var TIPOS_REGLA = ['PF', 'PM', 'FID', 'SIMP'];
+var TIPOS_REGLA_ETQ = { PF: 'Persona física', PM: 'Persona moral', FID: 'Fideicomiso', SIMP: 'PM simplificada' };
+var OPS_REGLA = ['cv', 'arr'];
+var GRUPOS_REGLA = [
+  { id: 'pep', titulo: 'PEP', nota: 'Cliente o persona relacionada confirmada. Igual en las dos operaciones', cliente: true },
+  { id: 'geo', titulo: 'Geografía', nota: 'Domicilio, nacionalidad, nacimiento y constitución. Igual en las dos operaciones', cliente: true },
+  { id: 'est', titulo: 'Actividad y estructura', nota: 'Cada tipo de persona tiene datos distintos. Igual en las dos operaciones', cliente: true },
+  { id: 'cc',  titulo: 'Combinaciones del cliente', nota: 'Las dos condiciones a la vez. Igual en las dos operaciones', cliente: true },
+  { id: 'tx',  titulo: 'Perfil transaccional', nota: 'Propio de cada operación' },
+  { id: 'ct',  titulo: 'Combinaciones transaccionales', nota: 'Las dos condiciones a la vez' },
+  { id: 'rv',  titulo: 'Revaloración', nota: 'Solo se activan al revalorar, con lo observado en el periodo' }
+];
+var R_AMB = ['cv', 'arr'], R_C3 = ['PF', 'PM', 'FID'], R_C4 = ['PF', 'PM', 'FID', 'SIMP'];
+// ops: en que matriz existe la regla. tipos: a que personas aplica (un guion en
+// la matriz cuando el expediente de ese tipo no tiene el dato). d: dato del
+// perfil que explica por que se cumplio. t: texto, uno por operacion o una
+// funcion de la configuracion cuando lleva un parametro.
+var REGLAS_EBR = [
+  { id: 'pep_afr', g: 'pep', ops: R_AMB, tipos: R_C4, def: 'Medio', d: 'pep', t: 'PEP activo, inactivo, familiar o relacionado', c: function(p){ return p.pepAFR; } },
+  { id: 'pep_iv', g: 'pep', ops: R_AMB, tipos: R_C4, def: 'Bajo', d: 'pep', t: 'PEP vencido', c: function(p){ return p.pepVencido && !p.pepAFR; } },
+  { id: 'pep_roja', g: 'pep', ops: R_AMB, tipos: R_C4, def: 'Alto', d: 'banda', t: 'PEP activo, inactivo, familiar o relacionado con domicilio en estado de banda roja', c: function(p){ return p.pepAFR && p.banda === 'roja'; } },
+  { id: 'pep_inter', g: 'pep', ops: R_AMB, tipos: R_C4, def: 'Medio', d: 'banda', t: 'PEP activo, inactivo, familiar o relacionado en estado de banda amarilla o naranja', c: function(p){ return p.pepAFR && p.banda === 'intermedia'; } },
+  { id: 'pep_db', g: 'pep', ops: R_AMB, tipos: R_C4, def: 'Alto', d: 'pep', t: 'PEP activo, inactivo, familiar o relacionado que declara dueño beneficiario', n: 'Dueño beneficiario es la declaración de actuar por cuenta de otro, no los beneficiarios controladores', c: function(p){ return p.pepAFR && p.db; } },
+  { id: 'pep_ext', g: 'pep', ops: R_AMB, tipos: R_C4, def: 'Alto', t: 'PEP extranjero, en cualquier estatus', n: 'Campo "El PEP es extranjero" del expediente', c: function(p){ return p.pepExt; } },
+
+  { id: 'geo_csnu', g: 'geo', ops: R_AMB, tipos: R_C3, def: 'Alto', d: 'csnu', t: 'País con sanciones del Consejo de Seguridad en domicilio, nacionalidad, nacimiento o constitución', c: function(p){ return p.csnu; } },
+  { id: 'geo_vig', g: 'geo', ops: R_AMB, tipos: R_C3, def: 'Medio', d: 'vig', t: 'País en vigilancia del GAFI en domicilio, nacionalidad, nacimiento o constitución', c: function(p){ return p.vig; } },
+  { id: 'geo_fiscal', g: 'geo', ops: R_AMB, tipos: R_C3, def: 'Medio', d: 'fiscal', t: 'Régimen fiscal preferente en domicilio o constitución', c: function(p){ return p.fiscal; } },
+  { id: 'geo_roja', g: 'geo', ops: R_AMB, tipos: R_C3, def: 'Agravante', d: 'banda', t: 'Domicilio en estado de banda roja, sin PEP activo, inactivo, familiar o relacionado', c: function(p){ return p.banda === 'roja' && !p.pepAFR; } },
+  { id: 'geo_ext', g: 'geo', ops: R_AMB, tipos: R_C3, def: 'Agravante', d: 'ext', t: 'Extranjero de un país sin listas', c: function(p){ return p.ext; } },
+  { id: 'geo_rel', g: 'geo', ops: R_AMB, tipos: R_C3, def: 'Agravante', d: 'rel', t: 'Persona relacionada de un país en vigilancia del GAFI o con régimen fiscal preferente', c: function(p){ return p.relGeo; } },
+
+  { id: 'act', g: 'est', ops: R_AMB, tipos: ['PF', 'PM'], def: 'Medio', t: 'Actividad económica de alto riesgo', n: 'Según el catálogo de actividades de alto riesgo', c: function(p){ return p.act; } },
+  { id: 'db', g: 'est', ops: R_AMB, tipos: R_C3, def: 'Medio', t: 'Dueño beneficiario declarado, sin PEP activo, inactivo, familiar o relacionado', c: function(p){ return p.db && !p.pepAFR; } },
+  { id: 'pm_joven', g: 'est', ops: R_AMB, tipos: ['PM'], def: 'Medio', t: function(c){ return 'Persona moral con menos de ' + c.anios_joven + ' años de constituida'; }, c: function(p){ return p.joven; } },
+  { id: 'fid_joven', g: 'est', ops: R_AMB, tipos: ['FID'], def: 'Agravante', t: function(c){ return 'Fideicomiso con menos de ' + c.anios_joven + ' años de constituido'; }, c: function(p){ return p.joven; } },
+  { id: 'edad', g: 'est', ops: R_AMB, tipos: ['PF'], def: 'Agravante', t: function(c){ return 'Menor de ' + c.edad_min + ' o mayor de ' + c.edad_max + ' años'; }, c: function(p){ return p.edad; } },
+
+  { id: 'c_act_geo', g: 'cc', ops: R_AMB, tipos: ['PF', 'PM'], def: 'Alto', t: 'Actividad de alto riesgo con país en vigilancia del GAFI o régimen fiscal preferente', c: function(p){ return p.act && (p.vig || p.fiscal); } },
+  { id: 'c_pm_db', g: 'cc', ops: R_AMB, tipos: ['PM'], def: 'Alto', t: 'Persona moral de reciente constitución que declara dueño beneficiario', c: function(p){ return p.joven && p.db; } },
+
+  { id: 'cv_ef_menor', g: 'tx', ops: ['cv'], tipos: R_C4, def: 'Agravante', t: 'Efectivo por menos de la mitad del límite legal', c: function(p){ return p.ef === 'menor'; } },
+  { id: 'cv_ef_mitad', g: 'tx', ops: ['cv'], tipos: R_C4, def: 'Alto', t: 'Efectivo por la mitad del límite legal o más (4,012.5 UMA)', c: function(p){ return p.ef === 'mitad'; } },
+  { id: 'arr_ef_ocas', g: 'tx', ops: ['arr'], tipos: R_C4, def: 'Agravante', t: 'Renta pagada en efectivo de forma ocasional', c: function(p){ return p.ef === 'ocasional'; } },
+  { id: 'arr_ef_hab', g: 'tx', ops: ['arr'], tipos: R_C4, def: 'Medio', t: 'Renta pagada en efectivo de forma habitual', c: function(p){ return p.ef === 'habitual'; } },
+  { id: 't_otro', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Medio', t: 'Origen de los recursos "Otro"', c: function(p){ return p.origen === 'OTRO'; } },
+  { id: 't_her', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Agravante', t: 'Origen por herencia, donación o préstamo', c: function(p){ return p.origen === 'HERENCIA' || p.origen === 'PRESTAMO'; } },
+  { id: 't_div', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Medio', t: 'Pago en una divisa distinta de pesos o dólares', c: function(p){ return p.moneda === 'OTRA'; } },
+  { id: 't_usd', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Agravante', t: 'Pago en dólares', c: function(p){ return p.moneda === 'USD'; } },
+  { id: 't_terc', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Medio', t: { cv: 'Precio pagado desde cuentas de terceros', arr: 'Renta pagada por un tercero' }, c: function(p){ return p.terceros; } },
+  { id: 't_vol', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Agravante', t: { cv: 'Más de 5 operaciones', arr: 'Más de una operación por periodo' }, c: function(p){ return p.volumen; } },
+  { id: 'arr_anual', g: 'tx', ops: ['arr'], tipos: R_C4, def: 'Agravante', t: 'Pago anual por adelantado', c: function(p){ return p.anual; } },
+
+  { id: 'c_ef_terc', g: 'ct', ops: R_AMB, tipos: R_C4, def: 'Alto', t: 'Cualquier uso de efectivo con pagos de terceros', c: function(p){ return p.ef !== 'nunca' && p.terceros; } },
+  { id: 'c_ef_otro', g: 'ct', ops: R_AMB, tipos: R_C4, def: 'Alto', t: { cv: 'Efectivo por la mitad del límite o más, con origen "Otro"', arr: 'Efectivo habitual con origen "Otro"' }, c: function(p){ return (p.ef === 'mitad' || p.ef === 'excede' || p.ef === 'habitual') && p.origen === 'OTRO'; } },
+  { id: 'c_div_terc', g: 'ct', ops: R_AMB, tipos: R_C4, def: 'Alto', t: 'Otra divisa con pagos de terceros', c: function(p){ return p.moneda === 'OTRA' && p.terceros; } },
+
+  { id: 'r_desv', g: 'rv', ops: R_AMB, tipos: R_C4, def: 'Agravante', t: 'Lo observado se desvía de lo declarado', c: function(p){ return p.desv; } },
+  { id: 'r_ef', g: 'rv', ops: R_AMB, tipos: R_C4, def: 'Medio', t: 'Usó efectivo sin haberlo declarado', c: function(p){ return p.efNoDecl; } }
+];
+
+function reglaAplica(r, op, tipo) { return r.ops.indexOf(op) >= 0 && r.tipos.indexOf(tipo) >= 0; }
+function textoRegla(r, op, cfg) {
+  if (typeof r.t === 'function') return r.t(cfg || cfgReglas());
+  return typeof r.t === 'string' ? r.t : r.t[op];
+}
+function modeloEBRActivo() { return CFG_EBR.modelo_activo === 'puntos' ? 'puntos' : 'reglas'; }
+function tipoRegla(tipo) {
+  return (tipo === 'PF_MEX' || tipo === 'PF_EXT') ? 'PF' : tipo === 'PM_SIMP' ? 'SIMP' : tipo === 'FIDEICOMISO' ? 'FID' : 'PM';
+}
+
+// Configuracion del modelo por reglas: la guardada, completada con los valores
+// por omision de lo que falte (una regla nueva entra con su nivel propuesto).
+function reglasEBRDefecto() {
+  var n = {};
+  OPS_REGLA.forEach(function(op){
+    n[op] = {};
+    TIPOS_REGLA.forEach(function(t){
+      n[op][t] = {};
+      REGLAS_EBR.forEach(function(r){ if (reglaAplica(r, op, t)) n[op][t][r.id] = r.def; });
+    });
+  });
+  return { niveles: n, umbral_agravantes: 2, edad_min: 20, edad_max: 75, anios_joven: 3 };
+}
+function cfgReglas() {
+  var c = reglasEBRDefecto(), g = CFG_EBR.reglas || {}, gn = g.niveles || {};
+  OPS_REGLA.forEach(function(op){
+    TIPOS_REGLA.forEach(function(t){
+      var src = (gn[op] || {})[t] || {};
+      Object.keys(c.niveles[op][t]).forEach(function(k){ if (NIVELES_REGLA.indexOf(src[k]) >= 0) c.niveles[op][t][k] = src[k]; });
+    });
+  });
+  var num = function(v, def){ var x = Number(v); return (v === '' || v === null || v === undefined || isNaN(x)) ? def : x; };
+  c.umbral_agravantes = num(g.umbral_agravantes, 2);
+  c.edad_min = num(g.edad_min, 20);
+  c.edad_max = num(g.edad_max, 75);
+  c.anios_joven = num(g.anios_joven, 3);
+  return c;
+}
+
+// Banda del estado para las reglas. Sale del puntaje que tiene en el mapa del
+// Indice de Paz de esta configuracion: 10 es banda roja, 5 amarilla o naranja y
+// 0 verde. Asi un estado que se reclasifique en el mapa cambia de banda aqui.
+function bandaEstadoRegla(estado) {
+  if (!estado) return 'verde';
+  var pts = (CFG_EBR.estados_puntaje || {})[estado];
+  if (pts === undefined) { var x = ipmDato(estado); pts = x ? IPM_BANDAS[x.banda].pts : 0; }
+  pts = Number(pts) || 0;
+  return pts >= 10 ? 'roja' : pts > 0 ? 'intermedia' : 'verde';
+}
+
+// Lo que las reglas necesitan saber del expediente, leido una sola vez. det
+// guarda el dato concreto que explica cada condicion, para mostrarlo.
+function perfilRiesgo(d) {
+  var cfg = cfgReglas();
+  var p = { tipo: tipoRegla(d.tipo), op: d.es_arrendamiento === 'SI' ? 'arr' : 'cv', det: {} };
+  var AFR = ['Activo', 'Inactivo', 'Familiar', 'Relacionado a PEP'];
+
+  // PEP del cliente y de las personas relacionadas confirmadas por listas.
+  var peps = [];
+  if (d.estatus_pep && d.estatus_pep !== 'NO APLICA') peps.push({ estatus: d.estatus_pep, quien: 'cliente' });
+  pepPartesConfirmadas(d).forEach(function(pp){ peps.push({ estatus: pp.estatus, quien: pp.parte + (pp.nombre ? ' ' + pp.nombre : '') }); });
+  var afr = peps.filter(function(x){ return AFR.indexOf(x.estatus) >= 0; });
+  var ven = peps.filter(function(x){ return x.estatus === 'Vencido'; });
+  p.pepAFR = afr.length > 0;
+  p.pepVencido = ven.length > 0;
+  p.det.pep = (afr.length ? afr : ven).map(function(x){ return x.estatus.toLowerCase() + ', ' + x.quien; }).join('; ');
+  p.pepExt = d.pep_extranjero === 'SI' && !!d.estatus_pep && d.estatus_pep !== 'NO APLICA';
+
+  // Domicilio: en Mexico cuenta la banda de su estado.
+  var dom = domicilioDePersona(d);
+  var domMx = normPais(dom.pais || 'MEXICO') === 'MEXICO';
+  p.banda = domMx ? bandaEstadoRegla(dom.estado) : 'extranjero';
+  p.det.banda = domMx ? (dom.estado || '') : (dom.pais || '');
+
+  // Paises del cliente. La persona fisica: domicilio, nacionalidad y nacimiento;
+  // la moral: domicilio y constitucion; el fideicomiso: solo domicilio.
+  var paises = paisesDePersona(d), campos = [['domicilio', dom.pais]];
+  if (p.tipo === 'PF') {
+    campos.push(['nacionalidad', paises.nacionalidad]);
+    if (paises.nacimiento) campos.push(['país de nacimiento', paises.nacimiento]);
+  } else if (p.tipo === 'PM') {
+    campos.push(['país de constitución', paises.nacionalidad]);
+  }
+  var hit = { csnu: [], vig: [], fiscal: [], ext: [] };
+  campos.forEach(function(c){
+    if (!c[1] || normPais(c[1]) === 'MEXICO') return;
+    var cats = jurisdiccionesDe(c[1]), txt = c[0] + ', ' + c[1], usado = false;
+    if (cats.indexOf('csnu_sanciones') >= 0) { hit.csnu.push(txt); usado = true; }
+    if (cats.indexOf('gafi_vigilancia') >= 0) { hit.vig.push(txt); usado = true; }
+    if (cats.indexOf('regimen_fiscal') >= 0 && (c[0] === 'domicilio' || c[0] === 'país de constitución')) { hit.fiscal.push(txt); usado = true; }
+    if (!usado && cats.indexOf('gafi_contramedidas') < 0) hit.ext.push(txt);
+  });
+  p.csnu = hit.csnu.length > 0; p.vig = hit.vig.length > 0; p.fiscal = hit.fiscal.length > 0; p.ext = hit.ext.length > 0;
+  p.det.csnu = hit.csnu.join('; '); p.det.vig = hit.vig.join('; '); p.det.fiscal = hit.fiscal.join('; '); p.det.ext = hit.ext.join('; ');
+  var rel = (p.tipo === 'SIMP') ? [] : paisesDePartes(d).filter(function(v){
+    var cats = jurisdiccionesDe(v.pais);
+    return cats.indexOf('gafi_vigilancia') >= 0 || cats.indexOf('regimen_fiscal') >= 0;
+  });
+  p.relGeo = rel.length > 0;
+  p.det.rel = rel.map(function(v){ return v.parte + ', ' + v.campo + ', ' + v.pais; }).join('; ');
+
+  // Estructura.
+  p.db = d.tiene_dueno_ben === 'SI';
+  var actCod = String(d.actividad_scian || d.actividad_pf || '');
+  p.act = !!actCod && (CFG_EBR.actividades_alto_riesgo || []).indexOf(actCod) >= 0;
+  var anios = edadDesde(d.fecha_const);
+  p.joven = anios !== null && anios < cfg.anios_joven;
+  var edad = edadDesde(d.fecha_nac);
+  p.edad = edad !== null && (edad < cfg.edad_min || edad > cfg.edad_max);
+
+  // Perfil transaccional declarado (en la revaloracion llega con lo observado).
+  if (p.op === 'arr') {
+    p.ef = { OCASIONAL: 'ocasional', HABITUAL: 'habitual' }[d.ptx_arr_efectivo] || 'nunca';
+    p.origen = d.ptx_arr_origen || '';
+    p.moneda = d.renta_moneda === 'USD' ? 'USD' : 'MXN';
+    p.terceros = d.ptx_arr_pago === 'TRANSF_TERCEROS';
+    p.volumen = d.ptx_arr_numops === 'VARIAS';
+    p.anual = d.ptx_arr_frec === 'ANUAL';
+  } else {
+    var ef = parseFloat(d.ptx_cv_efectivo_mxn) || 0;
+    var lim = (Number(CFG_UMA.DIARIA) || 0) * (Number(CFG_UMA.UMBRAL_INM) || 8025);
+    p.ef = ef <= 0 ? 'nunca' : (lim && ef > lim) ? 'excede' : (lim && ef >= lim / 2) ? 'mitad' : 'menor';
+    p.origen = d.ptx_cv_origen || '';
+    p.moneda = d.ptx_cv_moneda || 'MXN';
+    p.terceros = d.ptx_cv_contrapartes === 'TERCEROS';
+    p.volumen = d.ptx_cv_numops === '5_MAS';
+    p.anual = false;
+  }
+  var rv = d._reval || {};
+  p.desv = !!rv.desv;
+  p.efNoDecl = !!rv.efNoDecl;
+  return p;
+}
+
+function calcEBRReglas(d) {
+  var cfg = cfgReglas(), p = perfilRiesgo(d), tabla = cfg.niveles[p.op][p.tipo];
+  var base = 0, agr = 0, cumplidas = [];
+  var anota = function(x){ x.motivo = x.t + (x.det ? ' (' + x.det + ')' : ''); x.nivel = x.nv; cumplidas.push(x); };
+  // El efectivo por encima del limite del articulo 32 es una operacion
+  // prohibida: el alta se bloquea en la validacion, y si aparece en lo
+  // observado de una revaloracion, el nivel es Alto.
+  if (p.ef === 'excede') { anota({ id: 'excl_ef', t: 'Efectivo por encima del límite legal del art. 32 LFPIORPI (operación prohibida)', nv: 'Alto' }); base = 2; }
+  REGLAS_EBR.forEach(function(r){
+    if (!reglaAplica(r, p.op, p.tipo) || !r.c(p)) return;
+    var nv = tabla[r.id] || r.def;
+    if (nv === 'No aplica') return;
+    anota({ id: r.id, t: textoRegla(r, p.op, cfg), nv: nv, det: r.d ? (p.det[r.d] || '') : '' });
+    if (nv === 'Agravante') agr++;
+    else base = Math.max(base, NIVELES_EBR.indexOf(nv));
+  });
+  var fin = base, subio = false;
+  if (agr >= cfg.umbral_agravantes && base < 2) { fin = base + 1; subio = true; }
+  var nivel = NIVELES_EBR[fin], nb = NIVELES_EBR[base];
+  var principales = cumplidas.filter(function(x){ return x.nv === nb; }).map(function(x){ return x.motivo; });
+  var motivo = principales.join(' · ');
+  if (subio) motivo += (motivo ? ' · ' : '') + agr + ' agravantes suben a ' + nivel;
+  else if (!motivo) motivo = agr ? agr + (agr === 1 ? ' agravante' : ' agravantes') + ', sin llegar al umbral' : 'Ninguna regla se cumple';
+  return { modelo: 'reglas', nivel: nivel, base: nb, agravantes: agr, subio: subio, umbral: cfg.umbral_agravantes,
+           reglas: cumplidas, motivo: motivo, op: p.op, tipo: p.tipo };
+}
+
+// Nivel de riesgo del cliente con el modelo activo en la configuracion.
+function calcEBR(d) { return modeloEBRActivo() === 'puntos' ? calcEBRPuntos(d) : calcEBRReglas(d); }
+
+// Copia el resultado al expediente con lo necesario para explicar el nivel sin
+// recalcular: en el modelo por reglas, las reglas que se cumplieron y los
+// agravantes; en el de puntos, los dos puntajes.
+function aplicarRiesgo(obj, r) {
+  obj.riesgo = r.nivel;
+  obj.riesgo_motivo = r.motivo;
+  if (r.modelo === 'reglas') {
+    obj.riesgo_modelo = 'reglas';
+    obj.riesgo_reglas = r.reglas.map(function(x){ return { id: x.id, t: x.t, nv: x.nv, det: x.det || '' }; });
+    obj.riesgo_agravantes = r.agravantes;
+    obj.riesgo_subio = r.subio;
+    obj.puntaje_ebr = ''; obj.puntaje_ebr_cliente = ''; obj.puntaje_ebr_tx = '';
+  } else {
+    obj.riesgo_modelo = MODELO_EBR;
+    obj.puntaje_ebr = r.puntaje; obj.puntaje_ebr_cliente = r.puntaje_cliente; obj.puntaje_ebr_tx = r.puntaje_tx;
+    obj.riesgo_reglas = ''; obj.riesgo_agravantes = ''; obj.riesgo_subio = '';
+  }
+  return obj;
+}
+
+// Las reglas que se cumplieron, a la vista: una etiqueta por regla con el color
+// de su nivel, y al final la cuenta de agravantes.
+function htmlReglasRiesgo(reglas, agr, subio, umbral) {
+  var cls = { 'Alto': 'p-rj', 'Medio': 'p-am', 'Bajo': 'p-vd', 'Agravante': 'p-mo' };
+  if (!reglas || !reglas.length) return '<span style="font-size:12px;color:var(--tx3)">Ninguna regla se cumple: Bajo por omisión</span>';
+  var a = Number(agr) || 0;
+  var h = reglas.map(function(x){
+    return '<span class="pill ' + (cls[x.nv] || 'p-gr') + '" style="white-space:normal;text-align:left;line-height:1.4">'
+      + capEsc(x.t) + (x.det ? ': ' + capEsc(x.det) : '') + ' · <strong>' + capEsc(x.nv) + '</strong></span>';
+  }).join('');
+  h += '<span class="pill p-gr" style="white-space:normal">' + a + (a === 1 ? ' agravante' : ' agravantes')
+    + (subio ? ': suben el nivel un escalón' : (a ? ' de ' + (umbral || 2) + ' para subir un nivel' : '')) + '</span>';
+  return '<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:flex-start">' + h + '</div>';
 }
 
 // --- CAMPOS COMUNES DOMICILIO ---
@@ -7445,7 +8016,13 @@ function selectEstatusPEP(d) {
         ? '<span class="fhint">Confirmado por coincidencia en listas' + (d.pep_confirmado_por ? ' por ' + capEsc(d.pep_confirmado_por) : '')
           + (d.pep_confirmado_fecha ? ' el ' + capEsc(d.pep_confirmado_fecha) : '') + '. Solo un administrador lo puede cambiar.</span>'
         : '')
-    + '</div>';
+    + '</div>'
+    // El PEP extranjero es riesgo Alto en cualquier estatus (modelo por reglas).
+    + fg('El PEP es extranjero', null, false)
+    + '<select class="sel" name="pep_extranjero">'
+    + '<option value="NO"' + (d.pep_extranjero !== 'SI' ? ' selected' : '') + '>NO</option>'
+    + '<option value="SI"' + (d.pep_extranjero === 'SI' ? ' selected' : '') + '>SI - el cargo es o fue en otro pais</option>'
+    + '</select><span class="fhint">Solo cuenta si el estatus PEP no es NO APLICA. Un PEP extranjero es riesgo Alto en cualquier estatus.</span></div>';
 }
 
 function btnGuardar(idEx, tipo) {
@@ -7676,6 +8253,17 @@ function validarCliente(frm, datos, tipo) {
       + v.campo + ', ' + v.pais);
   });
 
+  // El efectivo de una compraventa de inmueble no puede pasar de 8,025 UMA
+  // (articulo 32 de la LFPIORPI): un perfil que lo declara describe una
+  // operacion prohibida y no se acepta.
+  if (datos.es_arrendamiento !== 'SI') {
+    var efDecl = parseFloat(datos.ptx_cv_efectivo_mxn) || 0;
+    var limEf = (Number(CFG_UMA.DIARIA) || 0) * (Number(CFG_UMA.UMBRAL_INM) || 8025);
+    if (limEf && efDecl > limEf)
+      bloq.push('El efectivo declarado ($' + Math.round(efDecl).toLocaleString('es-MX') + ') rebasa el limite legal de 8,025 UMA ($'
+        + Math.round(limEf).toLocaleString('es-MX') + ') del articulo 32 de la LFPIORPI: esa operacion esta prohibida. Corrige el perfil transaccional.');
+  }
+
   // CURP: 18 caracteres exactos en los campos que SON una CURP (curp, rl_curp,
   // db_curp...). Los datos de la constancia (curp_qr_url, curp_folio,
   // curp_constancia_fecha) tambien llevan "curp" en el nombre y no lo son.
@@ -7822,13 +8410,7 @@ function submitCliente(tipo, idEx) {
     }
   }
 
-  var riesgo = calcEBR(datos);
-  datos.riesgo = riesgo.nivel;
-  datos.puntaje_ebr = riesgo.puntaje;
-  datos.puntaje_ebr_cliente = riesgo.puntaje_cliente;
-  datos.puntaje_ebr_tx = riesgo.puntaje_tx;
-  datos.riesgo_motivo = riesgo.motivo;
-  datos.riesgo_modelo = MODELO_EBR;
+  aplicarRiesgo(datos, calcEBR(datos));
 
   // Asegurar que las listas de screening estén cargadas (última versión en SharePoint)
   // antes de cotejar — sin importar quién ni cuándo las cargó ese día.
@@ -8005,14 +8587,16 @@ function renderFicha(c) {
     +'<div class="ptit">'+nom+'</div>'
     +'<span class="pill '+pE(c.estatus)+'">'+(c.estatus||'-')+'</span>'
     +'<span class="pill '+pR(c.riesgo)+'">'+(c.riesgo||'-')+'</span>'
-    +(c.puntaje_ebr_cliente !== undefined
-        ? '<span class="pill p-gr" title="'+capEsc(c.riesgo_motivo||'')+'">Cliente '+c.puntaje_ebr_cliente+' · Operacion '+(c.puntaje_ebr_tx||0)+'</span>'
-        : '<span class="pill p-gr">EBR: '+(c.puntaje_ebr||0)+' pts</span>')
-    +(function(){
-        var rg = String(c.riesgo_motivo||'').split(' · ').filter(function(x){ return x.indexOf('Regla: ')===0; })
-          .map(function(x){ return x.slice(7); });
-        return rg.length ? '<span class="pill '+pR(c.riesgo)+'">Por regla: '+capEsc(rg.join(', '))+'</span>' : '';
-      })()
+    +(c.riesgo_modelo === 'reglas'
+        ? '<span class="pill p-gr" title="'+capEsc(c.riesgo_motivo||'')+'">Modelo por reglas</span>'
+        : (c.puntaje_ebr_cliente !== undefined && c.puntaje_ebr_cliente !== ''
+            ? '<span class="pill p-gr" title="'+capEsc(c.riesgo_motivo||'')+'">Cliente '+c.puntaje_ebr_cliente+' · Operacion '+(c.puntaje_ebr_tx||0)+'</span>'
+            : '<span class="pill p-gr">EBR: '+(c.puntaje_ebr||0)+' pts</span>')
+          +(function(){
+              var rg = String(c.riesgo_motivo||'').split(' · ').filter(function(x){ return x.indexOf('Regla: ')===0; })
+                .map(function(x){ return x.slice(7); });
+              return rg.length ? '<span class="pill '+pR(c.riesgo)+'">Por regla: '+capEsc(rg.join(', '))+'</span>' : '';
+            })())
     +((['Activo','Familiar','Relacionado a PEP'].indexOf(c.estatus_pep||'')>=0)?'<span class="pill p-mo">PEP: '+c.estatus_pep+(c.pep_origen==='listas'?' (confirmado en listas)':'')+'</span>':'')
     +(c.bloqueo_scr?'<span class="pill p-rj">Bloqueado por lista de sanciones</span>':'')
     +'</div>'
@@ -8020,6 +8604,9 @@ function renderFicha(c) {
     +' - Alta: '+String(c.fecha_alta||'-').substring(0,10)+(c.fecha_baja?' - Baja: '+String(c.fecha_baja).substring(0,10):'')
     +(c.fecha_ult_revaluacion?' - Revalorado: '+String(c.fecha_ult_revaluacion).substring(0,10):'')
     +(c.asesor_nombre?' · <span style="color:var(--az)">Asesor: '+c.asesor_nombre+'</span>':'')+'</div>'
+    +(c.riesgo_modelo === 'reglas'
+        ? '<div style="margin-top:8px;max-width:900px">'+htmlReglasRiesgo(c.riesgo_reglas, c.riesgo_agravantes, c.riesgo_subio, cfgReglas().umbral_agravantes)+'</div>'
+        : '')
     +'</div>'
     +'<div style="display:flex;gap:8px">'
     +(c.aprobacion==='Pendiente'
@@ -9021,10 +9608,7 @@ function resolverCoincidencia(alertaId, i, decision) {
         cambios.bloqueo_scr = { parte: res.parte, nombre: res.nombre_evaluado, lista: res.lista, uid: res.uid, por: quien, fecha: hoy(), fundamento: fundamento };
       }
       var cli2 = Object.assign({}, cli, cambios);
-      var r = calcEBR(cli2);
-      cambios.riesgo = r.nivel; cambios.puntaje_ebr = r.puntaje;
-      cambios.puntaje_ebr_cliente = r.puntaje_cliente; cambios.puntaje_ebr_tx = r.puntaje_tx;
-      cambios.riesgo_motivo = r.motivo; cambios.riesgo_modelo = MODELO_EBR;
+      aplicarRiesgo(cambios, calcEBR(cli2));
       spPatch('PLD_Clientes', cli.id, cambios, function(okC) {
         if (!okC || okC.error) { toast('No se pudo actualizar el expediente', 'e'); return; }
         c.decision = decision; c.estatus_pep = res.estatus_pep; c.fundamento = fundamento; c.resuelto_por = quien; c.fecha = res.fecha;
@@ -13263,7 +13847,7 @@ function _generarXLSX() {
       function nCat(cat){ return alts.filter(function(a){ return altCategoria(a)===cat; }).length; }
       return [
         nStr(k), c.entidad_nombre||c.entidad_id||'', labelTipo(c.tipo), c.estatus||'', c.estatus_pep||'',
-        c.riesgo||'', parseFloat(c.puntaje_ebr)||0, c.fraccion||'', asesorNombre(c.asesor_id), c.registrado_por||'',
+        c.riesgo||'', (c.riesgo_modelo === 'reglas' ? '' : (parseFloat(c.puntaje_ebr)||0)), c.fraccion||'', asesorNombre(c.asesor_id), c.registrado_por||'',
         c.fecha_alta||'', c.fecha_baja||'', c.fecha_registro||'',
         c.Title||nombreCliente(c), c.rfc||'', c.curp||'', c.fecha_nac||c.fecha_const||'',
         c.pais_nac||'', c.pais_nac2||c.pais_nac||'', actividadTxt(c), c.telefono||'', c.email||'',
