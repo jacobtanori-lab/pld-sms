@@ -7104,7 +7104,7 @@ var REGLAS_EBR = [
   { id: 'pep_iv', g: 'pep', ops: R_AMB, tipos: R_C4, def: 'Bajo', d: 'pep', t: 'PEP vencido', c: function(p){ return p.pepVencido && !p.pepAFR; } },
   { id: 'pep_roja', g: 'pep', ops: R_AMB, tipos: R_C4, def: 'Alto', d: 'banda', t: 'PEP activo, inactivo, familiar o relacionado con domicilio en estado de banda roja', c: function(p){ return p.pepAFR && p.banda === 'roja'; } },
   { id: 'pep_inter', g: 'pep', ops: R_AMB, tipos: R_C4, def: 'Medio', d: 'banda', t: 'PEP activo, inactivo, familiar o relacionado en estado de banda amarilla o naranja', c: function(p){ return p.pepAFR && p.banda === 'intermedia'; } },
-  { id: 'pep_db', g: 'pep', ops: R_AMB, tipos: R_C4, def: 'Alto', d: 'pep', t: 'PEP activo, inactivo, familiar o relacionado que declara dueño beneficiario', n: 'Dueño beneficiario es la declaración de actuar por cuenta de otro, no los beneficiarios controladores', c: function(p){ return p.pepAFR && p.db; } },
+  { id: 'pep_db', g: 'pep', ops: R_AMB, tipos: R_C3, def: 'Alto', d: 'pep', t: 'PEP activo, inactivo, familiar o relacionado que declara dueño beneficiario', n: 'Dueño beneficiario es la declaración de actuar por cuenta de otro, no los beneficiarios controladores', c: function(p){ return p.pepAFR && p.db; } },
   { id: 'pep_ext', g: 'pep', ops: R_AMB, tipos: R_C4, def: 'Alto', t: 'PEP extranjero, en cualquier estatus', n: 'Campo "El PEP es extranjero" del expediente', c: function(p){ return p.pepExt; } },
 
   { id: 'geo_csnu', g: 'geo', ops: R_AMB, tipos: R_C3, def: 'Alto', d: 'csnu', t: 'País con sanciones del Consejo de Seguridad en domicilio, nacionalidad, nacimiento o constitución', c: function(p){ return p.csnu; } },
