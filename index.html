@@ -7108,11 +7108,11 @@ var REGLAS_EBR = [
   { id: 'pep_ext', g: 'pep', ops: R_AMB, tipos: R_C4, def: 'Alto', t: 'PEP extranjero, en cualquier estatus', n: 'Campo "El PEP es extranjero" del expediente', c: function(p){ return p.pepExt; } },
 
   { id: 'geo_csnu', g: 'geo', ops: R_AMB, tipos: R_C3, def: 'Alto', d: 'csnu', t: 'País con sanciones del Consejo de Seguridad en domicilio, nacionalidad, nacimiento o constitución', c: function(p){ return p.csnu; } },
-  { id: 'geo_vig', g: 'geo', ops: R_AMB, tipos: R_C3, def: 'Alto', n: 'Alto por el artículo 23 Bis 4', d: 'vig', t: 'País en vigilancia del GAFI en domicilio, nacionalidad, nacimiento o constitución', c: function(p){ return p.vig; } },
-  { id: 'geo_fiscal', g: 'geo', ops: R_AMB, tipos: R_C3, def: 'Alto', n: 'Alto por el artículo 23 Bis 4', d: 'fiscal', t: 'Régimen fiscal preferente en domicilio o constitución', c: function(p){ return p.fiscal; } },
+  { id: 'geo_vig', g: 'geo', ops: R_AMB, tipos: R_C3, def: 'Alto', n: 'Alto por el artículo 23 Bis 4', d: 'vig', t: 'País en la lista gris del GAFI en domicilio, nacionalidad, nacimiento o constitución', c: function(p){ return p.vig; } },
+  { id: 'geo_fiscal', g: 'geo', ops: R_AMB, tipos: R_C3, def: 'Alto', n: 'Alto por el artículo 23 Bis 4', d: 'fiscal', t: 'Régimen fiscal preferente en domicilio, nacionalidad, nacimiento o constitución', c: function(p){ return p.fiscal; } },
   { id: 'geo_roja', g: 'geo', ops: R_AMB, tipos: R_C3, def: 'Agravante', d: 'banda', t: 'Domicilio en estado de banda roja, sin PEP activo, inactivo, familiar o relacionado', c: function(p){ return p.banda === 'roja' && !p.pepAFR; } },
   { id: 'geo_ext', g: 'geo', ops: R_AMB, tipos: R_C3, def: 'Agravante', d: 'ext', t: 'Extranjero de un país sin listas', c: function(p){ return p.ext; } },
-  { id: 'geo_rel', g: 'geo', ops: R_AMB, tipos: R_C3, def: 'Agravante', d: 'rel', t: 'Persona relacionada de un país en vigilancia del GAFI o con régimen fiscal preferente', c: function(p){ return p.relGeo; } },
+  { id: 'geo_rel', g: 'geo', ops: R_AMB, tipos: R_C3, def: 'Alto', n: 'Alto por el artículo 23 Bis 4', d: 'rel', t: 'Persona relacionada de un país en la lista gris del GAFI o con régimen fiscal preferente', c: function(p){ return p.relGeo; } },
 
   { id: 'act', g: 'est', ops: R_AMB, tipos: ['PF', 'PM'], def: 'Medio', t: 'Actividad económica de alto riesgo', n: 'Según el catálogo de actividades de alto riesgo', c: function(p){ return p.act; } },
   { id: 'db', g: 'est', ops: R_AMB, tipos: R_C3, def: 'Medio', t: 'Dueño beneficiario declarado, sin PEP activo, inactivo, familiar o relacionado', c: function(p){ return p.db && !p.pepAFR; } },
@@ -7166,7 +7166,7 @@ function reglasEBRDefecto() {
   });
   return { version: REGLAS_VERSION, niveles: n, umbral_agravantes: 2, edad_min: 20, edad_max: 75, anios_joven: 3 };
 }
-var REGLAS_VERSION = 2;
+var REGLAS_VERSION = 3;
 function cfgReglas() {
   var c = reglasEBRDefecto(), g = CFG_EBR.reglas || {}, gn = g.niveles || {};
   OPS_REGLA.forEach(function(op){
@@ -7189,6 +7189,13 @@ function cfgReglas() {
       TIPOS_REGLA.forEach(function(t){
         ['geo_vig', 'geo_fiscal'].forEach(function(k){ if (c.niveles[op][t][k] !== undefined) c.niveles[op][t][k] = 'Alto'; });
       });
+    });
+  }
+  // Version 3 (19 de octubre de 2026): tambien es Alto una persona relacionada
+  // de esos paises, y el regimen fiscal cuenta en nacionalidad y nacimiento.
+  if ((Number(g.version) || 1) < 3) {
+    OPS_REGLA.forEach(function(op){
+      TIPOS_REGLA.forEach(function(t){ if (c.niveles[op][t].geo_rel !== undefined) c.niveles[op][t].geo_rel = 'Alto'; });
     });
   }
   return c;
@@ -7244,7 +7251,7 @@ function perfilRiesgo(d) {
     var cats = jurisdiccionesDe(c[1]), txt = c[0] + ', ' + c[1], usado = false;
     if (cats.indexOf('csnu_sanciones') >= 0) { hit.csnu.push(txt); usado = true; }
     if (cats.indexOf('gafi_vigilancia') >= 0) { hit.vig.push(txt); usado = true; }
-    if (cats.indexOf('regimen_fiscal') >= 0 && (c[0] === 'domicilio' || c[0] === 'país de constitución')) { hit.fiscal.push(txt); usado = true; }
+    if (cats.indexOf('regimen_fiscal') >= 0) { hit.fiscal.push(txt); usado = true; }
     // "Sin listas" es solo un pais que no aparece en ninguna lista.
     if (!usado && !cats.length) hit.ext.push(txt);
   });
