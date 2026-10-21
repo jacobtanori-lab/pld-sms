@@ -6237,10 +6237,11 @@ function blogEliminar(id){
 // ================================================================
 //  REVALORACION DE RIESGO
 // ================================================================
-// Calendario acordado con el usuario el 5 de octubre de 2026: todos los
-// clientes se revaloran en enero y julio; los de riesgo Alto, ademas, en abril
-// y octubre. Cada ciclo usa las operaciones de los seis meses anteriores al
-// mes en que se realiza.
+// Calendario: todos los clientes se revaloran en enero y julio; los de riesgo
+// Alto y Medio, ademas, en abril y octubre, porque el articulo 23 Bis 1 pide
+// mas frecuencia a mayor grado de riesgo (Medio se agrego el 21 de octubre de
+// 2026). Cada ciclo se puede hacer en cualquier dia del mes y usa las
+// operaciones de los seis meses anteriores.
 //
 // La dimension cliente se recalcula con los datos vigentes del expediente. La
 // transaccional deja de leer solo lo declarado y lee lo observado en las
@@ -6293,13 +6294,13 @@ function fechaLargaReval(iso) {
   return p.length === 3 ? (+p[2]) + ' de ' + MESES_REVAL[+p[1] - 1] + ' de ' + p[0] : iso;
 }
 function alcanceTextoReval(cic) {
-  return cic.alcance === 'TODOS' ? 'todos los clientes' : 'clientes de riesgo Alto';
+  return cic.alcance === 'TODOS' ? 'todos los clientes' : 'clientes de riesgo Alto y Medio';
 }
 
 function clientesDelCiclo(cic, clientes) {
   return (clientes || []).filter(function(c){
     if (ESTATUS_REVAL.indexOf(c.estatus || 'Activo') < 0) return false;
-    return cic.alcance === 'TODOS' || c.riesgo === 'Alto';
+    return cic.alcance === 'TODOS' || c.riesgo === 'Alto' || c.riesgo === 'Medio';
   });
 }
 
@@ -6420,7 +6421,7 @@ function pgRevaluacion(clave) {
   setSB('<div class="sb-sec">Revaloracion de riesgo</div>'
     + ciclos.map(function(x){
         return '<div class="sb-item' + (x.clave === cic.clave ? ' on' : '') + '" onclick="pgRevaluacion(\'' + x.clave + '\')">'
-          + x.nombre.charAt(0).toUpperCase() + x.nombre.slice(1) + (x.alcance === 'ALTO' ? ' · Alto' : ' · Todos') + '</div>';
+          + x.nombre.charAt(0).toUpperCase() + x.nombre.slice(1) + (x.alcance === 'ALTO' ? ' · Alto y Medio' : ' · Todos') + '</div>';
       }).join('')
     + '<div class="sb-sec">Clientes</div><div class="sb-item" onclick="irA(\'clientes\')">Volver a clientes</div>');
   setMain('<div class="phdr"><div><div class="ptit">Revaloracion de riesgo, ' + cic.nombre + '</div>'
@@ -6629,8 +6630,10 @@ function guardarReval(e, texto, cb) {
     aplicarRiesgo(c2, r);
     c2.ciclo_ult_revaluacion = cic.clave;
     c2.fecha_ult_revaluacion = hoy();
+    var antesReval = JSON.parse(JSON.stringify(c));
     spUpdate('PLD_Clientes', c.id, c2, function(res){
       if (!res || res.error) { cb(false); return; }
+      registrarHistorialRiesgo('Revaloracion', antesReval, c2, { ciclo: cic.clave, estado_revaluacion: reg.estado, justificacion: texto || '', desviaciones: e.desv });
       Object.keys(c2).forEach(function(k){ c[k] = c2[k]; });
       e.registro = reg;
       if (e.desv.length) alertaDesviacionReval(e, reg);
@@ -7347,6 +7350,95 @@ function aplicarRiesgo(obj, r) {
   return obj;
 }
 
+// ── Historial del grado de riesgo ──
+// Articulo 41, fraccion IV: conservar al menos diez anios los cambios del grado
+// de riesgo y del perfil transaccional. Cada evento queda como un registro
+// nuevo en su propia lista, que solo se agrega y nunca se edita: el alta, cada
+// edicion que cambie el nivel o el perfil, cada revaloracion y cada resolucion
+// de screening que cambie el nivel.
+var LISTA_HIST = 'PLD_HistorialRiesgo';
+var CAMPOS_PTX_HIST = ['es_arrendamiento', 'ptx_arr_pago', 'ptx_arr_numops', 'ptx_arr_frec', 'renta_monto', 'renta_moneda',
+  'ptx_arr_efectivo', 'ptx_arr_origen', 'ptx_arr_origen_otro', 'ptx_cv_pago', 'ptx_cv_numops', 'ptx_cv_moneda',
+  'ptx_cv_contrapartes', 'ptx_cv_efectivo_mxn', 'ptx_cv_origen', 'ptx_cv_origen_otro', 'razon_opera_mx', 'razon_opera_mx_otro'];
+var ETQ_PTX_HIST = { es_arrendamiento: 'tipo de operacion', ptx_arr_pago: 'tipo de pago', ptx_arr_numops: 'operaciones por periodo',
+  ptx_arr_frec: 'frecuencia', renta_monto: 'renta', renta_moneda: 'moneda de la renta', ptx_arr_efectivo: 'uso de efectivo',
+  ptx_arr_origen: 'origen de los recursos', ptx_arr_origen_otro: 'origen de los recursos', ptx_cv_pago: 'tipo de pago',
+  ptx_cv_numops: 'numero de operaciones', ptx_cv_moneda: 'moneda de pago', ptx_cv_contrapartes: 'contrapartes',
+  ptx_cv_efectivo_mxn: 'monto en efectivo', ptx_cv_origen: 'origen de los recursos', ptx_cv_origen_otro: 'origen de los recursos',
+  razon_opera_mx: 'razon para operar en Mexico', razon_opera_mx_otro: 'razon para operar en Mexico' };
+function perfilTxDe(c) {
+  var p = {};
+  CAMPOS_PTX_HIST.forEach(function(k){ if (c && c[k] !== undefined && c[k] !== '') p[k] = c[k]; });
+  return p;
+}
+// Que campos del perfil cambiaron entre dos versiones del expediente.
+function cambiosPerfilTx(antes, despues) {
+  var a = perfilTxDe(antes), b = perfilTxDe(despues);
+  return CAMPOS_PTX_HIST.filter(function(k){ return String(a[k] === undefined ? '' : a[k]) !== String(b[k] === undefined ? '' : b[k]); });
+}
+// Agrega un evento al historial. anterior: el expediente antes del cambio (o
+// null en el alta); actual: el expediente ya guardado. extra: datos del evento
+// (ciclo de revaloracion, justificacion, coincidencia resuelta).
+function registrarHistorialRiesgo(origen, anterior, actual, extra) {
+  if (!App.listas[LISTA_HIST]) { console.warn('[HIST] falta la lista ' + LISTA_HIST + ': no se registro el evento', origen); return; }
+  var camb = anterior ? cambiosPerfilTx(anterior, actual) : [];
+  var r = {
+    Title: 'HIST-' + (actual.num_cliente || actual.id) + '-' + Date.now(),
+    id_cliente_ref: String(actual.id || ''), num_cliente: actual.num_cliente || '', nombre_cliente: nombreCliente(actual),
+    tipo: actual.tipo || '', entidad_id: actual.entidad_id || '', entidad_nombre: actual.entidad_nombre || '',
+    fecha: new Date().toISOString(), usuario: App.cuenta ? App.cuenta.username : '', origen: origen,
+    nivel_anterior: anterior ? (anterior.riesgo || '') : '', nivel_nuevo: actual.riesgo || '',
+    modelo: actual.riesgo_modelo || '', motivo: actual.riesgo_motivo || '',
+    reglas: (actual.riesgo_reglas || []).map ? (actual.riesgo_reglas || []).map(function(x){ return x.t + (x.det ? ' (' + x.det + ')' : '') + ': ' + x.nv; }) : [],
+    agravantes: actual.riesgo_agravantes !== undefined ? actual.riesgo_agravantes : '',
+    perfil_tx: perfilTxDe(actual), perfil_cambios: camb
+  };
+  Object.keys(extra || {}).forEach(function(k){ r[k] = extra[k]; });
+  spCreate(LISTA_HIST, r, function(item){ if (!item) console.warn('[HIST] no se pudo registrar el evento', origen); });
+}
+// Una edicion se registra si cambio el nivel o el perfil transaccional.
+function registrarEdicionRiesgo(anterior, actual) {
+  if (!anterior) return;
+  if ((anterior.riesgo || '') === (actual.riesgo || '') && !cambiosPerfilTx(anterior, actual).length) return;
+  registrarHistorialRiesgo('Edicion', anterior, actual);
+}
+
+// Pestana "Historial de riesgo" de la ficha: los eventos del cliente, del mas
+// reciente al mas antiguo.
+function renderHistorialRiesgo(c) {
+  var ct = document.getElementById('fd-hist');
+  if (!ct) return;
+  if (!App.listas[LISTA_HIST]) {
+    ct.innerHTML = '<div class="alerta-banner"><strong>Configuracion pendiente.</strong> Falta crear en SharePoint la lista <strong>' + LISTA_HIST
+      + '</strong> con una columna <em>Datos</em> de texto multilinea. Mientras no exista, los cambios de nivel no quedan en el historial.</div>';
+    return;
+  }
+  ct.innerHTML = '<div class="empty"><div class="spin" style="margin:0 auto"></div></div>';
+  spGet(LISTA_HIST, function(lista){
+    var ev = (lista || []).filter(function(h){ return String(h.id_cliente_ref) === String(c.id); })
+      .sort(function(a, b){ return String(b.fecha).localeCompare(String(a.fecha)); });
+    if (!ev.length) {
+      ct.innerHTML = '<div class="empty">Sin eventos registrados. El historial empieza con el siguiente cambio de nivel o de perfil transaccional.</div>';
+      return;
+    }
+    var filas = ev.map(function(h){
+      var nivel = (h.nivel_anterior && h.nivel_anterior !== h.nivel_nuevo ? '<span class="pill ' + pR(h.nivel_anterior) + '">' + capEsc(h.nivel_anterior) + '</span> → ' : '')
+        + '<span class="pill ' + pR(h.nivel_nuevo) + '">' + capEsc(h.nivel_nuevo || '-') + '</span>';
+      var det = capEsc(h.motivo || '')
+        + ((h.perfil_cambios || []).length ? '<div style="font-size:11px;color:var(--tx3)">Perfil transaccional modificado: '
+          + capEsc(h.perfil_cambios.map(function(k){ return ETQ_PTX_HIST[k] || k; }).filter(function(x, i, a){ return a.indexOf(x) === i; }).join(', ')) + '</div>' : '')
+        + (h.justificacion ? '<div style="font-size:11px;color:var(--tx3)">Justificacion: ' + capEsc(h.justificacion) + '</div>' : '');
+      return '<tr><td style="white-space:nowrap">' + capEsc(String(h.fecha || '').replace('T', ' ').substring(0, 16)) + '</td>'
+        + '<td>' + capEsc(h.origen || '') + (h.ciclo ? '<div style="font-size:11px;color:var(--tx3)">Ciclo ' + capEsc(h.ciclo) + '</div>' : '') + '</td>'
+        + '<td>' + nivel + '</td><td style="font-size:12px">' + det + '</td>'
+        + '<td style="font-size:12px">' + capEsc(h.usuario || '') + '</td></tr>';
+    }).join('');
+    ct.innerHTML = '<div class="twrap"><table><thead><tr><th>Fecha</th><th>Origen</th><th>Nivel</th><th>Motivo</th><th>Usuario</th></tr></thead>'
+      + '<tbody>' + filas + '</tbody></table></div>';
+    etiquetarTablasMovil(ct);
+  });
+}
+
 // Las reglas que se cumplieron, a la vista: una etiqueta por regla con el color
 // de su nivel, y al final la cuenta de agravantes.
 function htmlReglasRiesgo(reglas, agr, subio, umbral) {
@@ -7640,6 +7732,10 @@ var PTX_CV_PAGO    = [['CONTADO_PROPIOS','Contado con recursos propios'],['CONTA
 var PTX_CV_NUMOPS  = [['1','Una operacion'],['2_5','Entre 2 y 5 operaciones'],['5_MAS','Mas de 5 operaciones']];
 var PTX_CONTRAPARTES = [['PROPIAS','Solo cuentas propias'],['TERCEROS','Cuentas de terceros']];
 var PTX_MONEDA     = [['MXN','MXN - Pesos'],['USD','USD - Dolares'],['OTRA','Otra divisa']];
+// Razon por la que el cliente celebra actos u operaciones en Mexico. Se pide a
+// los clientes de riesgo Alto por pais (lista gris del GAFI o regimen fiscal
+// preferente) y a los PEP extranjeros: articulo 23 Bis 4, segundo parrafo.
+var RAZON_OPERA_MX = [['NEG_PERSONALES','Negocios personales'],['NEG_EMPRESARIALES','Negocios empresariales'],['INVERSIONES','Inversiones'],['OTRO','Otro']];
 
 function ptxEtiqueta(cat, v) {
   for (var i = 0; i < cat.length; i++) if (cat[i][0] === v) return cat[i][1];
@@ -7698,11 +7794,19 @@ function htmlPerfilTx(d) {
     + '<div class="fg full" style="font-size:11px;color:var(--tx3)">Frecuencia y monto esperado no aplican en compraventa: cada operacion se registra con su propio importe.</div>'
     + '</div>';
 
+  var razon = '<div class="fgrid">'
+    + fg('Razon por la que celebra actos u operaciones en Mexico', null, false)
+    + sel('razon_opera_mx', RAZON_OPERA_MX, d.razon_opera_mx, ' onchange="ptxOtro(this,\'razon-mx-otro\')"')
+    + '<div class="fg full razon-mx-otro" style="' + (d.razon_opera_mx === 'OTRO' ? '' : 'display:none') + '"><label class="lbl">Especifique la razon <span class="req">*</span></label>'
+    + '<input class="inp" name="razon_opera_mx_otro" value="' + capEsc(d.razon_opera_mx_otro || '') + '" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>'
+    + '<div class="fg full" style="font-size:11px;color:var(--tx3)">Obligatoria para un PEP extranjero y para clientes vinculados a un pais de la lista gris del GAFI o con regimen fiscal preferente (art. 23 Bis 4).</div>'
+    + '</div>';
+
   return '<div class="card"><div class="card-h"><span class="card-t">Perfil transaccional</span>'
     + '<span style="font-size:12px;color:var(--tx3)">Lo que el cliente declara sobre como va a operar</span></div>'
     + '<div class="card-b" style="padding-bottom:0"><div style="font-size:12px;color:var(--tx3);margin-bottom:8px;line-height:1.5">'
     + 'Las preguntas cambian segun la respuesta a "Cliente de arrendamiento", en Datos generales.</div></div>'
-    + arr + cv + '</div>';
+    + arr + cv + razon + '</div>';
 }
 
 // Pestana "Perfil transaccional" de la ficha: la decision de arrendamiento, el
@@ -7739,6 +7843,8 @@ function renderPerfilTx(c) {
   var aviso = vacio
     ? '<div style="margin:0 0 10px;padding:8px 10px;border-left:3px solid var(--am);font-size:12px;color:var(--tx2)">Este expediente no tiene perfil transaccional capturado. Se llena al editar el expediente, en la seccion del final.</div>'
     : '';
+  if (c.razon_opera_mx)
+    filas += fcHtml('Razon para operar en Mexico', ptxEtiqueta(RAZON_OPERA_MX, c.razon_opera_mx) + (c.razon_opera_mx === 'OTRO' && c.razon_opera_mx_otro ? ': ' + capEsc(c.razon_opera_mx_otro) : ''));
   return aviso + cab + '<div class="sec-hdr" style="margin-top:14px">Perfil declarado</div>' + fgHtml(filas);
 }
 
@@ -8273,6 +8379,15 @@ function validarCliente(frm, datos, tipo) {
       + v.campo + ', ' + v.pais);
   });
 
+  // Articulo 23 Bis 4, segundo parrafo: a un PEP extranjero o a un cliente
+  // vinculado a un pais de la lista gris del GAFI o con regimen fiscal
+  // preferente se le pide por que opera en Mexico. Falta para estatus Activo.
+  var pr23 = perfilRiesgo(datos);
+  if (pr23.pepExt || pr23.vig || pr23.fiscal || pr23.relGeo) {
+    if (!datos.razon_opera_mx) faltan.push('Razon por la que celebra actos u operaciones en Mexico (art. 23 Bis 4)');
+    else if (datos.razon_opera_mx === 'OTRO' && !String(datos.razon_opera_mx_otro || '').trim()) faltan.push('Especificar la razon por la que opera en Mexico');
+  }
+
   // El efectivo de una compraventa de inmueble no puede pasar de 8,025 UMA
   // (articulo 32 de la LFPIORPI): un perfil que lo declara describe una
   // operacion prohibida y no se acepta.
@@ -8507,6 +8622,8 @@ function submitCliente(tipo, idEx) {
       spUpdate('PLD_Clientes', idEx, datos, function(r) {
         pensadorOff();
         if (r) {
+          datos.id = String(idEx);
+          registrarEdicionRiesgo(_orig, datos);
           subirConstanciaScreening(datos);   // re-cotejo: nueva constancia de busqueda
           if (evalAprob.dispara) {
             datos.id_cliente_ref = idEx;
@@ -8524,6 +8641,7 @@ function submitCliente(tipo, idEx) {
         pensadorOff();
         if (item) {
           datos.num_cliente = item.num_cliente;
+          registrarHistorialRiesgo('Alta', null, item);
           _subirDocsPendientes(item.num_cliente, datos.Title || nombreClienteDatos(datos));
           subirConstanciaScreening(datos);   // constancia de búsqueda contra listas
           if (evalAprob.dispara) {
@@ -8645,6 +8763,7 @@ function renderFicha(c) {
     +'<div class="ftab" onclick="fichaTab(this,\'fd-ops\');renderOpsCliente()">Operaciones</div>'
     +'<div class="ftab" onclick="fichaTab(this,\'fd-ptx\')">Perfil transaccional</div>'
     +'<div class="ftab" onclick="fichaTab(this,\'fd-scr\')">Screening</div>'
+    +'<div class="ftab" onclick="fichaTab(this,\'fd-hist\');renderHistorialRiesgo(App.clienteActual)">Historial de riesgo</div>'
     +'</div>'
     +'<div class="card" style="border-radius:0 0 var(--rl) var(--rl)">'
     +'<div id="fd-datos" class="card-b">'+renderDatosGenerales(c)+'</div>'
@@ -8659,13 +8778,14 @@ function renderFicha(c) {
     +'<div id="fd-ops" class="card-b" style="display:none"><div class="empty"><div class="spin" style="margin:0 auto"></div></div></div>'
     +'<div id="fd-ptx" class="card-b" style="display:none">'+renderPerfilTx(c)+'</div>'
     +'<div id="fd-scr" class="card-b" style="display:none">'+renderResolucionesScr(c)+'</div>'
+    +'<div id="fd-hist" class="card-b" style="display:none"></div>'
     +'</div>';
   setMain(html);
 }
 
 function fichaTab(el,id) {
   document.querySelectorAll('.ftab').forEach(function(t){t.classList.remove('on');}); el.classList.add('on');
-  ['fd-datos','fd-dom','fd-rl','fd-bcs','fd-fid','fd-df','fd-dom-ext','fd-duen','fd-docs','fd-ops','fd-ptx','fd-scr'].forEach(function(i){
+  ['fd-datos','fd-dom','fd-rl','fd-bcs','fd-fid','fd-df','fd-dom-ext','fd-duen','fd-docs','fd-ops','fd-ptx','fd-scr','fd-hist'].forEach(function(i){
     var e=document.getElementById(i); if(e) e.style.display='none';
   });
   var t=document.getElementById(id); if(t) t.style.display='block';
@@ -9631,6 +9751,9 @@ function resolverCoincidencia(alertaId, i, decision) {
       aplicarRiesgo(cambios, calcEBR(cli2));
       spPatch('PLD_Clientes', cli.id, cambios, function(okC) {
         if (!okC || okC.error) { toast('No se pudo actualizar el expediente', 'e'); return; }
+        if ((cli.riesgo || '') !== (cambios.riesgo || ''))
+          registrarHistorialRiesgo('Resolucion de screening', cli, Object.assign({}, cli, cambios),
+            { coincidencia: res.lista + ' · ' + (res.nombre_evaluado || '') + ' · ' + decision, justificacion: fundamento });
         c.decision = decision; c.estatus_pep = res.estatus_pep; c.fundamento = fundamento; c.resuelto_por = quien; c.fecha = res.fecha;
         var camposA = { coincidencias_scr: JSON.stringify(lista) };
         var pend = lista.filter(function(x){ return !x.decision; }).length;
