@@ -6832,8 +6832,31 @@ function iniciarForm(tipo, datos) {
     return;
   }
   cerrarMo('mo-tipo');
+  App._tipoForm = tipo;
   setMain(htmlFormBase(tipo, datos||{}));
+  setTimeout(actualizarRazonMx, 0);
 }
+
+// Muestra el campo de razon para operar en Mexico solo cuando aplica: un pais
+// de la lista gris del GAFI o con regimen fiscal preferente en el cliente o en
+// sus personas relacionadas, o un PEP extranjero. Lee el formulario tal como
+// esta, con la misma regla que la validacion (perfilRiesgo).
+function actualizarRazonMx() {
+  var frm = document.getElementById('frm'), w = document.getElementById('razon-mx-wrap');
+  if (!frm || !w) return;
+  var tipo = App._tipoForm || '';
+  var d = { tipo: tipo };
+  frm.querySelectorAll('[name]').forEach(function(el){ if (!/^(bc|fte|fsa)_\d+_/.test(el.name)) d[el.name] = el.value; });
+  try {
+    if (tipo === 'PM_MEX' || tipo === 'FIDEICOMISO') d.beneficiarios = recogerBCs();
+    if (tipo === 'FIDEICOMISO') ['fte', 'fsa'].forEach(function(pref){ d[_claveParteFid(pref) + 's'] = recogerPartesFid(pref); });
+  } catch (e) {}
+  var p = perfilRiesgo(d);
+  w.style.display = (p.pepExt || p.vig || p.fiscal || p.relGeo) ? '' : 'none';
+}
+document.addEventListener('change', function(ev){
+  if (ev.target && ev.target.closest && ev.target.closest('#frm')) actualizarRazonMx();
+});
 
 // --- EBR ---
 // Calcula la edad (años cumplidos) a partir de una fecha (DD-MM-AAAA o AAAA-MM-DD)
@@ -7857,7 +7880,11 @@ var PTX_MONEDA     = [['MXN','MXN - Pesos'],['USD','USD - Dolares'],['OTRA','Otr
 // Razon por la que el cliente celebra actos u operaciones en Mexico. Se pide a
 // los clientes de riesgo Alto por pais (lista gris del GAFI o regimen fiscal
 // preferente) y a los PEP extranjeros: articulo 23 Bis 4, segundo parrafo.
-var RAZON_OPERA_MX = [['NEG_PERSONALES','Negocios personales'],['NEG_EMPRESARIALES','Negocios empresariales'],['INVERSIONES','Inversiones'],['OTRO','Otro']];
+var RAZON_OPERA_MX = [['NEG_PERSONALES','Negocios personales'],['NEG_EMPRESARIALES','Negocios empresariales'],['INVERSIONES','Inversiones'],
+  ['VIVIENDA','Vivienda para residir en Mexico'],['SEGUNDA_RESIDENCIA','Segunda residencia o uso vacacional'],
+  ['PATRIMONIO_FAMILIAR','Patrimonio familiar'],['RETIRO','Retiro o jubilacion en Mexico'],
+  ['EMPRESA_EXTRANJERA','Instalacion o expansion de una empresa extranjera'],['TRABAJO_ESTUDIOS','Trabajo o estudios temporales en Mexico'],
+  ['OTRO','Otro']];
 
 function ptxEtiqueta(cat, v) {
   for (var i = 0; i < cat.length; i++) if (cat[i][0] === v) return cat[i][1];
@@ -7920,11 +7947,15 @@ function htmlPerfilTx(d) {
     // Articulo 23 Ter 1: el perfil inicial incluye los montos maximos mensuales
     // que el cliente estima operar; se comparan con lo operado.
     + fg('Monto maximo mensual que estima operar (MXN)', null, true) + num('ptx_monto_max_mensual', d.ptx_monto_max_mensual, '0.00')
+    + '</div>'
+    // Solo aparece cuando el expediente tiene un pais de la lista gris del GAFI
+    // o con regimen fiscal preferente, o un PEP extranjero (actualizarRazonMx).
+    + '<div class="fgrid" id="razon-mx-wrap" style="display:none">'
     + fg('Razon por la que celebra actos u operaciones en Mexico', null, false)
     + sel('razon_opera_mx', RAZON_OPERA_MX, d.razon_opera_mx, ' onchange="ptxOtro(this,\'razon-mx-otro\')"')
     + '<div class="fg full razon-mx-otro" style="' + (d.razon_opera_mx === 'OTRO' ? '' : 'display:none') + '"><label class="lbl">Especifique la razon <span class="req">*</span></label>'
     + '<input class="inp" name="razon_opera_mx_otro" value="' + capEsc(d.razon_opera_mx_otro || '') + '" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>'
-    + '<div class="fg full" style="font-size:11px;color:var(--tx3)">Obligatoria para un PEP extranjero y para clientes vinculados a un pais de la lista gris del GAFI o con regimen fiscal preferente (art. 23 Bis 4).</div>'
+    + '<div class="fg full" style="font-size:11px;color:var(--tx3)">Se pide porque el expediente tiene un pais de la lista gris del GAFI o con regimen fiscal preferente, o un PEP extranjero (art. 23 Bis 4).</div>'
     + '</div>';
 
   return '<div class="card"><div class="card-h"><span class="card-t">Perfil transaccional</span>'
