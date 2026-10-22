@@ -6316,19 +6316,22 @@ function opsDelClienteReval(c, ops, desde, hasta) {
 
 // Lo que realmente paso en la ventana.
 function observadoReval(ops) {
-  var o = { n: ops.length, meses: {}, efectivoN: 0, efectivoMXN: 0, totalMXN: 0, monedas: {} };
+  var o = { n: ops.length, meses: {}, porMes: {}, efectivoN: 0, efectivoMXN: 0, totalMXN: 0, monedas: {}, instrumentos: [] };
   ops.forEach(function(op){
     var m = (op.monto_mxn !== undefined && op.monto_mxn !== null && op.monto_mxn !== '')
       ? (parseFloat(op.monto_mxn) || 0)
       : montoAMXN(op.total_operacion || op.monto || 0, op.moneda, op.fecha_pago).mxn;
     o.totalMXN += m;
     var f = fechaXML(op.fecha_pago);
-    if (f) o.meses[f.substring(0, 6)] = true;
+    if (f) { o.meses[f.substring(0, 6)] = true; o.porMes[f.substring(0, 6)] = (o.porMes[f.substring(0, 6)] || 0) + m; }
+    var im = INSTRUMENTOS_MON.filter(function(x){ return x.codigo === String(op.instrumento_monetario || ''); })[0];
+    if (im && o.instrumentos.indexOf(im.desc) < 0) o.instrumentos.push(im.desc);
     if (String(op.instrumento_monetario) === '1') { o.efectivoN++; o.efectivoMXN += m; }   // 1 = Efectivo
     var mon = String(op.moneda || '1');
     o.monedas[mon === '1' ? 'MXN' : mon === '2' ? 'USD' : 'OTRA'] = true;
   });
   o.numMeses = Object.keys(o.meses).length;
+  o.maxMesMXN = Object.keys(o.porMes).reduce(function(mx, k){ return Math.max(mx, o.porMes[k]); }, 0);
   o.moneda = o.monedas.OTRA ? 'OTRA' : o.monedas.USD ? 'USD' : 'MXN';
   return o;
 }
@@ -6437,6 +6440,7 @@ function pgRevaluacion(clave) {
     if (--pend > 0) return;
     var evals = clientesDelCiclo(cic, D.cli).map(function(c){
       var ev = evaluarReval(c, opsDelClienteReval(c, D.ops, cic.desde, cic.hasta));
+      ev.operado = perfilOperado(c, ev.ob, cic.desde, cic.hasta);
       ev.registro = D.reg.filter(function(r){ return String(r.id_cliente_ref) === String(c.id); }).pop() || null;
       return ev;
     });
@@ -6568,9 +6572,43 @@ function verReval(i) {
         ? '<div style="margin:10px 0"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Desviaciones del perfil declarado</div>'
           + '<ul style="margin:0;padding-left:18px;font-size:13px;color:var(--tx2);line-height:1.6">' + e.desv.map(function(x){ return '<li>' + capEsc(x) + '</li>'; }).join('') + '</ul></div>'
         : '')
+    + (e.operado
+        ? '<div style="margin:10px 0"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Perfil declarado y operado en la ventana</div>'
+          + tablaPerfilTx(e.c, e.operado) + '</div>'
+        : '')
+    + (!reg && e.operado && e.operado.n
+        ? '<div style="margin:10px 0;padding:10px 12px;border:1px solid var(--brd);border-radius:var(--r)">'
+          + '<div style="font-size:13px;font-weight:600;margin-bottom:4px">Actualizar el perfil declarado con lo operado</div>'
+          + '<div style="font-size:12px;color:var(--tx3);margin-bottom:6px">Reemplaza en el perfil vigente los campos que se observan en las operaciones. El perfil original no cambia y el cambio queda en el historial (art. 23 Ter 1).</div>'
+          + '<textarea class="txa" id="reval-ptx-just" rows="2" style="width:100%" placeholder="Justificacion (obligatoria)"></textarea>'
+          + '<div style="margin-top:6px"><button class="btn" onclick="actualizarPerfilConOperado(' + i + ')">Actualizar perfil declarado</button></div></div>'
+        : '')
     + '<div style="margin-top:10px">' + accion + '</div>'
     + '</div></div>';
   det.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Articulo 23 Ter 1: cada seis meses se evalua si el perfil se modifica. El
+// perfil vigente toma lo operado en la ventana; el original no se toca.
+function actualizarPerfilConOperado(i) {
+  var R = App._reval, e = R && R.evals[i];
+  if (!e || !e.operado || !e.operado.n) return;
+  if (ROLES_REVAL.indexOf(App.rol) < 0) { sinAcceso(); return; }
+  var just = ((document.getElementById('reval-ptx-just') || {}).value || '').trim();
+  if (just.length < 10) { toast('Escribe una justificacion para actualizar el perfil', 'w'); return; }
+  var c = e.c, antes = JSON.parse(JSON.stringify(c)), c2 = JSON.parse(JSON.stringify(c));
+  asegurarPerfilOriginal(c2, antes);
+  Object.keys(e.operado.campos).forEach(function(k){ c2[k] = e.operado.campos[k]; });
+  c2.perfil_tx_actualizado = { fecha: hoy(), usuario: App.cuenta ? App.cuenta.username : '', ciclo: R.ciclo.clave, justificacion: just };
+  pensador('Actualizando el perfil declarado...');
+  spUpdate('PLD_Clientes', c.id, c2, function(res){
+    pensadorOff();
+    if (!res || res.error) { toast('No se pudo actualizar el perfil', 'e'); return; }
+    Object.keys(c2).forEach(function(k){ c[k] = c2[k]; });
+    registrarHistorialRiesgo('Actualizacion de perfil', antes, c2, { ciclo: R.ciclo.clave, justificacion: just, perfil_operado: e.operado });
+    toast('Perfil declarado actualizado con lo operado', 's');
+    verReval(i);
+  });
 }
 
 function decidirReval(i) {
@@ -6620,6 +6658,7 @@ function guardarReval(e, texto, cb) {
     efectivo_operaciones: ob.efectivoN, efectivo_mxn: r2(ob.efectivoMXN), total_mxn: r2(ob.totalMXN),
     moneda_observada: ob.n ? ob.moneda : '',
     desviaciones: e.desv,
+    perfil_declarado: perfilTxDe(c), perfil_operado: e.operado || null,
     estado: e.cambio === 'igual' ? 'Confirmada' : 'Aprobada',
     justificacion: texto || '',
     evaluado_por: App.cuenta ? App.cuenta.username : '', fecha_evaluacion: hoy(), modelo: r.modelo === 'reglas' ? 'reglas' : MODELO_EBR
@@ -6628,12 +6667,14 @@ function guardarReval(e, texto, cb) {
     if (!item) { cb(false); return; }
     var c2 = JSON.parse(JSON.stringify(c));
     aplicarRiesgo(c2, r);
+    asegurarPerfilOriginal(c2, c);
+    if (e.operado) c2.perfil_operado_ult = Object.assign({ ciclo: cic.clave }, e.operado);
     c2.ciclo_ult_revaluacion = cic.clave;
     c2.fecha_ult_revaluacion = hoy();
     var antesReval = JSON.parse(JSON.stringify(c));
     spUpdate('PLD_Clientes', c.id, c2, function(res){
       if (!res || res.error) { cb(false); return; }
-      registrarHistorialRiesgo('Revaloracion', antesReval, c2, { ciclo: cic.clave, estado_revaluacion: reg.estado, justificacion: texto || '', desviaciones: e.desv });
+      registrarHistorialRiesgo('Revaloracion', antesReval, c2, { ciclo: cic.clave, estado_revaluacion: reg.estado, justificacion: texto || '', desviaciones: e.desv, perfil_operado: e.operado || null });
       Object.keys(c2).forEach(function(k){ c[k] = c2[k]; });
       e.registro = reg;
       if (e.desv.length) alertaDesviacionReval(e, reg);
@@ -7359,13 +7400,94 @@ function aplicarRiesgo(obj, r) {
 var LISTA_HIST = 'PLD_HistorialRiesgo';
 var CAMPOS_PTX_HIST = ['es_arrendamiento', 'ptx_arr_pago', 'ptx_arr_numops', 'ptx_arr_frec', 'renta_monto', 'renta_moneda',
   'ptx_arr_efectivo', 'ptx_arr_origen', 'ptx_arr_origen_otro', 'ptx_cv_pago', 'ptx_cv_numops', 'ptx_cv_moneda',
-  'ptx_cv_contrapartes', 'ptx_cv_efectivo_mxn', 'ptx_cv_origen', 'ptx_cv_origen_otro', 'razon_opera_mx', 'razon_opera_mx_otro'];
+  'ptx_cv_contrapartes', 'ptx_cv_efectivo_mxn', 'ptx_cv_origen', 'ptx_cv_origen_otro', 'ptx_monto_max_mensual', 'razon_opera_mx', 'razon_opera_mx_otro'];
 var ETQ_PTX_HIST = { es_arrendamiento: 'tipo de operacion', ptx_arr_pago: 'tipo de pago', ptx_arr_numops: 'operaciones por periodo',
   ptx_arr_frec: 'frecuencia', renta_monto: 'renta', renta_moneda: 'moneda de la renta', ptx_arr_efectivo: 'uso de efectivo',
   ptx_arr_origen: 'origen de los recursos', ptx_arr_origen_otro: 'origen de los recursos', ptx_cv_pago: 'tipo de pago',
   ptx_cv_numops: 'numero de operaciones', ptx_cv_moneda: 'moneda de pago', ptx_cv_contrapartes: 'contrapartes',
   ptx_cv_efectivo_mxn: 'monto en efectivo', ptx_cv_origen: 'origen de los recursos', ptx_cv_origen_otro: 'origen de los recursos',
+  ptx_monto_max_mensual: 'monto maximo mensual',
   razon_opera_mx: 'razon para operar en Mexico', razon_opera_mx_otro: 'razon para operar en Mexico' };
+
+// ── Perfil declarado original y perfil operado ──
+// El declarado original es el que el cliente dio en el alta: queda congelado
+// en el expediente y ninguna edicion lo toca. Un expediente anterior a este
+// cambio lo toma del perfil que tenia al primer guardado, marcado como
+// reconstruido. El operado es lo que el cliente hizo en una ventana de seis
+// meses, con los mismos campos que el declarado; se guarda en cada
+// revaloracion y la ficha lo calcula al momento.
+function asegurarPerfilOriginal(obj, fuente) {
+  if (obj.perfil_tx_original && obj.perfil_tx_original.campos) return obj;
+  var src = fuente || obj;
+  obj.perfil_tx_original = { campos: perfilTxDe(src), fecha: src.fecha_registro || hoy(), usuario: '', reconstruido: true };
+  return obj;
+}
+// Lo operado, con los mismos criterios que aplicarObservadoReval usa para
+// medir las desviaciones.
+function perfilOperado(c, ob, desde, hasta) {
+  var r2 = function(v){ return Math.round((Number(v) || 0) * 100) / 100; };
+  var p = { desde: desde, hasta: hasta, n: ob.n, meses: ob.numMeses || 0, total_mxn: r2(ob.totalMXN), max_mensual_mxn: r2(ob.maxMesMXN),
+            efectivo_n: ob.efectivoN, efectivo_mxn: r2(ob.efectivoMXN), moneda: ob.n ? ob.moneda : '', instrumentos: ob.instrumentos || [], campos: {} };
+  if (!ob.n) return p;
+  if (c.es_arrendamiento === 'SI') {
+    p.campos.ptx_arr_efectivo = !ob.efectivoN ? 'NUNCA' : (ob.efectivoN / ob.n >= 0.5 ? 'HABITUAL' : 'OCASIONAL');
+    p.campos.ptx_arr_numops = ob.n > ob.numMeses ? 'VARIAS' : 'UNA';
+    p.campos.ptx_arr_frec = ob.numMeses >= 4 ? 'MENSUAL' : ob.numMeses >= 2 ? 'TRIMESTRAL' : (c.ptx_arr_frec === 'ANUAL' ? 'ANUAL' : 'SEMESTRAL');
+    p.campos.renta_moneda = ob.moneda === 'MXN' ? 'MXN' : 'USD';
+  } else {
+    p.campos.ptx_cv_efectivo_mxn = r2(ob.efectivoMXN);
+    p.campos.ptx_cv_numops = ob.n > 5 ? '5_MAS' : ob.n >= 2 ? '2_5' : '1';
+    p.campos.ptx_cv_moneda = ob.moneda;
+  }
+  p.campos.ptx_monto_max_mensual = r2(ob.maxMesMXN);
+  return p;
+}
+// Texto de un campo del perfil, con el catalogo que le corresponde.
+function fmtCampoPtx(k, o) {
+  var v = o ? o[k] : undefined;
+  if (v === undefined || v === null || v === '') return '';
+  var cat = { ptx_arr_pago: PTX_ARR_PAGO, ptx_arr_numops: PTX_ARR_NUMOPS, ptx_arr_frec: PTX_FREC, ptx_arr_efectivo: PTX_EFECTIVO,
+              ptx_arr_origen: PTX_ORIGEN, ptx_cv_pago: PTX_CV_PAGO, ptx_cv_numops: PTX_CV_NUMOPS, ptx_cv_moneda: PTX_MONEDA,
+              ptx_cv_contrapartes: PTX_CONTRAPARTES, ptx_cv_origen: PTX_ORIGEN, razon_opera_mx: RAZON_OPERA_MX }[k];
+  if (k === 'renta_monto' || k === 'ptx_cv_efectivo_mxn' || k === 'ptx_monto_max_mensual') return fmtMXN(v);
+  if (k === 'renta_moneda') return v === 'USD' ? 'USD - Dolares' : 'MXN - Pesos';
+  var t = cat ? ptxEtiqueta(cat, v) : String(v);
+  var otro = { ptx_arr_origen: 'ptx_arr_origen_otro', ptx_cv_origen: 'ptx_cv_origen_otro', razon_opera_mx: 'razon_opera_mx_otro' }[k];
+  if (otro && v === 'OTRO' && o[otro]) t += ': ' + o[otro];
+  return t;
+}
+var FILAS_PTX_ARR = [['ptx_arr_pago', 'Tipo de pago'], ['ptx_arr_numops', 'Operaciones por periodo'], ['ptx_arr_frec', 'Frecuencia'],
+  ['renta_monto', 'Renta'], ['renta_moneda', 'Moneda de la renta'], ['ptx_arr_efectivo', 'Uso de efectivo'],
+  ['ptx_arr_origen', 'Origen de los recursos'], ['ptx_monto_max_mensual', 'Monto maximo mensual'], ['razon_opera_mx', 'Razon para operar en Mexico']];
+var FILAS_PTX_CV = [['ptx_cv_pago', 'Tipo de pago'], ['ptx_cv_numops', 'Numero de operaciones'], ['ptx_cv_moneda', 'Moneda de pago'],
+  ['ptx_cv_contrapartes', 'Contrapartes'], ['ptx_cv_efectivo_mxn', 'Monto en efectivo'], ['ptx_cv_origen', 'Origen de los recursos'],
+  ['ptx_monto_max_mensual', 'Monto maximo mensual'], ['razon_opera_mx', 'Razon para operar en Mexico']];
+var MONTOS_PTX = { ptx_cv_efectivo_mxn: 1, ptx_monto_max_mensual: 1 };
+// Una diferencia entre lo operado y lo declarado vigente: en montos, solo si lo
+// operado es mayor; en lo demas, si no coincide.
+function difPerfilTx(k, vigente, operado) {
+  if (!operado || operado[k] === undefined) return false;
+  if (MONTOS_PTX[k]) return (Number(operado[k]) || 0) > (Number(vigente[k]) || 0);
+  return String(operado[k]) !== String(vigente[k] === undefined ? '' : vigente[k]);
+}
+// Tabla de las tres versiones del perfil. operado puede venir vacio (se llena
+// despues, al terminar de leer las operaciones).
+function tablaPerfilTx(c, operado) {
+  var filas = (c.es_arrendamiento === 'SI') ? FILAS_PTX_ARR : FILAS_PTX_CV;
+  var orig = (c.perfil_tx_original && c.perfil_tx_original.campos) || perfilTxDe(c);
+  var oc = operado && operado.n ? operado.campos : null;
+  var td = function(t, extra){ return '<td style="font-size:12px' + (extra || '') + '">' + (t ? capEsc(t) : '<span style="color:var(--tx3)">-</span>') + '</td>'; };
+  return '<div class="twrap"><table><thead><tr><th>Campo</th><th>Declarado original</th><th>Declarado vigente</th><th>Operado</th></tr></thead><tbody>'
+    + filas.map(function(f){
+        var k = f[0], dif = difPerfilTx(k, c, oc);
+        return '<tr><td style="font-size:12px;font-weight:500">' + f[1] + '</td>'
+          + td(fmtCampoPtx(k, orig)) + td(fmtCampoPtx(k, c))
+          + (operado === undefined ? td('Calculando...', ';color:var(--tx3)')
+             : td(oc ? fmtCampoPtx(k, oc) : '', dif ? ';background:var(--am3);color:var(--am);font-weight:600' : ''))
+          + '</tr>';
+      }).join('')
+    + '</tbody></table></div>';
+}
 function perfilTxDe(c) {
   var p = {};
   CAMPOS_PTX_HIST.forEach(function(k){ if (c && c[k] !== undefined && c[k] !== '') p[k] = c[k]; });
@@ -7795,6 +7917,9 @@ function htmlPerfilTx(d) {
     + '</div>';
 
   var razon = '<div class="fgrid">'
+    // Articulo 23 Ter 1: el perfil inicial incluye los montos maximos mensuales
+    // que el cliente estima operar; se comparan con lo operado.
+    + fg('Monto maximo mensual que estima operar (MXN)', null, true) + num('ptx_monto_max_mensual', d.ptx_monto_max_mensual, '0.00')
     + fg('Razon por la que celebra actos u operaciones en Mexico', null, false)
     + sel('razon_opera_mx', RAZON_OPERA_MX, d.razon_opera_mx, ' onchange="ptxOtro(this,\'razon-mx-otro\')"')
     + '<div class="fg full razon-mx-otro" style="' + (d.razon_opera_mx === 'OTRO' ? '' : 'display:none') + '"><label class="lbl">Especifique la razon <span class="req">*</span></label>'
@@ -7819,33 +7944,48 @@ function renderPerfilTx(c) {
         ? fcHtml('Inmueble arrendado', capEsc(c.inmueble_arrendado))
         : fcHtml('Fraccionamiento o bien inmueble', capEsc(c.nombre_fraccionamiento)))
   );
-  var filas;
-  if (esArr) {
-    filas = fcHtml('Tipo de pago', ptxEtiqueta(PTX_ARR_PAGO, c.ptx_arr_pago))
-      + fcHtml('Operaciones esperadas en el periodo', ptxEtiqueta(PTX_ARR_NUMOPS, c.ptx_arr_numops))
-      + fcHtml('Frecuencia esperada', ptxEtiqueta(PTX_FREC, c.ptx_arr_frec))
-      + fcHtml('Monto esperado por operacion (renta)', c.renta_monto ? fmtMXN(c.renta_monto) + (c.renta_moneda === 'USD' ? ' USD' : ' MXN') : '-')
-      + fcHtml('Uso de efectivo', ptxEtiqueta(PTX_EFECTIVO, c.ptx_arr_efectivo))
-      + fcHtml('Origen de los recursos', ptxEtiqueta(PTX_ORIGEN, c.ptx_arr_origen) + (c.ptx_arr_origen === 'OTRO' && c.ptx_arr_origen_otro ? ': ' + capEsc(c.ptx_arr_origen_otro) : ''));
-  } else {
-    filas = fcHtml('Tipo de pago', ptxEtiqueta(PTX_CV_PAGO, c.ptx_cv_pago))
-      + fcHtml('Numero de operaciones', ptxEtiqueta(PTX_CV_NUMOPS, c.ptx_cv_numops))
-      + fcHtml('Frecuencia', 'No aplica')
-      + fcHtml('Monto esperado por operacion', 'No aplica')
-      + fcHtml('Moneda de pago', ptxEtiqueta(PTX_MONEDA, c.ptx_cv_moneda))
-      + fcHtml('Contrapartes', ptxEtiqueta(PTX_CONTRAPARTES, c.ptx_cv_contrapartes))
-      + fcHtml('Monto a pagar en efectivo', c.ptx_cv_efectivo_mxn ? fmtMXN(c.ptx_cv_efectivo_mxn) : '-')
-      + fcHtml('Origen de los recursos', ptxEtiqueta(PTX_ORIGEN, c.ptx_cv_origen) + (c.ptx_cv_origen === 'OTRO' && c.ptx_cv_origen_otro ? ': ' + capEsc(c.ptx_cv_origen_otro) : ''));
-  }
   var vacio = esArr
     ? !(c.ptx_arr_pago || c.ptx_arr_numops || c.ptx_arr_frec || c.renta_monto || c.ptx_arr_efectivo || c.ptx_arr_origen)
     : !(c.ptx_cv_pago || c.ptx_cv_numops || c.ptx_cv_efectivo_mxn || c.ptx_cv_origen || c.ptx_cv_moneda || c.ptx_cv_contrapartes);
   var aviso = vacio
     ? '<div style="margin:0 0 10px;padding:8px 10px;border-left:3px solid var(--am);font-size:12px;color:var(--tx2)">Este expediente no tiene perfil transaccional capturado. Se llena al editar el expediente, en la seccion del final.</div>'
     : '';
-  if (c.razon_opera_mx)
-    filas += fcHtml('Razon para operar en Mexico', ptxEtiqueta(RAZON_OPERA_MX, c.razon_opera_mx) + (c.razon_opera_mx === 'OTRO' && c.razon_opera_mx_otro ? ': ' + capEsc(c.razon_opera_mx_otro) : ''));
-  return aviso + cab + '<div class="sec-hdr" style="margin-top:14px">Perfil declarado</div>' + fgHtml(filas);
+  var po = c.perfil_tx_original;
+  var notaOrig = !po ? 'Sin perfil original guardado: se toma el declarado actual hasta el siguiente guardado del expediente.'
+    : po.reconstruido ? 'El perfil original se reconstruyo con el declarado que tenia el expediente al ' + capEsc(po.fecha || '') + '; el expediente es anterior a este registro.'
+    : 'Perfil original declarado en el alta, el ' + capEsc(po.fecha || '') + (po.usuario ? ', por ' + capEsc(po.usuario) : '') + '.';
+  var ult = c.perfil_operado_ult;
+  var notaUlt = ult ? '<div style="font-size:12px;color:var(--tx3);margin-top:6px">Ultimo operado guardado en revaloracion: ciclo ' + capEsc(ult.ciclo || '')
+    + ', ' + ult.n + ' operaciones del ' + capEsc(ult.desde || '') + ' al ' + capEsc(ult.hasta || '') + '.</div>' : '';
+  return aviso + cab
+    + '<div class="sec-hdr" style="margin-top:14px">Perfil transaccional: declarado y operado</div>'
+    + '<div style="font-size:12px;color:var(--tx3);margin-bottom:8px;line-height:1.5">' + notaOrig
+    + ' El operado se calcula al momento con las operaciones de los ultimos seis meses; en amarillo, lo que se aparta del declarado vigente.</div>'
+    + '<div id="ptx-comparado">' + tablaPerfilTx(c, undefined) + '</div>'
+    + '<div id="ptx-operado-resumen" style="font-size:12px;color:var(--tx2);margin-top:6px"></div>' + notaUlt;
+}
+
+// Calcula lo operado en los ultimos seis meses y llena la columna.
+function cargarOperadoFicha() {
+  var c = App.clienteActual;
+  if (!c) return;
+  var h = new Date(), d = new Date(h.getFullYear(), h.getMonth() - 6, h.getDate());
+  var iso = function(x){ return x.getFullYear() + '-' + pad(x.getMonth() + 1) + '-' + pad(x.getDate()); };
+  var desde = iso(d), hasta = iso(h);
+  spGet('PLD_Ops_Liq', function(todas){
+    var cc = App.clienteActual;
+    if (!cc || String(cc.id) !== String(c.id)) return;
+    var ob = observadoReval(opsDelClienteReval(c, todas || [], desde, hasta));
+    var op = perfilOperado(c, ob, desde, hasta);
+    var t = document.getElementById('ptx-comparado'), r = document.getElementById('ptx-operado-resumen');
+    if (t) t.innerHTML = tablaPerfilTx(c, op);
+    if (r) r.innerHTML = op.n
+      ? 'Operado del ' + capEsc(desde) + ' al ' + capEsc(hasta) + ': ' + op.n + ' operaciones en ' + op.meses + (op.meses === 1 ? ' mes' : ' meses')
+        + ' por ' + fmtMXN(op.total_mxn) + '; mes mas alto ' + fmtMXN(op.max_mensual_mxn)
+        + (op.efectivo_n ? '; efectivo en ' + op.efectivo_n + ' por ' + fmtMXN(op.efectivo_mxn) : '; sin efectivo')
+        + (op.instrumentos.length ? '; instrumentos: ' + capEsc(op.instrumentos.join(', ')) : '') + '.'
+      : 'Sin operaciones del ' + capEsc(desde) + ' al ' + capEsc(hasta) + '.';
+  });
 }
 
 // ================================================================
@@ -8512,10 +8652,14 @@ function submitCliente(tipo, idEx) {
   if (idEx) (App.clientes || []).forEach(function(x){ if (String(x.id) === String(idEx)) _orig = x; });
   if (_orig) {
     ['scr_resoluciones','pep_origen','pep_confirmado_por','pep_confirmado_fecha','bloqueo_scr',
-     'ciclo_ult_revaluacion','fecha_ult_revaluacion','curp_qr_url','curp_folio','curp_constancia_fecha','id_cif','rfc_qr_url'
+     'ciclo_ult_revaluacion','fecha_ult_revaluacion','curp_qr_url','curp_folio','curp_constancia_fecha','id_cif','rfc_qr_url',
+     'perfil_tx_original','perfil_operado_ult','perfil_tx_actualizado'
     ].forEach(function(k){
       if ((datos[k] === undefined || datos[k] === '') && _orig[k] !== undefined) datos[k] = _orig[k];
     });
+    // Expediente anterior al registro del perfil original: se toma el que
+    // tenia antes de esta edicion.
+    asegurarPerfilOriginal(datos, _orig);
     // Estatus PEP confirmado por listas: solo el administrador lo cambia.
     if (_orig.pep_origen === 'listas' && App.rol !== 'admin') datos.estatus_pep = _orig.estatus_pep;
     // Bloqueado por sanciones: solo el administrador lo desbloquea.
@@ -8601,6 +8745,7 @@ function submitCliente(tipo, idEx) {
 
       datos.num_cliente = entId + '-' + String(maxNum + 1).padStart(4, '0');
       datos.fecha_registro = hoy();
+      datos.perfil_tx_original = { campos: perfilTxDe(datos), fecha: hoy(), usuario: App.cuenta ? App.cuenta.username : '', reconstruido: false };
     } else {
       // Preservar num_cliente y fecha_registro originales al editar
       var original = null;
@@ -8761,7 +8906,7 @@ function renderFicha(c) {
     +'<div class="ftab" onclick="fichaTab(this,\'fd-duen\')">Dueno beneficiario</div>'
     +'<div class="ftab" onclick="fichaTab(this,\'fd-docs\');renderDocs()">Documentos</div>'
     +'<div class="ftab" onclick="fichaTab(this,\'fd-ops\');renderOpsCliente()">Operaciones</div>'
-    +'<div class="ftab" onclick="fichaTab(this,\'fd-ptx\')">Perfil transaccional</div>'
+    +'<div class="ftab" onclick="fichaTab(this,\'fd-ptx\');cargarOperadoFicha()">Perfil transaccional</div>'
     +'<div class="ftab" onclick="fichaTab(this,\'fd-scr\')">Screening</div>'
     +'<div class="ftab" onclick="fichaTab(this,\'fd-hist\');renderHistorialRiesgo(App.clienteActual)">Historial de riesgo</div>'
     +'</div>'
