@@ -4014,9 +4014,11 @@ function pgConfig(sec) {
     +'<div class="sb-item'+(sec==='sistema'?' on':'')+'" onclick="pgConfig(\'sistema\')">Parametros del sistema</div>'
     +'<div class="sb-item'+(sec==='ebr'?' on':'')+'" onclick="pgConfig(\'ebr\')">Nivel de Riesgo de clientes</div>'
     +'<div class="sb-item'+(sec==='perfil'?' on':'')+'" onclick="pgConfig(\'perfil\')">Perfil transaccional</div>'
+    +(App.rol==='admin' ? '<div class="sb-item'+(sec==='gafi'?' on':'')+'" onclick="pgConfig(\'gafi\')">Listas del GAFI</div>' : '')
     +(App.rol==='admin' ? '<div class="sb-item'+(sec==='mant'?' on':'')+'" onclick="pgConfig(\'mant\')">Mantenimiento de datos</div>' : ''));
   if (sec === 'ebr')    { EBR_VISTA = modeloEBRActivo(); pgConfigEBR(); return; }
   if (sec === 'perfil') { pgConfigPerfil(); return; }
+  if (sec === 'gafi')   { pgConfigGafi(); return; }
   if (sec === 'mant')   { pgConfigMantenimiento(); return; }
 
   var uma = CFG_UMA.DIARIA;
@@ -5792,6 +5794,7 @@ function dashRender(D, esTodas, entId) {
   html += dashNewsletterCard(D.blog || [], !!App.listas['PLD_Blog']);
 
   if (ROLES_REVAL.indexOf(App.rol) >= 0) html = bannerRevaluacion(cli) + html;
+  if (ROLES_REVAL.indexOf(App.rol) >= 0) html = bannerPlenariaGafi() + html;
   el.innerHTML = html;
 }
 
@@ -10909,12 +10912,9 @@ function cargarPaisesRiesgo(cb) {
     .then(function(j){
       if (!j || !j.categorias) throw new Error('formato inesperado');
       CAT_JURIS = j;
-      IDX_JURIS = {};
-      Object.keys(j.categorias).forEach(function(k){
-        (j.categorias[k].paises || []).forEach(function(iso){
-          (IDX_JURIS[iso] = IDX_JURIS[iso] || []).push(k);
-        });
-      });
+      IDX_JURIS = indiceJuris(j.categorias);
+      // Las listas del GAFI confirmadas en la app, si son mas recientes.
+      aplicarListasGafi();
       console.info('[JURIS] catalogo cargado: ' + Object.keys(IDX_JURIS).length + ' jurisdicciones');
       if (cb) cb(true);
     })
@@ -11009,6 +11009,280 @@ function mesesDesdeCorteGAFI() {
   var d = new Date(f + 'T00:00:00');
   if (isNaN(d)) return null;
   return Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24 * 30.44));
+}
+
+// Indice pais -> categorias en que aparece.
+function indiceJuris(categorias) {
+  var idx = {};
+  Object.keys(categorias || {}).forEach(function(k){
+    (categorias[k].paises || []).forEach(function(iso){ (idx[iso] = idx[iso] || []).push(k); });
+  });
+  return idx;
+}
+
+// ── Listas del GAFI confirmadas en la app ─────────────────────
+// El sitio del GAFI bloquea las descargas automaticas, asi que despues de cada
+// plenaria (febrero, junio y octubre) un administrador confirma las listas en
+// Configuracion > Listas del GAFI. Se guardan en PLD_Config con el historial de
+// cada actualizacion y la app las usa en lugar de las del archivo
+// data/paises_riesgo.json mientras sean mas recientes que el.
+var GAFI_URL = 'https://www.fatf-gafi.org/en/countries/black-and-grey-lists.html';
+var CFG_GAFI = null;   // { contramedidas, vigilancia, plenaria, url, actualizado, usuario, historial }
+try { CFG_GAFI = JSON.parse(localStorage.getItem('gafi_listas') || 'null'); } catch (e) { CFG_GAFI = null; }
+
+function aplicarListasGafi() {
+  if (!CAT_JURIS || !CFG_GAFI || !CFG_GAFI.plenaria) return;
+  var cm = CAT_JURIS.categorias.gafi_contramedidas, vg = CAT_JURIS.categorias.gafi_vigilancia;
+  if (!cm || !vg) return;
+  if (!CAT_JURIS._archivo) CAT_JURIS._archivo = { cm: (cm.paises || []).slice(), vg: (vg.paises || []).slice(), fecha: cm.fecha_corte || '', fuente: cm.fuente || '' };
+  if (String(CFG_GAFI.plenaria) < String(CAT_JURIS._archivo.fecha)) return;   // el archivo es mas nuevo
+  cm.paises = (CFG_GAFI.contramedidas || []).slice();
+  vg.paises = (CFG_GAFI.vigilancia || []).slice();
+  cm.fecha_corte = vg.fecha_corte = CFG_GAFI.plenaria;
+  cm.fuente = vg.fuente = 'GAFI / FATF, plenaria del ' + CFG_GAFI.plenaria + ', confirmada en la app' + (CFG_GAFI.usuario ? ' por ' + CFG_GAFI.usuario : '');
+  if (CFG_GAFI.url) cm.url = vg.url = CFG_GAFI.url;
+  IDX_JURIS = indiceJuris(CAT_JURIS.categorias);
+}
+
+// La plenaria mas reciente que ya debio terminar: febrero, junio u octubre,
+// a partir del dia 20 de ese mes.
+function ultimaPlenariaGafi() {
+  var h = new Date(), y = h.getFullYear(), m = h.getMonth() + 1, d = h.getDate();
+  var meses = [10, 6, 2];
+  for (var yy = y; yy >= y - 1; yy--) {
+    for (var i = 0; i < meses.length; i++) {
+      var mm = meses[i];
+      if (yy === y && (mm > m || (mm === m && d < 20))) continue;
+      return { anio: yy, mes: mm, inicio: yy + '-' + pad(mm) + '-01' };
+    }
+  }
+  return null;
+}
+// La plenaria que falta confirmar, o null si las listas ya son de ella.
+function plenariaGafiPendiente() {
+  if (!CAT_JURIS) return null;
+  var p = ultimaPlenariaGafi();
+  var corte = (CAT_JURIS.categorias.gafi_vigilancia || {}).fecha_corte || '';
+  return (p && corte < p.inicio) ? p : null;
+}
+function bannerPlenariaGafi() {
+  var p = plenariaGafiPendiente();
+  if (!p) return '';
+  var corte = (CAT_JURIS.categorias.gafi_vigilancia || {}).fecha_corte || '';
+  return '<div class="alerta-banner" style="background:#fff4e5;border:1px solid #c98a12;color:#7a5200;margin-bottom:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+    + '<div style="flex:1;min-width:220px"><strong>Hubo plenaria del GAFI en ' + MESES_REVAL[p.mes - 1] + ' de ' + p.anio + '.</strong> '
+    + 'Las listas vigentes son del ' + capEsc(corte) + '. '
+    + (App.rol === 'admin' ? 'Confirma si cambiaron la lista gris o la de contramedidas.' : 'Un administrador debe confirmar las listas.') + '</div>'
+    + (App.rol === 'admin' ? '<button class="btn btn-sm" onclick="pgConfig(\'gafi\')">Confirmar las listas</button>' : '')
+    + '</div>';
+}
+
+// ── Pantalla Configuracion > Listas del GAFI ──
+var GAFI_ED = null;   // listas en edicion: { cm: [ISO], vg: [ISO] }
+function nombrePaisISO(iso) {
+  for (var i = 0; i < PAISES_CAT.length; i++) if (PAISES_CAT[i].c === iso) return PAISES_CAT[i].n;
+  return iso;
+}
+function pgConfigGafi() {
+  if (App.rol !== 'admin') { sinAcceso(); return; }
+  if (!CAT_JURIS) { setMain('<div class="empty">El catalogo de paises no se ha cargado. Intenta de nuevo en unos segundos.</div>'); cargarPaisesRiesgo(function(ok){ if (ok) pgConfigGafi(); }); return; }
+  var cm = CAT_JURIS.categorias.gafi_contramedidas, vg = CAT_JURIS.categorias.gafi_vigilancia;
+  GAFI_ED = { cm: (cm.paises || []).slice(), vg: (vg.paises || []).slice() };
+  var pend = plenariaGafiPendiente();
+  var hist = ((CFG_GAFI && CFG_GAFI.historial) || []).slice().reverse();
+  var dif = function(lista){ return lista && lista.length ? lista.map(nombrePaisISO).join(', ') : '-'; };
+  setMain('<div class="phdr"><div><div class="ptit">Listas del GAFI</div>'
+    + '<div class="psub">Lista gris y llamado a aplicar contramedidas, confirmadas despues de cada plenaria</div></div></div>'
+    + bannerPlenariaGafi()
+    + '<div class="card"><div class="card-h"><span class="card-t">Listas vigentes</span></div><div class="card-b">'
+    + fgHtml(fcHtml('Fuente', capEsc(vg.fuente || '')) + fcHtml('Fecha de corte', capEsc(vg.fecha_corte || ''))
+      + fcHtml('Contramedidas', (cm.paises || []).length + ' jurisdicciones') + fcHtml('Lista gris', (vg.paises || []).length + ' jurisdicciones'))
+    + '<div style="font-size:12px;color:var(--tx3);margin-top:8px;line-height:1.6">El GAFI publica las listas despues de sus plenarias de febrero, junio y octubre en '
+    + '<a href="' + GAFI_URL + '" target="_blank" rel="noopener">su sitio</a>. Su sitio no permite descargarlas de forma automatica: se confirman aqui. '
+    + 'Una jurisdiccion con contramedidas bloquea el alta por politica; una en la lista gris es riesgo Alto (art. 23 Bis 4).</div>'
+    + '</div></div>'
+
+    + '<div class="card"><div class="card-h"><span class="card-t">Actualizar</span></div><div class="card-b">'
+    + '<div class="fgrid">'
+    + '<div class="fg"><label class="lbl">Fecha de la plenaria <span class="req">*</span></label><input class="inp" type="date" id="gafi-plenaria" value="' + capEsc(pend ? '' : (vg.fecha_corte || '')) + '"></div>'
+    + '<div class="fg full"><label class="lbl">Declaracion publica del GAFI</label><input class="inp" id="gafi-url" value="' + capEsc(vg.url || GAFI_URL) + '"></div>'
+    + '</div>'
+    + '<div id="gafi-ed-cm"></div><div id="gafi-ed-vg"></div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn btn-p" onclick="revisarListasGafi()">Revisar cambios</button></div>'
+    + '<div id="gafi-revision" style="margin-top:14px"></div>'
+    + '</div></div>'
+
+    + '<div class="card"><div class="card-h"><span class="card-t">Historial de actualizaciones</span></div><div class="card-b">'
+    + (hist.length
+        ? '<div class="twrap"><table><thead><tr><th>Fecha</th><th>Plenaria</th><th>Usuario</th><th>Contramedidas</th><th>Lista gris</th><th>Expedientes</th></tr></thead><tbody>'
+          + hist.map(function(h){
+              return '<tr><td style="white-space:nowrap">' + capEsc(String(h.fecha || '').replace('T', ' ').substring(0, 16)) + '</td><td>' + capEsc(h.plenaria || '') + '</td>'
+                + '<td style="font-size:12px">' + capEsc(h.usuario || '') + '</td>'
+                + '<td style="font-size:12px">Entran: ' + capEsc(dif(h.entran_cm)) + '<br>Salen: ' + capEsc(dif(h.salen_cm)) + '</td>'
+                + '<td style="font-size:12px">Entran: ' + capEsc(dif(h.entran_vg)) + '<br>Salen: ' + capEsc(dif(h.salen_vg)) + '</td>'
+                + '<td>' + (h.afectados || 0) + '</td></tr>';
+            }).join('') + '</tbody></table></div>'
+        : '<div class="empty">Aun no se han confirmado listas en la app. Las vigentes son las del archivo publicado.</div>')
+    + '</div></div>');
+  pintarEditorGafi();
+}
+function pintarEditorGafi() {
+  var uno = function(k, titulo, sub) {
+    var lista = GAFI_ED[k];
+    var chips = lista.slice().sort(function(a, b){ return nombrePaisISO(a).localeCompare(nombrePaisISO(b)); }).map(function(iso){
+      return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;margin:2px;border-radius:10px;font-size:11px;background:var(--az3);color:var(--az);border:1px solid var(--az)">'
+        + capEsc(nombrePaisISO(iso))
+        + '<button onclick="quitarPaisGafi(\'' + k + '\',\'' + iso + '\')" style="background:none;border:none;cursor:pointer;color:var(--az);font-size:13px;line-height:1;padding:0 0 0 2px" title="Quitar">×</button></span>';
+    }).join('') || '<span style="font-size:12px;color:var(--tx3);font-style:italic">Ninguna</span>';
+    var opciones = PAISES_CAT.filter(function(p){ return p.c !== 'MX' && lista.indexOf(p.c) < 0; })
+      .map(function(p){ return '<option value="' + p.c + '">' + capEsc(p.n) + '</option>'; }).join('');
+    return '<div style="margin-top:14px"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px">' + titulo + ' (' + lista.length + ')</div>'
+      + '<div style="font-size:11px;color:var(--tx3);margin-bottom:6px">' + sub + '</div>'
+      + '<div style="margin-bottom:6px">' + chips + '</div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap"><select class="sel" id="gafi-sel-' + k + '" style="max-width:320px"><option value="">-- Agregar jurisdiccion --</option>' + opciones + '</select>'
+      + '<button class="btn btn-sm" onclick="agregarPaisGafi(\'' + k + '\')">Agregar</button></div></div>';
+  };
+  var a = document.getElementById('gafi-ed-cm'), b = document.getElementById('gafi-ed-vg');
+  if (a) a.innerHTML = uno('cm', 'Llamado a aplicar contramedidas', 'Lista negra: por politica no se aceptan clientes vinculados.');
+  if (b) b.innerHTML = uno('vg', 'Vigilancia intensificada', 'Lista gris: riesgo Alto.');
+  var r = document.getElementById('gafi-revision'); if (r) r.innerHTML = '';
+}
+function agregarPaisGafi(k) {
+  var s = document.getElementById('gafi-sel-' + k);
+  if (!s || !s.value) return;
+  if (GAFI_ED[k].indexOf(s.value) < 0) GAFI_ED[k].push(s.value);
+  var otra = k === 'cm' ? 'vg' : 'cm', i = GAFI_ED[otra].indexOf(s.value);
+  if (i >= 0) GAFI_ED[otra].splice(i, 1);   // una jurisdiccion esta en una sola de las dos listas
+  pintarEditorGafi();
+}
+function quitarPaisGafi(k, iso) {
+  var i = GAFI_ED[k].indexOf(iso);
+  if (i >= 0) GAFI_ED[k].splice(i, 1);
+  pintarEditorGafi();
+}
+// Que jurisdicciones entran y salen de cada lista.
+function diferenciasGafi() {
+  var cm = CAT_JURIS.categorias.gafi_contramedidas.paises || [], vg = CAT_JURIS.categorias.gafi_vigilancia.paises || [];
+  var fuera = function(a, b){ return a.filter(function(x){ return b.indexOf(x) < 0; }); };
+  return { entran_cm: fuera(GAFI_ED.cm, cm), salen_cm: fuera(cm, GAFI_ED.cm), entran_vg: fuera(GAFI_ED.vg, vg), salen_vg: fuera(vg, GAFI_ED.vg) };
+}
+// Expedientes cuyo nivel o bloqueo cambia con las listas en edicion. Se
+// calcula dos veces con el mismo expediente, una con cada indice, de modo que
+// solo aparece el efecto de las listas.
+function impactoListasGafi(clientes) {
+  var idxAct = IDX_JURIS, cats = JSON.parse(JSON.stringify(CAT_JURIS.categorias));
+  cats.gafi_contramedidas.paises = GAFI_ED.cm.slice();
+  cats.gafi_vigilancia.paises = GAFI_ED.vg.slice();
+  var idxNuevo = indiceJuris(cats), out = [];
+  var bloq = function(c){ return vinculosProhibidos(c).concat(vinculosProhibidosPartes(c)); };
+  try {
+    (clientes || []).forEach(function(c){
+      if (c.estatus === 'Baja') return;
+      IDX_JURIS = idxAct;   var ra = calcEBR(c), ba = bloq(c);
+      IDX_JURIS = idxNuevo; var rn = calcEBR(c), bn = bloq(c);
+      if (ra.nivel !== rn.nivel || (ba.length > 0) !== (bn.length > 0))
+        out.push({ c: c, antes: ra.nivel, despues: rn.nivel, bloqueo: bn.length > 0 && !ba.length, libera: ba.length > 0 && !bn.length,
+                   detalle: bn.length ? bn.map(function(v){ return (v.parte ? v.parte + ', ' : '') + v.campo + ', ' + v.pais; }).join('; ') : '' });
+    });
+  } finally { IDX_JURIS = idxAct; }
+  return out;
+}
+function revisarListasGafi() {
+  var ct = document.getElementById('gafi-revision');
+  var plen = (document.getElementById('gafi-plenaria') || {}).value || '';
+  if (!plen) { toast('Indica la fecha de la plenaria', 'w'); return; }
+  if (plen > hoy()) { toast('La fecha de la plenaria no puede ser futura', 'w'); return; }
+  var archivo = (CAT_JURIS._archivo && CAT_JURIS._archivo.fecha) || CAT_JURIS.categorias.gafi_vigilancia.fecha_corte || '';
+  if (plen < archivo) { toast('La plenaria no puede ser anterior a la de las listas publicadas (' + archivo + ')', 'w'); return; }
+  var dif = diferenciasGafi();
+  var sinCambios = !dif.entran_cm.length && !dif.salen_cm.length && !dif.entran_vg.length && !dif.salen_vg.length;
+  ct.innerHTML = '<div class="empty"><div class="spin" style="margin:0 auto 10px"></div>Calculando el efecto en los expedientes...</div>';
+  spGet('PLD_Clientes', function(clientes){
+    var imp = impactoListasGafi(clientes || []);
+    App._gafiRevision = { plenaria: plen, url: (document.getElementById('gafi-url') || {}).value || GAFI_URL, dif: dif, impacto: imp };
+    var nom = function(l){ return l.length ? capEsc(l.map(nombrePaisISO).join(', ')) : '<span style="color:var(--tx3)">-</span>'; };
+    ct.innerHTML = '<div style="padding:12px;border:1px solid var(--brd);border-radius:var(--r)">'
+      + '<div style="font-weight:600;margin-bottom:6px">' + (sinCambios ? 'Sin cambios en las listas' : 'Cambios por confirmar') + '</div>'
+      + fgHtml(fcHtml('Contramedidas: entran', nom(dif.entran_cm)) + fcHtml('Contramedidas: salen', nom(dif.salen_cm))
+        + fcHtml('Lista gris: entran', nom(dif.entran_vg)) + fcHtml('Lista gris: salen', nom(dif.salen_vg)))
+      + tablaImpactoGafi(imp)
+      + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn btn-p" onclick="guardarListasGafi()">'
+      + (sinCambios ? 'Confirmar listas sin cambios' : 'Guardar listas') + '</button></div>'
+      + (imp.length ? '<div style="font-size:11px;color:var(--tx3);margin-top:6px">Al guardar se levanta una alerta por cada expediente que sube de nivel o queda vinculado a contramedidas. Ningun nivel cambia solo: se recalcula al editar o revalorar cada expediente.</div>' : '')
+      + '</div>';
+  });
+}
+function tablaImpactoGafi(imp) {
+  if (!imp.length) return '<div style="font-size:13px;color:var(--tx2);margin-top:8px">Ningun expediente cambia de nivel ni de bloqueo con estas listas.</div>';
+  return '<div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin:10px 0 4px">Expedientes afectados (' + imp.length + ')</div>'
+    + '<div class="twrap"><table><thead><tr><th>Cliente</th><th>Nivel guardado</th><th>Con las listas actuales</th><th>Con las listas nuevas</th><th>Contramedidas</th></tr></thead><tbody>'
+    + imp.map(function(x){
+        return '<tr><td><a href="#" onclick="abrirFicha(\'' + x.c.id + '\');return false">' + capEsc(nombreCliente(x.c)) + '</a><div style="font-size:11px;color:var(--tx3)">#' + nStr(x.c.num_cliente) + '</div></td>'
+          + '<td>' + (x.c.riesgo ? '<span class="pill ' + pR(x.c.riesgo) + '">' + x.c.riesgo + '</span>' : '-') + '</td>'
+          + '<td><span class="pill ' + pR(x.antes) + '">' + x.antes + '</span></td>'
+          + '<td><span class="pill ' + pR(x.despues) + '">' + x.despues + '</span></td>'
+          + '<td style="font-size:12px">' + (x.bloqueo ? '<span class="pill p-rj">Queda vinculado</span><div>' + capEsc(x.detalle) + '</div>' : x.libera ? 'Deja de estar vinculado' : '-') + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+}
+function guardarListasGafi() {
+  var R = App._gafiRevision;
+  if (!R) return;
+  var quien = App.cuenta ? App.cuenta.username : '';
+  var nuevo = {
+    contramedidas: GAFI_ED.cm.slice(), vigilancia: GAFI_ED.vg.slice(), plenaria: R.plenaria, url: R.url,
+    actualizado: new Date().toISOString(), usuario: quien,
+    historial: ((CFG_GAFI && CFG_GAFI.historial) || []).concat([{
+      fecha: new Date().toISOString(), usuario: quien, plenaria: R.plenaria,
+      entran_cm: R.dif.entran_cm, salen_cm: R.dif.salen_cm, entran_vg: R.dif.entran_vg, salen_vg: R.dif.salen_vg,
+      afectados: R.impacto.length
+    }])
+  };
+  var json = JSON.stringify(nuevo);
+  pensador('Guardando las listas del GAFI...');
+  spGet('PLD_Config', function(lista) {
+    var item = null;
+    (lista || []).forEach(function(c){ if (c.Title === 'CONFIG_SISTEMA' || c.uma_diaria) item = c; });
+    var listo = function(ok) {
+      if (!ok || ok.error) { pensadorOff(); toast('No se pudieron guardar las listas', 'e'); return; }
+      CFG_GAFI = nuevo;
+      localStorage.setItem('gafi_listas', json);
+      aplicarListasGafi();
+      alertasImpactoGafi(R.impacto, R.plenaria, function(n){
+        pensadorOff();
+        toast('Listas del GAFI guardadas' + (n ? '; ' + n + (n === 1 ? ' alerta levantada' : ' alertas levantadas') : ''), 's');
+        pgConfigGafi();
+        var ct = document.getElementById('gafi-revision');
+        if (ct && R.impacto.length) ct.innerHTML = '<div style="padding:12px;border:1px solid var(--brd);border-radius:var(--r)"><div style="font-weight:600">Expedientes por revalorar</div>' + tablaImpactoGafi(R.impacto) + '</div>';
+      });
+    };
+    if (item && item.id) spPatch('PLD_Config', item.id, { gafi_listas: json }, listo);
+    else spCreate('PLD_Config', { Title: 'CONFIG_SISTEMA', gafi_listas: json }, listo);
+  });
+}
+// Una alerta por expediente que sube de nivel o queda vinculado a
+// contramedidas. De una en una: en paralelo SharePoint responde 429.
+function alertasImpactoGafi(imp, plenaria, cb) {
+  var lista = (imp || []).filter(function(x){ return x.bloqueo || NIVELES_EBR.indexOf(x.despues) > NIVELES_EBR.indexOf(x.antes); });
+  if (!App.listas['PLD_Alertas'] || !lista.length) { cb(0); return; }
+  var i = 0, n = 0;
+  (function sig(){
+    if (i >= lista.length) { cb(n); return; }
+    var x = lista[i++], c = x.c;
+    spCreate('PLD_Alertas', {
+      Title: 'ALT-GAFI-' + Date.now(),
+      nombre_cliente: nombreCliente(c), num_cliente: c.num_cliente || '', id_cliente_ref: c.id,
+      categoria: 'Listas del GAFI',
+      tipo: x.bloqueo ? 'Vinculado a jurisdiccion con contramedidas' : 'Sube de nivel por listas del GAFI',
+      nivel: 'Alto',
+      descripcion: 'Con las listas de la plenaria del GAFI del ' + plenaria + ', '
+        + (x.bloqueo ? 'el expediente queda vinculado a una jurisdiccion con llamado a aplicar contramedidas (' + x.detalle + '). Por politica no se aceptan estos clientes: revisar la relacion.'
+                     : 'el nivel de riesgo pasa de ' + x.antes + ' a ' + x.despues + '. Revalorar el expediente.'),
+      estatus: 'Abierta', estatus_atencion: 'Pendiente',
+      asesor_id: c.asesor_id || '', asesor_nombre: c.asesor_nombre || '',
+      registrado_por: App.cuenta ? App.cuenta.username : '', fecha_registro: hoy(),
+      entidad_id: c.entidad_id || '', entidad_nombre: c.entidad_nombre || ''
+    }, function(r){ if (r) n++; sig(); });
+  })();
 }
 
 function cargarTipoCambio(cb) {
@@ -11108,6 +11382,13 @@ function cargarConfigUMA() {
         migrarModeloV3(ebr);
         migrarModeloV4(ebr);
       } catch(e) { console.warn('EBR config parse error', e); }
+    }
+    if (cfg.gafi_listas) {
+      try {
+        CFG_GAFI = typeof cfg.gafi_listas === 'string' ? JSON.parse(cfg.gafi_listas) : cfg.gafi_listas;
+        localStorage.setItem('gafi_listas', JSON.stringify(CFG_GAFI));
+        aplicarListasGafi();
+      } catch(e) { console.warn('Listas GAFI parse error', e); }
     }
     if (cfg.perfil_config) {
       try {
