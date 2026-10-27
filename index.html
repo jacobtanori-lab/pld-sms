@@ -4400,6 +4400,9 @@ function pgConfigEBRReglas() {
   var num = function(k, val, min, max){
     return '<input class="inp mono" type="number" min="' + min + '" max="' + max + '" step="1" value="' + val + '" style="width:70px;text-align:center" onchange="ebrParamRegla(\'' + k + '\',this.value)">';
   };
+  var numDec = function(k, val){
+    return '<input class="inp mono" type="number" min="0" step="0.1" value="' + val + '" style="width:80px;text-align:center" onchange="ebrParamRegla(\'' + k + '\',this.value)">';
+  };
   var simTipos = { PF_MEX: 'Persona física nacional', PF_EXT: 'Persona física extranjera', PM_MEX: 'Persona moral nacional', PM_SIMP: 'Persona moral simplificada', FIDEICOMISO: 'Fideicomiso' };
   var pepLabels = ['NO APLICA', 'Activo', 'Inactivo', 'Familiar', 'Relacionado a PEP', 'Vencido'];
   var siNo = function(id){ return '<select class="sel" id="' + id + '"><option value="NO">NO</option><option value="SI">SI</option></select>'; };
@@ -4433,8 +4436,11 @@ function pgConfigEBRReglas() {
     + [2, 3, 4].map(function(n){ return '<option' + (n === cfg.umbral_agravantes ? ' selected' : '') + '>' + n + '</option>'; }).join('') + '</select></div>'
     + '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--brd);flex-wrap:wrap"><span style="flex:1;min-width:220px;font-size:13px;color:var(--tx2)">Edad de la persona fisica: menor de</span>'
     + num('edad_min', cfg.edad_min, 0, 130) + '<span style="font-size:13px;color:var(--tx2)">o mayor de</span>' + num('edad_max', cfg.edad_max, 0, 130) + '<span style="font-size:12px;color:var(--tx3)">años</span></div>'
-    + '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;flex-wrap:wrap"><span style="flex:1;min-width:220px;font-size:13px;color:var(--tx2)">Persona moral o fideicomiso de reciente constitucion: menos de</span>'
+    + '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--brd);flex-wrap:wrap"><span style="flex:1;min-width:220px;font-size:13px;color:var(--tx2)">Persona moral o fideicomiso de reciente constitucion: menos de</span>'
     + num('anios_joven', cfg.anios_joven, 0, 100) + '<span style="font-size:12px;color:var(--tx3)">años</span></div>'
+    + '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;flex-wrap:wrap"><span style="flex:1;min-width:220px;font-size:13px;color:var(--tx2)">PEP nacional (art. 23 Bis 3): el monto de un mes supera su ingreso mensual declarado</span>'
+    + numDec('pep_veces_cv', cfg.pep_veces_cv) + '<span style="font-size:12px;color:var(--tx3)">veces en compraventa</span>'
+    + numDec('pep_veces_arr', cfg.pep_veces_arr) + '<span style="font-size:12px;color:var(--tx3)">veces en arrendamiento</span></div>'
     + '</div></div>'
 
     + ebrActividadesHtml('Una actividad listada activa la regla "Actividad economica de alto riesgo".')
@@ -4457,6 +4463,7 @@ function pgConfigEBRReglas() {
     + '<div class="fg"><label class="lbl">Estatus PEP</label><select class="sel" id="sim-pep">'
     + pepLabels.map(function(k){ return '<option value="' + k + '">' + k + '</option>'; }).join('') + '</select></div>'
     + '<div class="fg"><label class="lbl">El PEP es extranjero</label>' + siNo('sim-pepext') + '</div>'
+    + '<div class="fg"><label class="lbl">Ingreso mensual declarado del PEP (MXN)</label><input class="inp mono" id="sim-ing" type="number" min="0" step="1000" value="0" style="width:140px"></div>'
     + '<div class="fg"><label class="lbl">Estado del domicilio</label><select class="sel" id="sim-est">'
     + '<option value="">Sin especificar</option>' + ipmOpcionesSimulador() + '</select></div>'
     + '<div class="fg"><label class="lbl">Pais del domicilio</label><select class="sel" id="sim-pdom">' + optsPais('MEXICO') + '</select></div>'
@@ -4474,6 +4481,7 @@ function pgConfigEBRReglas() {
     + '<div class="fg"><label class="lbl">Volumen</label><select class="sel" id="sim-vol"><option value="0">Una operacion o una sola exhibicion</option><option value="1">De 2 a 5, o varias por periodo</option><option value="2">Mas de 5</option></select></div>'
     + '<div class="fg"><label class="lbl">Frecuencia, arrendamiento</label><select class="sel" id="sim-frec">' + PTX_FREC.map(function(o){ return '<option value="' + o[0] + '">' + o[1] + '</option>'; }).join('') + '</select></div>'
     + '<div class="fg"><label class="lbl">Contrapartes</label><select class="sel" id="sim-contra">' + PTX_CONTRAPARTES.map(function(o){ return '<option value="' + o[0] + '">' + o[1] + '</option>'; }).join('') + '</select></div>'
+    + '<div class="fg"><label class="lbl">Monto maximo mensual (MXN)</label><input class="inp mono" id="sim-mes" type="number" min="0" step="1000" value="0" style="width:140px"></div>'
     + '<div class="fg full" style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-top:6px">Revaloracion</div>'
     + '<div class="fg"><label class="lbl">Lo observado se desvia de lo declarado</label>' + siNo('sim-desv') + '</div>'
     + '<div class="fg"><label class="lbl">Uso efectivo sin haberlo declarado</label>' + siNo('sim-efnd') + '</div>'
@@ -4868,6 +4876,8 @@ function ebrSimMock() {
     mock.ptx_cv_contrapartes = v('sim-contra');
   }
   mock.pep_extranjero = v('sim-pepext') === 'SI' ? 'SI' : 'NO';
+  mock.pep_ingreso_mensual = v('sim-ing');
+  mock.ptx_monto_max_mensual = v('sim-mes');
   mock._reval = { desv: v('sim-desv') === 'SI', efNoDecl: v('sim-efnd') === 'SI' };
   return mock;
 }
@@ -6398,7 +6408,8 @@ function evaluarReval(c, ops) {
   var sinEfDecl = c.es_arrendamiento === 'SI'
     ? (!c.ptx_arr_efectivo || c.ptx_arr_efectivo === 'NUNCA')
     : !((parseFloat(c.ptx_cv_efectivo_mxn) || 0) > 0);
-  ap.datos._reval = { desv: ap.desv.length > 0, efNoDecl: ob.efectivoN > 0 && sinEfDecl };
+  // Sin operaciones en la ventana, la regla del ingreso del PEP sigue con lo declarado.
+  ap.datos._reval = { desv: ap.desv.length > 0, efNoDecl: ob.efectivoN > 0 && sinEfDecl, maxMesMXN: ob.n ? ob.maxMesMXN : undefined };
   var r = calcEBR(ap.datos);
   var ant = c.riesgo || '';
   var ia = NIVELES_EBR.indexOf(ant), in_ = NIVELES_EBR.indexOf(r.nivel);
@@ -6858,7 +6869,7 @@ function actualizarRazonMx() {
   w.style.display = (p.pepExt || p.vig || p.fiscal || p.relGeo) ? '' : 'none';
 }
 document.addEventListener('change', function(ev){
-  if (ev.target && ev.target.closest && ev.target.closest('#frm')) actualizarRazonMx();
+  if (ev.target && ev.target.closest && ev.target.closest('#frm')) { actualizarRazonMx(); actualizarCargoPep(); }
 });
 
 // --- EBR ---
@@ -7208,15 +7219,24 @@ var REGLAS_EBR = [
   { id: 'c_ef_terc', g: 'ct', ops: R_AMB, tipos: R_C4, def: 'Alto', t: 'Cualquier uso de efectivo con pagos de terceros', c: function(p){ return p.ef !== 'nunca' && p.terceros; } },
   { id: 'c_ef_otro', g: 'ct', ops: R_AMB, tipos: R_C4, def: 'Alto', t: { cv: 'Efectivo por la mitad del límite o más, con origen "Otro"', arr: 'Efectivo habitual con origen "Otro"' }, c: function(p){ return (p.ef === 'mitad' || p.ef === 'excede' || p.ef === 'habitual') && p.origen === 'OTRO'; } },
   { id: 'c_div_terc', g: 'ct', ops: R_AMB, tipos: R_C4, def: 'Alto', t: 'Otra divisa con pagos de terceros', c: function(p){ return p.moneda === 'OTRA' && p.terceros; } },
+  // Articulo 23 Bis 3: lo que opera el PEP nacional debe corresponder con su
+  // ingreso. En el alta se compara el monto maximo mensual declarado; en la
+  // revaloracion, el mes mas alto operado.
+  { id: 'c_pep_ingreso', g: 'ct', ops: R_AMB, tipos: ['PF'], def: 'Alto', d: 'ingreso',
+    n: 'Artículo 23 Bis 3. Alta: monto máximo mensual declarado; revaloración: mes más alto operado. Incluye al familiar o relacionado, con su propio ingreso',
+    t: { cv: function(c){ return 'PEP nacional cuyo monto de un mes supera ' + fmtVecesRegla(c.pep_veces_cv) + ' su ingreso mensual declarado'; },
+         arr: function(c){ return 'PEP nacional cuyo monto de un mes supera ' + fmtVecesRegla(c.pep_veces_arr) + ' su ingreso mensual declarado'; } },
+    c: function(p){ return p.pepIngreso; } },
 
   { id: 'r_desv', g: 'rv', ops: R_AMB, tipos: R_C4, def: 'Agravante', t: 'Lo observado se desvía de lo declarado', c: function(p){ return p.desv; } },
   { id: 'r_ef', g: 'rv', ops: R_AMB, tipos: R_C4, def: 'Medio', t: 'Usó efectivo sin haberlo declarado', c: function(p){ return p.efNoDecl; } }
 ];
 
 function reglaAplica(r, op, tipo) { return r.ops.indexOf(op) >= 0 && r.tipos.indexOf(tipo) >= 0; }
+function fmtVecesRegla(n) { n = Number(n) || 0; return (Math.round(n * 100) / 100).toLocaleString('es-MX') + (n === 1 ? ' vez' : ' veces'); }
 function textoRegla(r, op, cfg) {
-  if (typeof r.t === 'function') return r.t(cfg || cfgReglas());
-  return typeof r.t === 'string' ? r.t : r.t[op];
+  var t = (typeof r.t === 'function' || typeof r.t === 'string') ? r.t : r.t[op];
+  return typeof t === 'function' ? t(cfg || cfgReglas()) : t;
 }
 function modeloEBRActivo() { return CFG_EBR.modelo_activo === 'puntos' ? 'puntos' : 'reglas'; }
 function tipoRegla(tipo) {
@@ -7234,7 +7254,7 @@ function reglasEBRDefecto() {
       REGLAS_EBR.forEach(function(r){ if (reglaAplica(r, op, t)) n[op][t][r.id] = r.def; });
     });
   });
-  return { version: REGLAS_VERSION, niveles: n, umbral_agravantes: 2, edad_min: 20, edad_max: 75, anios_joven: 3 };
+  return { version: REGLAS_VERSION, niveles: n, umbral_agravantes: 2, edad_min: 20, edad_max: 75, anios_joven: 3, pep_veces_cv: 24, pep_veces_arr: 0.5 };
 }
 var REGLAS_VERSION = 3;
 function cfgReglas() {
@@ -7250,6 +7270,8 @@ function cfgReglas() {
   c.edad_min = num(g.edad_min, 20);
   c.edad_max = num(g.edad_max, 75);
   c.anios_joven = num(g.anios_joven, 3);
+  c.pep_veces_cv = num(g.pep_veces_cv, 24);
+  c.pep_veces_arr = num(g.pep_veces_arr, 0.5);
   // Version 2 (19 de octubre de 2026): por el articulo 23 Bis 4, un pais en la
   // lista gris del GAFI o con regimen fiscal preferente es riesgo Alto. Una
   // configuracion guardada antes conserva todo lo demas, pero esas dos reglas
@@ -7299,6 +7321,19 @@ function perfilRiesgo(d) {
   p.pepVencido = ven.length > 0;
   p.det.pep = (afr.length ? afr : ven).map(function(x){ return x.estatus.toLowerCase() + ', ' + x.quien; }).join('; ');
   p.pepExt = d.pep_extranjero === 'SI' && !!d.estatus_pep && d.estatus_pep !== 'NO APLICA';
+  // Articulo 23 Bis 3: PEP nacional (el cargo es en Mexico) con su ingreso
+  // mensual declarado. El monto del mes es el maximo declarado, o el mes mas
+  // alto operado cuando la revaloracion lo trae.
+  var ingPep = parseFloat(d.pep_ingreso_mensual) || 0, rvPep = d._reval || {};
+  var operadoPep = rvPep.maxMesMXN !== undefined && rvPep.maxMesMXN !== null;
+  var mesPep = operadoPep ? (Number(rvPep.maxMesMXN) || 0) : (parseFloat(d.ptx_monto_max_mensual) || 0);
+  var vecesPep = p.op === 'arr' ? cfg.pep_veces_arr : cfg.pep_veces_cv;
+  p.pepNac = AFR.indexOf(d.estatus_pep || '') >= 0 && d.pep_extranjero !== 'SI';
+  p.pepIngreso = p.tipo === 'PF' && p.pepNac && ingPep > 0 && mesPep > ingPep * vecesPep;
+  p.det.ingreso = p.pepIngreso
+    ? (operadoPep ? 'mes más alto operado ' : 'monto máximo mensual declarado ') + fmtMXN(mesPep) + ' contra un ingreso de ' + fmtMXN(ingPep)
+      + ', ' + fmtVecesRegla(mesPep / ingPep)
+    : '';
 
   // Domicilio: en Mexico cuenta la banda de su estado.
   var dom = domicilioDePersona(d);
@@ -7426,14 +7461,16 @@ function aplicarRiesgo(obj, r) {
 var LISTA_HIST = 'PLD_HistorialRiesgo';
 var CAMPOS_PTX_HIST = ['es_arrendamiento', 'ptx_arr_pago', 'ptx_arr_numops', 'ptx_arr_frec', 'renta_monto', 'renta_moneda',
   'ptx_arr_efectivo', 'ptx_arr_origen', 'ptx_arr_origen_otro', 'ptx_cv_pago', 'ptx_cv_numops', 'ptx_cv_moneda',
-  'ptx_cv_contrapartes', 'ptx_cv_efectivo_mxn', 'ptx_cv_origen', 'ptx_cv_origen_otro', 'ptx_monto_max_mensual', 'razon_opera_mx', 'razon_opera_mx_otro'];
+  'ptx_cv_contrapartes', 'ptx_cv_efectivo_mxn', 'ptx_cv_origen', 'ptx_cv_origen_otro', 'ptx_monto_max_mensual', 'razon_opera_mx', 'razon_opera_mx_otro',
+  'pep_ingreso_mensual'];
 var ETQ_PTX_HIST = { es_arrendamiento: 'tipo de operacion', ptx_arr_pago: 'tipo de pago', ptx_arr_numops: 'operaciones por periodo',
   ptx_arr_frec: 'frecuencia', renta_monto: 'renta', renta_moneda: 'moneda de la renta', ptx_arr_efectivo: 'uso de efectivo',
   ptx_arr_origen: 'origen de los recursos', ptx_arr_origen_otro: 'origen de los recursos', ptx_cv_pago: 'tipo de pago',
   ptx_cv_numops: 'numero de operaciones', ptx_cv_moneda: 'moneda de pago', ptx_cv_contrapartes: 'contrapartes',
   ptx_cv_efectivo_mxn: 'monto en efectivo', ptx_cv_origen: 'origen de los recursos', ptx_cv_origen_otro: 'origen de los recursos',
   ptx_monto_max_mensual: 'monto maximo mensual',
-  razon_opera_mx: 'razon para operar en Mexico', razon_opera_mx_otro: 'razon para operar en Mexico' };
+  razon_opera_mx: 'razon para operar en Mexico', razon_opera_mx_otro: 'razon para operar en Mexico',
+  pep_ingreso_mensual: 'ingreso mensual declarado del PEP' };
 
 // ── Perfil declarado original y perfil operado ──
 // El declarado original es el que el cliente dio en el alta: queda congelado
@@ -7475,7 +7512,7 @@ function fmtCampoPtx(k, o) {
   var cat = { ptx_arr_pago: PTX_ARR_PAGO, ptx_arr_numops: PTX_ARR_NUMOPS, ptx_arr_frec: PTX_FREC, ptx_arr_efectivo: PTX_EFECTIVO,
               ptx_arr_origen: PTX_ORIGEN, ptx_cv_pago: PTX_CV_PAGO, ptx_cv_numops: PTX_CV_NUMOPS, ptx_cv_moneda: PTX_MONEDA,
               ptx_cv_contrapartes: PTX_CONTRAPARTES, ptx_cv_origen: PTX_ORIGEN, razon_opera_mx: RAZON_OPERA_MX }[k];
-  if (k === 'renta_monto' || k === 'ptx_cv_efectivo_mxn' || k === 'ptx_monto_max_mensual') return fmtMXN(v);
+  if (k === 'renta_monto' || k === 'ptx_cv_efectivo_mxn' || k === 'ptx_monto_max_mensual' || k === 'pep_ingreso_mensual') return fmtMXN(v);
   if (k === 'renta_moneda') return v === 'USD' ? 'USD - Dolares' : 'MXN - Pesos';
   var t = cat ? ptxEtiqueta(cat, v) : String(v);
   var otro = { ptx_arr_origen: 'ptx_arr_origen_otro', ptx_cv_origen: 'ptx_cv_origen_otro', razon_opera_mx: 'razon_opera_mx_otro' }[k];
@@ -8018,6 +8055,9 @@ function cargarOperadoFicha() {
         + ' por ' + fmtMXN(op.total_mxn) + '; mes mas alto ' + fmtMXN(op.max_mensual_mxn)
         + (op.efectivo_n ? '; efectivo en ' + op.efectivo_n + ' por ' + fmtMXN(op.efectivo_mxn) : '; sin efectivo')
         + (op.instrumentos.length ? '; instrumentos: ' + capEsc(op.instrumentos.join(', ')) : '') + '.'
+        + ((parseFloat(c.pep_ingreso_mensual) || 0) > 0 && c.estatus_pep && c.estatus_pep !== 'NO APLICA'
+            ? ' El mes mas alto equivale a ' + fmtVecesRegla(op.max_mensual_mxn / parseFloat(c.pep_ingreso_mensual)) + ' el ingreso mensual declarado.'
+            : '')
       : 'Sin operaciones del ' + capEsc(desde) + ' al ' + capEsc(hasta) + '.';
   });
 }
@@ -8040,6 +8080,7 @@ function htmlFormPF_MEX(d) {
     +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id"><option value="">-- Sin asignar --</option>'+ASESORES.map(function(a){ return '<option value="'+a.id+'"'+(a.id===d.asesor_id?' selected':'')+'>'+a.nombre+'</option>'; }).join('')+'</select></div>'
     +htmlArrendamiento(d)
     +'</div></div>'
+    +htmlCargoPEP(d)
     +'<div class="card"><div class="card-h"><span class="card-t">Identificacion - Persona fisica mexicana (Anexo 3)</span></div>'
     +htmlIdPF(d,'',true)
     +'</div>'
@@ -8079,6 +8120,7 @@ function htmlFormPF_EXT(d) {
     +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id">'+htmlSelectAsesores(d.asesor_id||'')+'</select></div>'
     +htmlArrendamiento(d)
     +'</div></div>'
+    +htmlCargoPEP(d)
     +'<div class="card"><div class="card-h"><span class="card-t">Identificacion - Persona fisica extranjera (Anexo 5)</span></div>'
     +htmlIdPF(d,'',false)
     +'</div>'
@@ -8325,6 +8367,32 @@ function selectEstatusPEP(d) {
     + '</select><span class="fhint">Solo cuenta si el estatus PEP no es NO APLICA. Un PEP extranjero es riesgo Alto en cualquier estatus.</span></div>';
 }
 
+// Articulo 23 Bis 3: del PEP persona fisica se registran el cargo, la
+// dependencia, el periodo y el ingreso mensual, para valorar si lo que opera
+// corresponde con sus ingresos y funciones. La tarjeta solo se ve cuando el
+// estatus PEP no es NO APLICA (actualizarCargoPep); oculta, sus campos no se
+// piden.
+function htmlCargoPEP(d) {
+  var hayPep = !!d.estatus_pep && d.estatus_pep !== 'NO APLICA';
+  return '<div class="card" id="pep-cargo-wrap" style="' + (hayPep ? '' : 'display:none') + '"><div class="card-h"><span class="card-t">Cargo de la persona politicamente expuesta</span>'
+    + '<span style="font-size:12px;color:var(--tx3)">Art. 23 Bis 3</span></div>'
+    + '<div class="fgrid">'
+    + fg('Cargo', null, true) + fi('pep_cargo', capEsc(d.pep_cargo || ''), 'Puesto o encargo publico')
+    + fg('Dependencia o entidad donde esta adscrito', null, true) + fi('pep_dependencia', capEsc(d.pep_dependencia || ''), '')
+    + fg('Fecha de inicio del cargo', null, true) + fi('pep_fecha_inicio', d.pep_fecha_inicio || '', 'DD-MM-AAAA')
+    + fg('Fecha de fin del cargo', null, false) + fi('pep_fecha_fin', d.pep_fecha_fin || '', 'DD-MM-AAAA')
+    + fg('Ingreso mensual declarado (MXN)', null, true)
+    + '<input class="inp mono" type="number" min="0" step="0.01" name="pep_ingreso_mensual" value="' + capEsc(d.pep_ingreso_mensual || '') + '" placeholder="0.00"></div>'
+    + '<div class="fg full" style="font-size:11px;color:var(--tx3);line-height:1.5">La fecha de fin se deja vacia si sigue en el cargo; es obligatoria si el estatus es Inactivo o Vencido. '
+    + 'Si el cliente es familiar o relacionado, el cargo, la dependencia y las fechas son los del PEP, y el ingreso es el del cliente. '
+    + 'Si el PEP es nacional, el ingreso se compara con lo que opera en cada mes.</div>'
+    + '</div></div>';
+}
+function actualizarCargoPep() {
+  var w = document.getElementById('pep-cargo-wrap'), s = document.querySelector('#frm [name="estatus_pep"]');
+  if (w && s) w.style.display = (s.value && s.value !== 'NO APLICA') ? '' : 'none';
+}
+
 function btnGuardar(idEx, tipo) {
   return '<div style="display:flex;justify-content:flex-end;gap:10px;margin-bottom:24px">'
     +'<button type="button" class="btn" onclick="pgClientes()">Cancelar</button>'
@@ -8560,6 +8628,15 @@ function validarCliente(frm, datos, tipo) {
   if (pr23.pepExt || pr23.vig || pr23.fiscal || pr23.relGeo) {
     if (!datos.razon_opera_mx) faltan.push('Razon por la que celebra actos u operaciones en Mexico (art. 23 Bis 4)');
     else if (datos.razon_opera_mx === 'OTRO' && !String(datos.razon_opera_mx_otro || '').trim()) faltan.push('Especificar la razon por la que opera en Mexico');
+  }
+
+  // Articulo 23 Bis 3: periodo del cargo del PEP persona fisica.
+  if (esPF && datos.estatus_pep && datos.estatus_pep !== 'NO APLICA') {
+    var fIniPep = fechaXML(datos.pep_fecha_inicio || ''), fFinPep = fechaXML(datos.pep_fecha_fin || '');
+    if ((datos.estatus_pep === 'Inactivo' || datos.estatus_pep === 'Vencido') && !fFinPep)
+      faltan.push('Fecha de fin del cargo (el estatus PEP es ' + datos.estatus_pep + ')');
+    if (fIniPep && fIniPep > hoy().replace(/-/g, '')) bloq.push('La fecha de inicio del cargo no puede ser posterior a hoy');
+    if (fIniPep && fFinPep && fFinPep < fIniPep) bloq.push('La fecha de fin del cargo no puede ser anterior a la de inicio');
   }
 
   // El efectivo de una compraventa de inmueble no puede pasar de 8,025 UMA
@@ -8972,6 +9049,16 @@ function fichaTab(el,id) {
 
 function fcHtml(l,v){return '<div class="fc"><div class="fc-l">'+l+'</div><div class="fc-v">'+(v||'-')+'</div></div>';}
 function fgHtml(filas){return '<div class="fg2">'+filas+'</div>';}
+// Datos del cargo del PEP (art. 23 Bis 3), solo si el cliente tiene estatus PEP.
+function fichaCargoPEP(c) {
+  if (!c.estatus_pep || c.estatus_pep === 'NO APLICA') return '';
+  var per = c.pep_fecha_inicio
+    ? 'Desde el ' + capEsc(c.pep_fecha_inicio) + (c.pep_fecha_fin ? ' hasta el ' + capEsc(c.pep_fecha_fin) : ', en funciones')
+    : (c.pep_fecha_fin ? 'Hasta el ' + capEsc(c.pep_fecha_fin) : '');
+  var ing = parseFloat(c.pep_ingreso_mensual) || 0;
+  return fcHtml('Cargo del PEP', capEsc(c.pep_cargo || '')) + fcHtml('Dependencia de adscripcion', capEsc(c.pep_dependencia || ''))
+    + fcHtml('Periodo del cargo', per) + fcHtml('Ingreso mensual declarado', ing ? fmtMXN(ing) : '');
+}
 
 function renderDatosGenerales(c) {
   var campos = '';
@@ -9000,6 +9087,7 @@ function renderDatosGenerales(c) {
       +fcHtml('Autoridad que la emite',c.autoridad_id)
       +fcHtml('Telefono',c.telefono)+fcHtml('Correo electronico',c.email)
       +fcHtml('Actividad economica',actPFLabel(c.actividad_pf)||c.actividad)+fcHtml('Estatus PEP',c.estatus_pep)
+      +fichaCargoPEP(c)
       +fcHtml('Es apoderado',c.es_apoderado));
   } else if (c.tipo==='PF_EXT') {
     campos = fgHtml(
@@ -9010,7 +9098,8 @@ function renderDatosGenerales(c) {
       +fcHtml('Autoridad que la emite',c.autoridad_id)+fcHtml('Condicion migratoria',c.condicion_migratoria)
       +fcHtml('No. forma migratoria',c.num_forma_migratoria)+fcHtml('Telefono',c.telefono)
       +fcHtml('Correo electronico',c.email)+fcHtml('Actividad economica',actPFLabel(c.actividad_pf)||c.actividad)
-      +fcHtml('Estatus PEP',c.estatus_pep));
+      +fcHtml('Estatus PEP',c.estatus_pep)
+      +fichaCargoPEP(c));
   } else if (c.tipo==='PM_MEX') {
     campos = fgHtml(
       fcHtml('Razon social',c.razon_social)+fcHtml('RFC',c.rfc)
