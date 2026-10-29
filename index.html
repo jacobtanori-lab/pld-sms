@@ -4017,7 +4017,7 @@ function pgConfig(sec) {
   setSB('<div class="sb-sec">Configuracion</div>'
     +'<div class="sb-item'+(sec==='sistema'?' on':'')+'" onclick="pgConfig(\'sistema\')">Parametros del sistema</div>'
     +'<div class="sb-item'+(sec==='ebr'?' on':'')+'" onclick="pgConfig(\'ebr\')">Nivel de Riesgo de clientes</div>'
-    +'<div class="sb-item'+(sec==='perfil'?' on':'')+'" onclick="pgConfig(\'perfil\')">Perfil transaccional</div>'
+    +'<div class="sb-item'+(sec==='perfil'?' on':'')+'" onclick="pgConfig(\'perfil\')">Configuracion de Alertas</div>'
     +(App.rol==='admin' ? '<div class="sb-item'+(sec==='gafi'?' on':'')+'" onclick="pgConfig(\'gafi\')">Listas del GAFI</div>' : '')
     +(App.rol==='admin' ? '<div class="sb-item'+(sec==='mant'?' on':'')+'" onclick="pgConfig(\'mant\')">Mantenimiento de datos</div>' : ''));
   if (sec === 'ebr')    { EBR_VISTA = modeloEBRActivo(); pgConfigEBR(); return; }
@@ -4191,7 +4191,36 @@ function pgConfigMantenimiento() {
   }).join('');
   setMain('<div class="phdr"><div><div class="ptit">Mantenimiento de datos</div>'
     +'<div class="psub">Operaciones de administrador sobre las listas de SharePoint</div></div></div>'
+    + tarjetaTipoCambioHtml()
     + tarjetas);
+}
+
+// Tipo de cambio USD a MXN: estado de la carga diaria de Banxico, el tipo de
+// cambio manual de respaldo y las acciones de recarga y recalculo.
+function tarjetaTipoCambioHtml() {
+  return '<div class="card"><div class="card-h"><span class="card-t">Tipo de cambio (USD &rarr; MXN)</span>'
+    +'<span style="font-size:12px;color:var(--tx3)">Cada operacion se convierte con el tipo de cambio de SU fecha</span></div>'
+    +'<div class="card-b">'
+    + bannerTipoCambio()
+    +'<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--brd);flex-wrap:wrap">'
+    +'<div style="flex:1;min-width:220px"><div style="font-size:13px;color:var(--tx1)">Tipo de cambio manual (respaldo)</div>'
+    +'<div style="font-size:11px;color:var(--tx3)">Solo se usa cuando no hay tipo de cambio publicado para la fecha de la operacion.</div></div>'
+    +'<input class="inp mono" id="pf-tipo_cambio_usd" type="number" min="0" max="1000" step="0.01" value="'+CFG_PERFIL.tipo_cambio_usd+'" style="width:120px;text-align:center">'
+    +'<span style="font-size:12px;color:var(--tx3);min-width:70px">MXN / USD</span>'
+    +'<button class="btn btn-p" onclick="guardarTipoCambioManual()">Guardar</button></div>'
+    +'<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">'
+    +'<button class="btn" onclick="recargarTipoCambio()">&#8635; Recargar tipos de cambio</button>'
+    +'<button class="btn" onclick="recalcularMontosMXN()">&#128260; Recalcular equivalentes en MXN</button>'
+    +'</div>'
+    +'<div style="font-size:11px;color:var(--tx3);margin-top:8px">El recalculo recorre las operaciones ya registradas y les asigna el equivalente en pesos '
+    +'usando el tipo de cambio de la fecha de cada una. Si ese dia no hubo publicacion (fin de semana o festivo), se usa el ultimo dia habil anterior.</div>'
+    +'</div></div>';
+}
+function guardarTipoCambioManual() {
+  var el = document.getElementById('pf-tipo_cambio_usd'), v = el ? parseFloat(el.value) : NaN;
+  if (isNaN(v) || v <= 0) { toast('Escribe un tipo de cambio mayor a cero', 'e'); return; }
+  CFG_PERFIL.tipo_cambio_usd = v;
+  persistirPerfil('Tipo de cambio manual guardado', 'mant');
 }
 
 function ejecutarRellenoIndexadas(lista, soloRevisar) {
@@ -5331,12 +5360,12 @@ function pgConfigPerfil() {
       +'<span style="font-size:12px;color:var(--tx3);min-width:70px">'+sufijo+'</span></div>';
   }
 
-  setMain('<div class="phdr"><div><div class="ptit">Perfil transaccional</div>'
-    +'<div class="psub">Parametros que definen cuando un cliente se sale de su perfil esperado</div></div>'
+  setMain('<div class="phdr"><div><div class="ptit">Configuracion de Alertas</div>'
+    +'<div class="psub">Parametros que definen cuando un cliente se sale de su perfil transaccional</div></div>'
     +'<button class="btn btn-p" onclick="guardarPerfil()">Guardar cambios</button></div>'
 
-    +'<div class="alerta-banner">La alerta se evalua sobre las operaciones del <strong>mes</strong> de cada cliente. '
-    +'Si se excede <strong>cualquiera</strong> de estos parametros, se genera una alerta de <strong>Perfil transaccional</strong>.</div>'
+    +'<div class="alerta-banner"><span>La alerta se evalua sobre las operaciones del <strong>mes</strong> de cada cliente. '
+    +'Si se excede <strong>cualquiera</strong> de estos parametros, se genera una alerta de <strong>Perfil transaccional</strong>.</span></div>'
 
     +'<div class="card"><div class="card-h"><span class="card-t">Aplica solo a clientes con marcador PEP</span>'
     +'<span style="font-size:12px;color:var(--tx3)">Cualquier estatus PEP distinto de "NO APLICA"</span></div>'
@@ -5354,18 +5383,15 @@ function pgConfigPerfil() {
            num('pct_desviacion', p.pct_desviacion, 0, 1000), '%')
     +'</div></div>'
 
-    +'<div class="card"><div class="card-h"><span class="card-t">Tipo de cambio (USD &rarr; MXN)</span>'
-    +'<span style="font-size:12px;color:var(--tx3)">Cada operacion se convierte con el tipo de cambio de SU fecha</span></div>'
+    +'<div class="card"><div class="card-h"><span class="card-t">Perfil transaccional inicial</span>'
+    +'<span style="font-size:12px;color:var(--tx3)">Art. 23 Ter 1 · Todos los clientes</span></div>'
     +'<div class="card-b">'
-    + bannerTipoCambio()
-    + fila('Tipo de cambio manual (respaldo)', 'Solo se usa cuando no hay tipo de cambio publicado para la fecha de la operacion.',
-           num('tipo_cambio_usd', p.tipo_cambio_usd, 0, 1000, 0.01), 'MXN / USD')
-    +'<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">'
-    +'<button class="btn" onclick="recargarTipoCambio()">&#8635; Recargar tipos de cambio</button>'
-    +'<button class="btn" onclick="recalcularMontosMXN()">&#128260; Recalcular equivalentes en MXN</button>'
-    +'</div>'
-    +'<div style="font-size:11px;color:var(--tx3);margin-top:8px">El recalculo recorre las operaciones ya registradas y les asigna el equivalente en pesos '
-    +'usando el tipo de cambio de la fecha de cada una. Si ese dia no hubo publicacion (fin de semana o festivo), se usa el ultimo dia habil anterior.</div>'
+    +'<div style="font-size:12px;color:var(--tx2);line-height:1.6;margin-bottom:4px">Desde la primera operacion del cliente y durante los meses de vigilancia, '
+    +'lo operado en cada mes se compara con el monto maximo mensual que declaro en el alta. Si lo rebasa, se alerta.</div>'
+    + fila('Meses de vigilancia', 'Contados desde la primera operacion del cliente. La regla pide al menos 6.',
+           num('meses_inicial', p.meses_inicial, 6, 60), 'meses')
+    + fila('Tolerancia sobre el monto declarado', 'Porcentaje que puede rebasar el monto maximo mensual antes de alertar. 0 = cualquier exceso alerta.',
+           num('pct_inicial', p.pct_inicial, 0, 1000), '%')
     +'</div></div>');
 }
 
@@ -5374,7 +5400,7 @@ function recargarTipoCambio() {
   cargarTipoCambio(function(ok){
     if (ok) toast('Tipos de cambio actualizados: '+TC_META.total+' fechas (ultima: '+TC_META.ultima+')','s');
     else toast('No se encontraron tipos de cambio. Verifica que exista la lista PLD_TipoCambio y que el flujo la este alimentando.','w');
-    pgConfig('perfil');
+    pgConfig('mant');
   });
 }
 
@@ -5413,11 +5439,18 @@ function guardarPerfil() {
     var v = el ? parseFloat(el.value) : NaN;
     return isNaN(v) ? fallback : v;
   };
-  CFG_PERFIL.max_operaciones = g('max_operaciones', 10);
-  CFG_PERFIL.max_efectivo    = g('max_efectivo', 100000);
-  CFG_PERFIL.pct_desviacion  = g('pct_desviacion', 20);
-  CFG_PERFIL.tipo_cambio_usd = g('tipo_cambio_usd', 17);
+  CFG_PERFIL.max_operaciones = g('max_operaciones', CFG_PERFIL.max_operaciones);
+  CFG_PERFIL.max_efectivo    = g('max_efectivo', CFG_PERFIL.max_efectivo);
+  CFG_PERFIL.pct_desviacion  = g('pct_desviacion', CFG_PERFIL.pct_desviacion);
+  // La regla pide vigilar al menos los seis primeros meses.
+  CFG_PERFIL.meses_inicial   = Math.max(6, Math.round(g('meses_inicial', CFG_PERFIL.meses_inicial)));
+  CFG_PERFIL.pct_inicial     = Math.max(0, g('pct_inicial', CFG_PERFIL.pct_inicial));
+  persistirPerfil('Configuracion de alertas guardada', 'perfil');
+}
 
+// Guarda CFG_PERFIL en el navegador y en SharePoint, y vuelve a la pantalla
+// sec de la configuracion. El tipo de cambio manual vive en el mismo objeto.
+function persistirPerfil(msg, sec) {
   var json = JSON.stringify(CFG_PERFIL);
   localStorage.setItem('perfil_config', json);
   spGet('PLD_Config', function(lista) {
@@ -5425,9 +5458,9 @@ function guardarPerfil() {
     (lista||[]).forEach(function(c){ if(c.Title==='CONFIG_SISTEMA'||c.uma_diaria) item=c; });
     var datos = { Title: 'CONFIG_SISTEMA', perfil_config: json, actualizado_por: App.cuenta.username };
     if (item && item.id) {
-      spPatch('PLD_Config', item.id, datos, function() { toast('Configuracion de perfil transaccional guardada','s'); pgConfig('perfil'); });
+      spPatch('PLD_Config', item.id, datos, function() { toast(msg,'s'); pgConfig(sec); });
     } else {
-      spCreate('PLD_Config', datos, function() { toast('Configuracion de perfil transaccional guardada','s'); pgConfig('perfil'); });
+      spCreate('PLD_Config', datos, function() { toast(msg,'s'); pgConfig(sec); });
     }
   });
 }
@@ -11097,7 +11130,9 @@ var CFG_PERFIL = {
   max_operaciones: 10,       // operaciones en el mes
   max_efectivo: 100000,      // MXN acumulados en efectivo en el mes
   pct_desviacion: 20,        // % permitido por encima de la renta esperada
-  tipo_cambio_usd: 17.00     // para normalizar montos en USD a MXN
+  tipo_cambio_usd: 17.00,    // para normalizar montos en USD a MXN
+  meses_inicial: 6,          // art. 23 Ter 1: meses desde la primera operacion
+  pct_inicial: 0             // % tolerado sobre el monto maximo mensual declarado
 };
 (function() {
   var cached = localStorage.getItem('perfil_config');
@@ -13760,6 +13795,16 @@ function verificarPerfilTransaccional(idCli, nomCli, numCli, fechaOp, cb) {
           + ' +' + pct + '% (limite $' + Math.round(limite).toLocaleString('es-MX') + ')');
     }
 
+    // (d) Perfil transaccional inicial (art. 23 Ter 1) — todos los clientes.
+    // Durante los primeros meses desde su primera operacion, lo operado en el
+    // mes no debe rebasar el monto maximo mensual declarado en el alta.
+    var ini = perfilInicialEnVigilancia(cli, todas, idCli, numCli, fechaOp);
+    if (ini && totalMes > ini.limite)
+      motivos.push('Perfil inicial (art. 23 Ter 1): lo operado en el mes, $' + Math.round(totalMes).toLocaleString('es-MX')
+        + ', rebasa el monto maximo mensual declarado de $' + Math.round(ini.declarado).toLocaleString('es-MX')
+        + (ini.pct ? ' +' + ini.pct + '%' : '')
+        + ' (vigilancia de ' + ini.meses + ' meses desde la primera operacion: ' + ini.desde + ' al ' + ini.hasta + ')');
+
     if (!motivos.length) { if (cb) cb(); return; }
 
     crearAlertaPerfil({
@@ -13779,6 +13824,38 @@ function verificarPerfilTransaccional(idCli, nomCli, numCli, fechaOp, cb) {
     toast('ALERTA PERFIL TRANSACCIONAL: ' + (nomCli||'cliente') + ' — ' + motivos.length + ' parametro(s) excedido(s)', 'w');
     if (cb) cb();
   });
+}
+
+// Monto maximo mensual del perfil inicial: el declarado en el alta (perfil
+// original congelado) o, en un expediente sin el, el que tenga hoy.
+function montoMaxDeclaradoInicial(c) {
+  var o = c && c.perfil_tx_original && c.perfil_tx_original.campos;
+  var v = parseFloat(o && o.ptx_monto_max_mensual);
+  if (!(v > 0)) v = parseFloat(c && c.ptx_monto_max_mensual);
+  return v > 0 ? v : 0;
+}
+// Si la operacion de fechaOp cae dentro de los meses de vigilancia contados
+// desde la primera operacion del cliente, devuelve el monto declarado y el
+// limite con la tolerancia; si no, null.
+function perfilInicialEnVigilancia(cli, todas, idCli, numCli, fechaOp) {
+  var declarado = montoMaxDeclaradoInicial(cli);
+  if (!declarado) return null;
+  var primera = '';
+  (todas || []).forEach(function(o){
+    var mismo = (idCli && o.id_cliente_ref === idCli) || (numCli && String(o.num_cliente) === String(numCli));
+    var f = mismo ? fechaXML(o.fecha_pago) : '';
+    if (f && (!primera || f < primera)) primera = f;
+  });
+  var fOp = fechaXML(fechaOp || hoy());
+  if (!primera || !fOp) return null;
+  var meses = Math.max(6, parseInt(CFG_PERFIL.meses_inicial, 10) || 6);
+  var d = new Date(+primera.substring(0, 4), +primera.substring(4, 6) - 1, +primera.substring(6, 8));
+  d.setMonth(d.getMonth() + meses);
+  var fin = d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate());
+  if (fOp > fin) return null;
+  var pct = parseFloat(CFG_PERFIL.pct_inicial) || 0;
+  var iso = function(x){ return x.substring(6, 8) + '-' + x.substring(4, 6) + '-' + x.substring(0, 4); };
+  return { declarado: declarado, limite: declarado * (1 + pct / 100), pct: pct, meses: meses, desde: iso(primera), hasta: iso(fin) };
 }
 
 function crearAlertaPerfil(datos) {
