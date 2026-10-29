@@ -155,6 +155,10 @@ tbody tr:hover td{background:#f4f3ef}
 .inp:focus,.sel:focus,.txa:focus{border-color:var(--az2)}
 .inp.mono{font-family:monospace}
 .fhint{font-size:11px;color:var(--tx3);margin-top:2px}
+.pep-ayuda{position:relative;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;margin-left:6px;border-radius:50%;border:1px solid var(--brd2);background:#fff;font-size:10px;font-weight:700;color:var(--tx2);cursor:help;text-transform:none;letter-spacing:0;vertical-align:middle}
+.pep-ayuda:focus{outline:2px solid var(--az2);outline-offset:1px}
+.pep-ayuda-txt{display:none;position:absolute;left:-8px;top:22px;z-index:60;width:320px;max-width:78vw;padding:10px 12px;background:#fff;border:1px solid var(--brd2);border-radius:var(--r);box-shadow:0 6px 18px rgba(0,0,0,.12);font-size:12px;font-weight:400;line-height:1.55;color:var(--tx);text-align:left;white-space:normal}
+.pep-ayuda:hover .pep-ayuda-txt,.pep-ayuda:focus .pep-ayuda-txt{display:block}
 .rt-toolbar{display:flex;flex-wrap:wrap;gap:4px;align-items:center;border:1px solid var(--brd2);border-bottom:none;border-radius:var(--r) var(--r) 0 0;padding:6px;background:#fafaf8}
 .rt-toolbar button{padding:4px 9px;font-size:13px;line-height:1;border:1px solid var(--brd);border-radius:5px;background:#fff;cursor:pointer;color:var(--tx);min-width:30px;font-family:var(--f)}
 .rt-toolbar button:hover{background:var(--az3);border-color:var(--az2)}
@@ -7313,8 +7317,15 @@ function perfilRiesgo(d) {
 
   // PEP del cliente y de las personas relacionadas confirmadas por listas.
   var peps = [];
-  if (d.estatus_pep && d.estatus_pep !== 'NO APLICA') peps.push({ estatus: d.estatus_pep, quien: 'cliente' });
-  pepPartesConfirmadas(d).forEach(function(pp){ peps.push({ estatus: pp.estatus, quien: pp.parte + (pp.nombre ? ' ' + pp.nombre : '') }); });
+  // En persona moral y fideicomiso el estatus PEP es el de la persona elegida
+  // en la tarjeta del cargo: se nombra a esa persona, y si tambien es una
+  // coincidencia confirmada en listas, cuenta una sola vez.
+  var partesPep = pepPartesConfirmadas(d);
+  var pepEnMoral = !!d.pep_persona && ['PM_MEX', 'PM_SIMP', 'FIDEICOMISO'].indexOf(d.tipo) >= 0;
+  var quienCli = pepEnMoral ? (d.pep_persona_parte ? d.pep_persona_parte + ' ' : '') + d.pep_persona : 'cliente';
+  var yaConfirmada = pepEnMoral && partesPep.some(function(pp){ return scrNorm(pp.nombre || '') === scrNorm(d.pep_persona); });
+  if (d.estatus_pep && d.estatus_pep !== 'NO APLICA' && !yaConfirmada) peps.push({ estatus: d.estatus_pep, quien: quienCli });
+  partesPep.forEach(function(pp){ peps.push({ estatus: pp.estatus, quien: pp.parte + (pp.nombre ? ' ' + pp.nombre : '') }); });
   var afr = peps.filter(function(x){ return AFR.indexOf(x.estatus) >= 0; });
   var ven = peps.filter(function(x){ return x.estatus === 'Vencido'; });
   p.pepAFR = afr.length > 0;
@@ -8074,13 +8085,12 @@ function htmlFormPF_MEX(d) {
     +'<div class="card"><div class="card-h"><span class="card-t">Datos generales del expediente</span></div>'
     +'<div class="fgrid">'
     +fg('Estatus del cliente',null,true)+fs('estatus',opts(LISTAS.estatusC,d.estatus||'Activo'))
-    +fg('Estatus PEP',null,true)+selectEstatusPEP(d)
+    +fg('Estatus PEP'+ayudaEstatusPEP(),null,true)+selectEstatusPEP(d)
     +fg('Fecha de alta',null,true)+fi('fecha_alta',d.fecha_alta||hoy(),'')
     +fg('Fecha de baja',null,false)+fi('fecha_baja',d.fecha_baja||'','Dejar vacio si no aplica')
     +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id"><option value="">-- Sin asignar --</option>'+ASESORES.map(function(a){ return '<option value="'+a.id+'"'+(a.id===d.asesor_id?' selected':'')+'>'+a.nombre+'</option>'; }).join('')+'</select></div>'
     +htmlArrendamiento(d)
     +'</div></div>'
-    +htmlCargoPEP(d)
     +'<div class="card"><div class="card-h"><span class="card-t">Identificacion - Persona fisica mexicana (Anexo 3)</span></div>'
     +htmlIdPF(d,'',true)
     +'</div>'
@@ -8099,6 +8109,7 @@ function htmlFormPF_MEX(d) {
     +'<div class="card"><div class="card-h"><span class="card-t">Observaciones</span></div>'
     +'<div class="fgrid">'+ftxt('Observaciones generales','observaciones',d.observaciones||'')+'</div></div>'
     +htmlPerfilTx(d)
+    +htmlCargoPEP(d,'PF_MEX')
     +btnGuardar(d.id,'PF_MEX')+'</form>';
 }
 
@@ -8114,13 +8125,12 @@ function htmlFormPF_EXT(d) {
     +'<div class="card"><div class="card-h"><span class="card-t">Datos generales del expediente</span></div>'
     +'<div class="fgrid">'
     +fg('Estatus del cliente',null,true)+fs('estatus',opts(LISTAS.estatusC,d.estatus||'Activo'))
-    +fg('Estatus PEP',null,true)+selectEstatusPEP(d)
+    +fg('Estatus PEP'+ayudaEstatusPEP(),null,true)+selectEstatusPEP(d)
     +fg('Fecha de alta',null,true)+fi('fecha_alta',d.fecha_alta||hoy(),'')
     +fg('Fecha de baja',null,false)+fi('fecha_baja',d.fecha_baja||'','')
     +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id">'+htmlSelectAsesores(d.asesor_id||'')+'</select></div>'
     +htmlArrendamiento(d)
     +'</div></div>'
-    +htmlCargoPEP(d)
     +'<div class="card"><div class="card-h"><span class="card-t">Identificacion - Persona fisica extranjera (Anexo 5)</span></div>'
     +htmlIdPF(d,'',false)
     +'</div>'
@@ -8153,6 +8163,7 @@ function htmlFormPF_EXT(d) {
     +'<div class="card"><div class="card-h"><span class="card-t">Observaciones</span></div>'
     +'<div class="fgrid">'+ftxt('Observaciones generales','observaciones',d.observaciones||'')+'</div></div>'
     +htmlPerfilTx(d)
+    +htmlCargoPEP(d,'PF_EXT')
     +btnGuardar(d.id,'PF_EXT')+'</form>';
 }
 
@@ -8168,7 +8179,7 @@ function htmlFormPM_MEX(d) {
     +'<div class="card"><div class="card-h"><span class="card-t">Datos generales del expediente</span></div>'
     +'<div class="fgrid">'
     +fg('Estatus del cliente',null,true)+fs('estatus',opts(LISTAS.estatusC,d.estatus||'Activo'))
-    +fg('Estatus PEP',null,true)+selectEstatusPEP(d)
+    +fg('Estatus PEP'+ayudaEstatusPEP(),null,true)+selectEstatusPEP(d)
     +fg('Fecha de alta',null,true)+fi('fecha_alta',d.fecha_alta||hoy(),'')
     +fg('Fecha de baja',null,false)+fi('fecha_baja',d.fecha_baja||'','')
     +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id">'+htmlSelectAsesores(d.asesor_id||'')+'</select></div>'
@@ -8217,6 +8228,7 @@ function htmlFormPM_MEX(d) {
     +'<div class="card"><div class="card-h"><span class="card-t">Observaciones</span></div>'
     +'<div class="fgrid">'+ftxt('Observaciones generales','observaciones',d.observaciones||'')+'</div></div>'
     +htmlPerfilTx(d)
+    +htmlCargoPEP(d,'PM_MEX')
     +btnGuardar(d.id,'PM_MEX')+'</form>';
 }
 
@@ -8232,7 +8244,7 @@ function htmlFormPM_SIMP(d) {
     +'<div class="card"><div class="card-h"><span class="card-t">Datos generales del expediente</span></div>'
     +'<div class="fgrid">'
     +fg('Estatus del cliente',null,true)+fs('estatus',opts(LISTAS.estatusC,d.estatus||'Activo'))
-    +fg('Estatus PEP',null,true)+selectEstatusPEP(d)
+    +fg('Estatus PEP'+ayudaEstatusPEP(),null,true)+selectEstatusPEP(d)
     +fg('Fecha de alta',null,true)+fi('fecha_alta',d.fecha_alta||hoy(),'')
     +fg('Fecha de baja',null,false)+fi('fecha_baja',d.fecha_baja||'','')
     +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id">'+htmlSelectAsesores(d.asesor_id||'')+'</select></div>'
@@ -8265,6 +8277,7 @@ function htmlFormPM_SIMP(d) {
     +'<div class="fgrid">'+ftxt('Justificacion de aplicacion del Anexo 7 (por que califica para regimen simplificado)','justificacion_simp',d.justificacion_simp||'')
     +ftxt('Observaciones generales','observaciones',d.observaciones||'')+'</div></div>'
     +htmlPerfilTx(d)
+    +htmlCargoPEP(d,'PM_SIMP')
     +btnGuardar(d.id,'PM_SIMP')+'</form>';
 }
 
@@ -8280,7 +8293,7 @@ function htmlFormFIDEICOMISO(d) {
     +'<div class="card"><div class="card-h"><span class="card-t">Datos generales del expediente</span></div>'
     +'<div class="fgrid">'
     +fg('Estatus del cliente',null,true)+fs('estatus',opts(LISTAS.estatusC,d.estatus||'Activo'))
-    +fg('Estatus PEP',null,true)+selectEstatusPEP(d)
+    +fg('Estatus PEP'+ayudaEstatusPEP(),null,true)+selectEstatusPEP(d)
     +fg('Fecha de alta',null,true)+fi('fecha_alta',d.fecha_alta||hoy(),'')
     +fg('Fecha de baja',null,false)+fi('fecha_baja',d.fecha_baja||'','')
     +fg('Asesor comercial responsable',null,false)+'<select class="sel" name="asesor_id">'+htmlSelectAsesores(d.asesor_id||'')+'</select></div>'
@@ -8336,6 +8349,7 @@ function htmlFormFIDEICOMISO(d) {
     +'<div class="card"><div class="card-h"><span class="card-t">Observaciones</span></div>'
     +'<div class="fgrid">'+ftxt('Observaciones generales','observaciones',d.observaciones||'')+'</div></div>'
     +htmlPerfilTx(d)
+    +htmlCargoPEP(d,'FIDEICOMISO')
     +btnGuardar(d.id,'FIDEICOMISO')+'</form>';
 }
 
@@ -8350,10 +8364,27 @@ function htmlFormBase(tipo, d) {
 
 // Estatus PEP en el formulario. Si se confirmo por coincidencia en listas,
 // solo el administrador lo puede cambiar; para los demas queda bloqueado.
+var DEF_ESTATUS_PEP = {
+  'NO APLICA': 'No es PEP ni familiar o relacionado de un PEP.',
+  'Activo': 'PEP actualmente en su cargo.',
+  'Inactivo': 'PEP que dejo el cargo hace menos de un año.',
+  'Vencido': 'PEP que dejo su cargo hace mas de un año.',
+  'Familiar': 'Familiar consanguineo hasta en segundo grado de un PEP.',
+  'Relacionado a PEP': 'Persona allegada, socio o colaborador cercano al PEP.'
+};
+// Icono junto a la etiqueta: al pasar el cursor o enfocarlo muestra que
+// significa cada estatus. Debajo del select va la definicion del elegido.
+function ayudaEstatusPEP() {
+  return '<span class="pep-ayuda" tabindex="0" role="note" aria-label="Que significa cada estatus PEP">?<span class="pep-ayuda-txt">'
+    + LISTAS.estatusPEP.map(function(k){ return '<strong>' + k + ':</strong> ' + (DEF_ESTATUS_PEP[k] || ''); }).join('<br>')
+    + '</span></span>';
+}
 function selectEstatusPEP(d) {
   var bloq = d.pep_origen === 'listas' && App.rol !== 'admin';
+  var est = d.estatus_pep || 'NO APLICA';
   return '<select class="sel" name="estatus_pep"' + (bloq ? ' disabled' : '') + '>'
-    + opts(LISTAS.estatusPEP, d.estatus_pep || 'NO APLICA') + '</select>'
+    + opts(LISTAS.estatusPEP, est) + '</select>'
+    + '<span class="fhint" id="pep-def">' + (DEF_ESTATUS_PEP[est] || '') + '</span>'
     + (d.pep_origen === 'listas'
         ? '<span class="fhint">Confirmado por coincidencia en listas' + (d.pep_confirmado_por ? ' por ' + capEsc(d.pep_confirmado_por) : '')
           + (d.pep_confirmado_fecha ? ' el ' + capEsc(d.pep_confirmado_fecha) : '') + '. Solo un administrador lo puede cambiar.</span>'
@@ -8372,25 +8403,68 @@ function selectEstatusPEP(d) {
 // corresponde con sus ingresos y funciones. La tarjeta solo se ve cuando el
 // estatus PEP no es NO APLICA (actualizarCargoPep); oculta, sus campos no se
 // piden.
-function htmlCargoPEP(d) {
+function htmlCargoPEP(d, tipo) {
   var hayPep = !!d.estatus_pep && d.estatus_pep !== 'NO APLICA';
+  var esPF = (tipo === 'PF_MEX' || tipo === 'PF_EXT');
   return '<div class="card" id="pep-cargo-wrap" style="' + (hayPep ? '' : 'display:none') + '"><div class="card-h"><span class="card-t">Cargo de la persona politicamente expuesta</span>'
     + '<span style="font-size:12px;color:var(--tx3)">Art. 23 Bis 3</span></div>'
     + '<div class="fgrid">'
+    // En persona moral y fideicomiso el PEP es una de las personas del
+    // expediente; las opciones se arman con las que tenga capturadas.
+    + (esPF ? ''
+        : fg('Persona del expediente que es PEP', null, true)
+          + '<select class="sel" name="pep_persona" id="pep-persona">' + opcionesPersonaPEP(d, d.pep_persona) + '</select>'
+          + '<input type="hidden" name="pep_persona_parte" id="pep-persona-parte" value="' + capEsc(d.pep_persona_parte || '') + '"></div>'
+          + '<div class="fg"></div>')
     + fg('Cargo', null, true) + fi('pep_cargo', capEsc(d.pep_cargo || ''), 'Puesto o encargo publico')
     + fg('Dependencia o entidad donde esta adscrito', null, true) + fi('pep_dependencia', capEsc(d.pep_dependencia || ''), '')
     + fg('Fecha de inicio del cargo', null, true) + fi('pep_fecha_inicio', d.pep_fecha_inicio || '', 'DD-MM-AAAA')
     + fg('Fecha de fin del cargo', null, false) + fi('pep_fecha_fin', d.pep_fecha_fin || '', 'DD-MM-AAAA')
-    + fg('Ingreso mensual declarado (MXN)', null, true)
+    + fg(esPF ? 'Ingreso mensual declarado (MXN)' : 'Ingreso mensual declarado del PEP (MXN)', null, true)
     + '<input class="inp mono" type="number" min="0" step="0.01" name="pep_ingreso_mensual" value="' + capEsc(d.pep_ingreso_mensual || '') + '" placeholder="0.00"></div>'
     + '<div class="fg full" style="font-size:11px;color:var(--tx3);line-height:1.5">La fecha de fin se deja vacia si sigue en el cargo; es obligatoria si el estatus es Inactivo o Vencido. '
-    + 'Si el cliente es familiar o relacionado, el cargo, la dependencia y las fechas son los del PEP, y el ingreso es el del cliente. '
-    + 'Si el PEP es nacional, el ingreso se compara con lo que opera en cada mes.</div>'
+    + (esPF
+        ? 'Si el cliente es familiar o relacionado, el cargo, la dependencia y las fechas son los del PEP, y el ingreso es el del cliente. '
+          + 'Si el PEP es nacional, el ingreso se compara con lo que opera en cada mes.'
+        : 'La lista toma a las personas capturadas en este expediente; si falta alguna, capturala primero en su seccion.')
+    + '</div>'
     + '</div></div>';
 }
+// Personas del expediente que pueden ser el PEP de una persona moral o un
+// fideicomiso: las mismas que pasan por screening, sin el cliente ni el
+// fiduciario. La elegida se conserva aunque ya no aparezca.
+function opcionesPersonaPEP(d, actual) {
+  var lista = _nombresAScreening(d).filter(function(p){ return p.parte !== 'Cliente' && p.parte !== 'Fiduciario'; });
+  var h = '<option value="">' + (lista.length ? '-- Seleccionar --' : '-- Captura primero a las personas del expediente --') + '</option>';
+  var hay = false;
+  lista.forEach(function(p){
+    var sel = actual && p.nombre === actual;
+    if (sel) hay = true;
+    h += '<option value="' + capEsc(p.nombre) + '" data-parte="' + capEsc(p.parte) + '"' + (sel ? ' selected' : '') + '>' + capEsc(p.parte + ': ' + p.nombre) + '</option>';
+  });
+  if (actual && !hay) h += '<option value="' + capEsc(actual) + '" data-parte="' + capEsc(d.pep_persona_parte || '') + '" selected>' + capEsc(actual) + ' (ya no esta en el expediente)</option>';
+  return h;
+}
+// Al cambiar el formulario: la tarjeta se ve solo con estatus PEP, la
+// definicion sigue al estatus elegido y la lista de personas se rehace con lo
+// capturado.
 function actualizarCargoPep() {
-  var w = document.getElementById('pep-cargo-wrap'), s = document.querySelector('#frm [name="estatus_pep"]');
-  if (w && s) w.style.display = (s.value && s.value !== 'NO APLICA') ? '' : 'none';
+  var frm = document.getElementById('frm'); if (!frm) return;
+  var w = document.getElementById('pep-cargo-wrap'), s = frm.querySelector('[name="estatus_pep"]');
+  if (!s) return;
+  if (w) w.style.display = (s.value && s.value !== 'NO APLICA') ? '' : 'none';
+  var def = document.getElementById('pep-def'); if (def) def.textContent = DEF_ESTATUS_PEP[s.value] || '';
+  var sp = document.getElementById('pep-persona'), hp = document.getElementById('pep-persona-parte');
+  if (!sp) return;
+  var tipo = App._tipoForm || '', d = { tipo: tipo };
+  frm.querySelectorAll('[name]').forEach(function(el){ if (!/^(bc|fte|fsa)_\d+_/.test(el.name)) d[el.name] = el.value; });
+  try {
+    if (tipo === 'PM_MEX' || tipo === 'FIDEICOMISO') d.beneficiarios = recogerBCs();
+    if (tipo === 'FIDEICOMISO') ['fte', 'fsa'].forEach(function(pref){ d[_claveParteFid(pref) + 's'] = recogerPartesFid(pref); });
+  } catch (e) {}
+  sp.innerHTML = opcionesPersonaPEP(d, sp.value);
+  var o = sp.options[sp.selectedIndex];
+  if (hp) hp.value = (o && o.value) ? (o.getAttribute('data-parte') || '') : '';
 }
 
 function btnGuardar(idEx, tipo) {
@@ -8630,8 +8704,8 @@ function validarCliente(frm, datos, tipo) {
     else if (datos.razon_opera_mx === 'OTRO' && !String(datos.razon_opera_mx_otro || '').trim()) faltan.push('Especificar la razon por la que opera en Mexico');
   }
 
-  // Articulo 23 Bis 3: periodo del cargo del PEP persona fisica.
-  if (esPF && datos.estatus_pep && datos.estatus_pep !== 'NO APLICA') {
+  // Articulo 23 Bis 3: periodo del cargo del PEP.
+  if (datos.estatus_pep && datos.estatus_pep !== 'NO APLICA') {
     var fIniPep = fechaXML(datos.pep_fecha_inicio || ''), fFinPep = fechaXML(datos.pep_fecha_fin || '');
     if ((datos.estatus_pep === 'Inactivo' || datos.estatus_pep === 'Vencido') && !fFinPep)
       faltan.push('Fecha de fin del cargo (el estatus PEP es ' + datos.estatus_pep + ')');
@@ -9056,7 +9130,9 @@ function fichaCargoPEP(c) {
     ? 'Desde el ' + capEsc(c.pep_fecha_inicio) + (c.pep_fecha_fin ? ' hasta el ' + capEsc(c.pep_fecha_fin) : ', en funciones')
     : (c.pep_fecha_fin ? 'Hasta el ' + capEsc(c.pep_fecha_fin) : '');
   var ing = parseFloat(c.pep_ingreso_mensual) || 0;
-  return fcHtml('Cargo del PEP', capEsc(c.pep_cargo || '')) + fcHtml('Dependencia de adscripcion', capEsc(c.pep_dependencia || ''))
+  var persona = (c.tipo === 'PF_MEX' || c.tipo === 'PF_EXT') ? ''
+    : fcHtml('Persona que es PEP', capEsc((c.pep_persona_parte ? c.pep_persona_parte + ': ' : '') + (c.pep_persona || '')));
+  return persona + fcHtml('Cargo del PEP', capEsc(c.pep_cargo || '')) + fcHtml('Dependencia de adscripcion', capEsc(c.pep_dependencia || ''))
     + fcHtml('Periodo del cargo', per) + fcHtml('Ingreso mensual declarado', ing ? fmtMXN(ing) : '');
 }
 
@@ -9107,20 +9183,25 @@ function renderDatosGenerales(c) {
       +fcHtml('Giro mercantil',giroPMLabel(c.actividad_scian)||c.actividad)+fcHtml('Telefono',c.telefono)
       +fcHtml('Correo electronico',c.email)+fcHtml('Nombre de la identificacion',c.tipo_id)
       +fcHtml('No. identificacion',c.num_id)+fcHtml('Autoridad',c.autoridad_id)
-      +fcHtml('Estatus PEP',c.estatus_pep));
+      +fcHtml('Estatus PEP',c.estatus_pep)
+      +fichaCargoPEP(c));
   } else if (c.tipo==='PM_SIMP') {
     campos = fgHtml(
       fcHtml('Razon social / denominacion',c.razon_social)+fcHtml('Tipo de entidad',c.tipo_entidad)
       +fcHtml('RFC / Fecha de creacion',c.rfc)+fcHtml('Giro mercantil',giroPMLabel(c.actividad_scian)||c.actividad)
       +fcHtml('Telefono',c.telefono)+fcHtml('Correo electronico',c.email)
-      +fcHtml('Justificacion regimen simplificado',c.justificacion_simp));
+      +fcHtml('Justificacion regimen simplificado',c.justificacion_simp)
+      +fcHtml('Estatus PEP',c.estatus_pep)
+      +fichaCargoPEP(c));
   } else if (c.tipo==='FIDEICOMISO') {
     campos = fgHtml(
       fcHtml('No. / referencia del fideicomiso',c.num_fideicomiso)+fcHtml('RFC',c.rfc)
       +fcHtml('Fiduciario (institucion)',c.fiduciario)+fcHtml('Fecha de constitucion',c.fecha_const)
       +fcHtml('Fideicomitente',c.fideicomitente_nombre)+fcHtml('Tipo fideicomitente',c.fideicomitente_tipo)
       +fcHtml('Fideicomisario',c.fideicomisario_nombre)+fcHtml('Tipo fideicomisario',c.fideicomisario_tipo)
-      +fcHtml('Objeto del fideicomiso',c.objeto_fideicomiso)+fcHtml('Bien fideicomitido',c.bien_fideicomitido));
+      +fcHtml('Objeto del fideicomiso',c.objeto_fideicomiso)+fcHtml('Bien fideicomitido',c.bien_fideicomitido)
+      +fcHtml('Estatus PEP',c.estatus_pep)
+      +fichaCargoPEP(c));
   }
   return campos + (c.observaciones?'<div style="margin-top:12px;padding:10px;background:#fafaf8;border-radius:var(--r);font-size:13px"><div class="fc-l">Observaciones</div>'+c.observaciones+'</div>':'');
 }
@@ -9953,14 +10034,20 @@ function seccionResolucionScr(a) {
       cuerpo = '<div style="font-size:12.5px;margin-top:6px"><span class="pill ' + (c.decision === 'CONFIRMADA' ? 'p-rj' : 'p-vd') + '">'
         + (c.decision === 'CONFIRMADA' ? 'Coincidencia confirmada' : 'Falso positivo') + '</span> '
         + (c.decision === 'CONFIRMADA' && esPEP ? 'Estatus PEP: ' + capEsc(c.estatus_pep || '') + '. ' : '')
+        + (c.decision === 'CONFIRMADA' && esPEP && c.pep_datos
+            ? 'Cargo: ' + capEsc(c.pep_datos.pep_cargo || '') + ', ' + capEsc(c.pep_datos.pep_dependencia || '')
+              + ', desde el ' + capEsc(c.pep_datos.pep_fecha_inicio || '') + (c.pep_datos.pep_fecha_fin ? ' hasta el ' + capEsc(c.pep_datos.pep_fecha_fin) : '')
+              + '; ingreso mensual ' + fmtMXN(parseFloat(c.pep_datos.pep_ingreso_mensual) || 0) + '. '
+            : '')
         + (c.decision === 'CONFIRMADA' && !esPEP ? 'Cliente bloqueado. ' : '')
         + capEsc(c.fundamento || '') + ' <span style="color:var(--tx3)">(' + capEsc(c.resuelto_por || '') + ', ' + capEsc(c.fecha || '') + ')</span></div>';
     } else if (esAdmin) {
       cuerpo = '<div class="fgrid" style="margin-top:6px">'
         + (esPEP
-            ? '<div class="fg"><label class="lbl">Estatus PEP si se confirma</label><select class="sel" id="scr-pep-' + i + '">'
+            ? '<div class="fg"><label class="lbl">Estatus PEP si se confirma' + ayudaEstatusPEP() + '</label><select class="sel" id="scr-pep-' + i + '">'
               + ESTATUS_PEP_CONFIRMABLE.map(function(o){ return '<option value="' + o + '"' + (o === estatusPEPDeLista(c) ? ' selected' : '') + '>' + o + '</option>'; }).join('')
               + '</select></div>'
+              + camposCargoScr(c, i)
             : '')
         + '<div class="fg full"><label class="lbl">Fundamento de la decision <span class="req">*</span></label>'
         + '<textarea class="txa" id="scr-fund-' + i + '" rows="2" placeholder="Por que es o no es la misma persona: fecha de nacimiento, CURP, RFC, cargo, fuente consultada"></textarea></div>'
@@ -9978,12 +10065,51 @@ function seccionResolucionScr(a) {
     + '<div class="card-b">' + filas + '</div></div>';
 }
 
+// Articulo 23 Bis 3: al confirmar una coincidencia PEP, quien la resuelve
+// captura el cargo y el ingreso; pasan directo al expediente (ver
+// resolverCoincidencia). El cargo viene precargado de la lista.
+function camposCargoScr(c, i) {
+  var txt = function(id, lbl, v, ph){
+    return '<div class="fg"><label class="lbl">' + lbl + ' <span class="req">*</span></label><input class="inp" id="' + id + i + '" value="' + capEsc(v || '') + '" placeholder="' + (ph || '') + '"'
+      + (ph === 'DD-MM-AAAA' ? ' maxlength="10" oninput="autoFechaDMY(this)"' : ' oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"') + '></div>';
+  };
+  return '<div class="fg"></div>'
+    + '<div class="fg full" style="font-size:12px;font-weight:600;color:var(--tx1);margin-top:4px">Cargo del PEP (se pide al confirmar y pasa al expediente)</div>'
+    + txt('scr-cargo-', 'Cargo', String(c.cargo || '').toUpperCase(), '')
+    + txt('scr-dep-', 'Dependencia o entidad donde esta adscrito', '', '')
+    + txt('scr-fini-', 'Fecha de inicio del cargo', '', 'DD-MM-AAAA')
+    + '<div class="fg"><label class="lbl">Fecha de fin del cargo</label><input class="inp" id="scr-ffin-' + i + '" placeholder="DD-MM-AAAA" maxlength="10" oninput="autoFechaDMY(this)">'
+    + '<span class="fhint">Vacia si sigue en el cargo; obligatoria si es Inactivo o Vencido.</span></div>'
+    + '<div class="fg"><label class="lbl">Ingreso mensual declarado (MXN) <span class="req">*</span></label><input class="inp mono" type="number" min="0" step="0.01" id="scr-ing-' + i + '" placeholder="0.00"></div>';
+}
+function leerCargoScr(i, estatus) {
+  var v = function(id){ var el = document.getElementById(id + i); return el ? String(el.value || '').trim() : ''; };
+  var d = { pep_cargo: v('scr-cargo-').toUpperCase(), pep_dependencia: v('scr-dep-').toUpperCase(), pep_fecha_inicio: v('scr-fini-'),
+            pep_fecha_fin: v('scr-ffin-'), pep_ingreso_mensual: v('scr-ing-') };
+  var err = [];
+  if (!d.pep_cargo) err.push('el cargo');
+  if (!d.pep_dependencia) err.push('la dependencia');
+  if (!fechaXML(d.pep_fecha_inicio)) err.push('la fecha de inicio del cargo');
+  if ((estatus === 'Inactivo' || estatus === 'Vencido') && !fechaXML(d.pep_fecha_fin)) err.push('la fecha de fin del cargo (el estatus es ' + estatus + ')');
+  if (!((parseFloat(d.pep_ingreso_mensual) || 0) > 0)) err.push('el ingreso mensual');
+  if (err.length) return { error: 'Para confirmar la coincidencia PEP falta ' + err.join(', ') + '.' };
+  var fi = fechaXML(d.pep_fecha_inicio), ff = fechaXML(d.pep_fecha_fin);
+  if (fi > hoy().replace(/-/g, '')) return { error: 'La fecha de inicio del cargo no puede ser posterior a hoy.' };
+  if (ff && ff < fi) return { error: 'La fecha de fin del cargo no puede ser anterior a la de inicio.' };
+  return { datos: d };
+}
+
 function resolverCoincidencia(alertaId, i, decision) {
   if (App.rol !== 'admin') { toast('Solo un administrador puede resolver coincidencias', 'e'); return; }
   var fundEl = document.getElementById('scr-fund-' + i);
   var fundamento = fundEl ? fundEl.value.trim() : '';
   if (!fundamento) { toast('Escribe el fundamento de la decision', 'e'); if (fundEl) fundEl.focus(); return; }
   var pepEl = document.getElementById('scr-pep-' + i);
+  var cargoScr = null;
+  if (decision === 'CONFIRMADA' && pepEl) {
+    cargoScr = leerCargoScr(i, pepEl.value);
+    if (cargoScr.error) { toast(cargoScr.error, 'e'); return; }
+  }
   spGetUno('PLD_Alertas', alertaId, function(a) {
     if (!a) { toast('Alerta no encontrada', 'e'); return; }
     var lista = _coincidenciasAlerta(a), c = lista[i];
@@ -10004,11 +10130,30 @@ function resolverCoincidencia(alertaId, i, decision) {
       };
       var cambios = {};
       cambios.scr_resoluciones = (cli.scr_resoluciones || []).filter(function(r){ return r.clave !== res.clave; }).concat([res]);
+      var avisoPep = '';
+      if (decision === 'CONFIRMADA' && esPEP && cargoScr) res.pep_datos = cargoScr.datos;
       if (decision === 'CONFIRMADA' && esPEP && res.parte === 'Cliente') {
         cambios.estatus_pep = res.estatus_pep;
         cambios.pep_origen = 'listas';
         cambios.pep_confirmado_por = quien;
         cambios.pep_confirmado_fecha = hoy();
+        if (res.pep_datos) Object.assign(cambios, res.pep_datos);
+      } else if (decision === 'CONFIRMADA' && esPEP && res.pep_datos && ['PM_MEX', 'PM_SIMP', 'FIDEICOMISO'].indexOf(cli.tipo) >= 0) {
+        // Persona moral o fideicomiso: la persona confirmada pasa a ser el PEP
+        // del expediente, salvo que ya tenga registrada a otra.
+        if (!cli.pep_persona || scrNorm(cli.pep_persona) === scrNorm(res.nombre_evaluado)) {
+          Object.assign(cambios, res.pep_datos, { pep_persona: res.nombre_evaluado, pep_persona_parte: res.parte });
+          if (!cli.estatus_pep || cli.estatus_pep === 'NO APLICA') {
+            cambios.estatus_pep = res.estatus_pep;
+            cambios.pep_origen = 'listas';
+            cambios.pep_confirmado_por = quien;
+            cambios.pep_confirmado_fecha = hoy();
+          }
+        } else {
+          avisoPep = '. El expediente ya tiene registrada a ' + cli.pep_persona + ' como PEP: el cargo de esta persona queda en la resolucion';
+        }
+      } else if (decision === 'CONFIRMADA' && esPEP && res.pep_datos) {
+        avisoPep = '. El cargo de esta persona queda en la resolucion';
       }
       if (decision === 'CONFIRMADA' && !esPEP) {
         cambios.estatus = 'Bloqueado';
@@ -10016,13 +10161,15 @@ function resolverCoincidencia(alertaId, i, decision) {
         cambios.bloqueo_scr = { parte: res.parte, nombre: res.nombre_evaluado, lista: res.lista, uid: res.uid, por: quien, fecha: hoy(), fundamento: fundamento };
       }
       var cli2 = Object.assign({}, cli, cambios);
-      aplicarRiesgo(cambios, calcEBR(cli2));
+      var r = calcEBR(cli2);
+      aplicarRiesgo(cambios, r);
       spPatch('PLD_Clientes', cli.id, cambios, function(okC) {
         if (!okC || okC.error) { toast('No se pudo actualizar el expediente', 'e'); return; }
         if ((cli.riesgo || '') !== (cambios.riesgo || ''))
           registrarHistorialRiesgo('Resolucion de screening', cli, Object.assign({}, cli, cambios),
             { coincidencia: res.lista + ' · ' + (res.nombre_evaluado || '') + ' · ' + decision, justificacion: fundamento });
         c.decision = decision; c.estatus_pep = res.estatus_pep; c.fundamento = fundamento; c.resuelto_por = quien; c.fecha = res.fecha;
+        if (res.pep_datos) c.pep_datos = res.pep_datos;
         var camposA = { coincidencias_scr: JSON.stringify(lista) };
         var pend = lista.filter(function(x){ return !x.decision; }).length;
         if (decision === 'CONFIRMADA' && !esPEP) {
@@ -10036,7 +10183,7 @@ function resolverCoincidencia(alertaId, i, decision) {
           (App.clientes || []).forEach(function(x){ if (String(x.id) === String(cli.id)) Object.assign(x, cambios); });
           toast((decision === 'FALSO_POSITIVO' ? 'Falso positivo registrado'
                  : esPEP ? 'Coincidencia PEP confirmada' : 'Coincidencia confirmada: cliente BLOQUEADO')
-                + '. Riesgo: ' + r.nivel + (r.motivo ? ' (' + r.motivo + ')' : ''), decision === 'FALSO_POSITIVO' ? 's' : 'w');
+                + avisoPep + '. Riesgo: ' + r.nivel + (r.motivo ? ' (' + r.motivo + ')' : ''), decision === 'FALSO_POSITIVO' ? 's' : 'w');
           verAlerta(a.id);
         });
       });
