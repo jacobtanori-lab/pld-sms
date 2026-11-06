@@ -4346,7 +4346,8 @@ function ebrMatrizReglasHtml() {
       + g.titulo + '<span style="font-weight:400;color:var(--tx3);margin-left:8px">' + g.nota + '</span></td></tr>';
     rs.forEach(function(r){
       filas += '<tr><td style="font-size:13px;color:var(--tx2);min-width:240px">' + capEsc(textoRegla(r, op, cfg))
-        + (r.n ? '<div style="font-size:11px;color:var(--tx3)">' + capEsc(r.n) + '</div>' : '') + '</td>';
+        + (r.n ? '<div style="font-size:11px;color:var(--tx3)">' + capEsc(r.n) + '</div>' : '')
+        + (etiquetaRegla(r.id) ? '<div style="font-size:11px;color:var(--az)">' + capEsc(etiquetaRegla(r.id)) + '</div>' : '') + '</td>';
       cols.forEach(function(t){
         if (!reglaAplica(r, op, t)) {
           filas += '<td style="text-align:center;color:var(--tx3)" title="El expediente de este tipo de persona no tiene el dato">—</td>';
@@ -4476,6 +4477,7 @@ function pgConfigEBRReglas() {
     + numDec('pep_veces_arr', cfg.pep_veces_arr) + '<span style="font-size:12px;color:var(--tx3)">veces en arrendamiento</span></div>'
     + '</div></div>'
 
+    + ebrCoberturaHtml()
     + ebrActividadesHtml('Una actividad listada activa la regla "Actividad economica de alto riesgo".')
 
     + '<div class="card"><div class="card-h"><span class="card-t">Estado del domicilio</span>'
@@ -4505,6 +4507,8 @@ function pgConfigEBRReglas() {
     + '<div class="fg"><label class="lbl">Actividad economica</label><select class="sel" id="sim-act">'
     + '<option value="">Normal (no listada como alto riesgo)</option><option value="__alto__">En lista de alto riesgo</option></select></div>'
     + '<div class="fg"><label class="lbl">Dueño beneficiario</label><select class="sel" id="sim-db"><option value="NO">No declarado</option><option value="SI">Declarado</option></select></div>'
+    + '<div class="fg"><label class="lbl">Organizacion sin fines de lucro (persona moral)</label>' + siNo('sim-osfl') + '</div>'
+    + '<div class="fg"><label class="lbl">Opera a traves de un intermediario</label>' + siNo('sim-interm') + '</div>'
     + '<div class="fg"><label class="lbl">Edad (persona fisica)</label><input class="inp mono" id="sim-edad" type="number" min="0" max="130" value="35" style="width:90px"></div>'
     + '<div class="fg"><label class="lbl">Antigüedad en años (moral o fideicomiso)</label><input class="inp mono" id="sim-antig" type="number" min="0" max="200" value="10" style="width:90px"></div>'
     + '<div class="fg full" style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-top:6px">Perfil transaccional</div>'
@@ -4909,6 +4913,8 @@ function ebrSimMock() {
     mock.ptx_cv_contrapartes = v('sim-contra');
   }
   mock.pep_extranjero = v('sim-pepext') === 'SI' ? 'SI' : 'NO';
+  mock.es_osfl = v('sim-osfl') === 'SI' ? 'SI' : 'NO';
+  mock.canal_operacion = v('sim-interm') === 'SI' ? 'INTERMEDIARIO' : 'DIRECTA';
   mock.pep_ingreso_mensual = v('sim-ing');
   mock.ptx_monto_max_mensual = v('sim-mes');
   mock._reval = { desv: v('sim-desv') === 'SI', efNoDecl: v('sim-efnd') === 'SI' };
@@ -7254,6 +7260,7 @@ var REGLAS_EBR = [
 
   { id: 'act', g: 'est', ops: R_AMB, tipos: ['PF', 'PM'], def: 'Medio', t: 'Actividad económica de alto riesgo', n: 'Según el catálogo de actividades de alto riesgo', c: function(p){ return p.act; } },
   { id: 'db', g: 'est', ops: R_AMB, tipos: R_C3, def: 'Medio', t: 'Dueño beneficiario declarado, sin PEP activo, inactivo, familiar o relacionado', c: function(p){ return p.db && !p.pepAFR; } },
+  { id: 'osfl', g: 'est', ops: R_AMB, tipos: ['PM'], def: 'Medio', t: 'Organizacion sin fines de lucro (asociacion civil, fundacion, institucion de asistencia privada o donataria autorizada)', n: 'Recomendacion 8 del GAFI: riesgo de financiamiento al terrorismo', c: function(p){ return p.osfl; } },
   { id: 'pm_joven', g: 'est', ops: R_AMB, tipos: ['PM'], def: 'Medio', t: function(c){ return 'Persona moral con menos de ' + c.anios_joven + ' años de constituida'; }, c: function(p){ return p.joven; } },
   { id: 'fid_joven', g: 'est', ops: R_AMB, tipos: ['FID'], def: 'Agravante', t: function(c){ return 'Fideicomiso con menos de ' + c.anios_joven + ' años de constituido'; }, c: function(p){ return p.joven; } },
   { id: 'edad', g: 'est', ops: R_AMB, tipos: ['PF'], def: 'Agravante', t: function(c){ return 'Menor de ' + c.edad_min + ' o mayor de ' + c.edad_max + ' años'; }, c: function(p){ return p.edad; } },
@@ -7270,6 +7277,7 @@ var REGLAS_EBR = [
   { id: 't_div', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Medio', t: 'Pago en una divisa distinta de pesos o dólares', c: function(p){ return p.moneda === 'OTRA'; } },
   { id: 't_usd', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Agravante', t: 'Pago en dólares', c: function(p){ return p.moneda === 'USD'; } },
   { id: 't_terc', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Medio', t: { cv: 'Precio pagado desde cuentas de terceros', arr: 'Renta pagada por un tercero' }, c: function(p){ return p.terceros; } },
+  { id: 't_interm', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Agravante', t: 'Opera a traves de un intermediario', n: 'Comisionista, broker o apoderado que actua entre el cliente y la empresa', c: function(p){ return p.intermediario; } },
   { id: 't_vol', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Agravante', t: { cv: 'Más de 5 operaciones', arr: 'Más de una operación por periodo' }, c: function(p){ return p.volumen; } },
   { id: 'arr_anual', g: 'tx', ops: ['arr'], tipos: R_C4, def: 'Agravante', t: 'Pago anual por adelantado', c: function(p){ return p.anual; } },
 
@@ -7289,6 +7297,42 @@ var REGLAS_EBR = [
   { id: 'r_ef', g: 'rv', ops: R_AMB, tipos: R_C4, def: 'Medio', t: 'Usó efectivo sin haberlo declarado', c: function(p){ return p.efNoDecl; } }
 ];
 
+// Articulo 10 Septies 1, ultimo parrafo: cada regla es un indicador de uno de
+// los cuatro elementos de riesgo (fr. I) y de lavado (art. 400 Bis CPF),
+// financiamiento al terrorismo (art. 139 Quater CPF) o ambos.
+var ELEMENTOS_RIESGO = { a: 'Actos u operaciones', b: 'Tipo de clientes', c: 'Paises y areas geograficas', d: 'Transacciones y canales' };
+var DELITOS_RIESGO = { LD: 'Lavado (art. 400 Bis)', FT: 'Financiamiento al terrorismo (art. 139 Quater)' };
+var ETIQUETAS_REGLA = {
+  pep_afr: ['b', 'LD'], pep_iv: ['b', 'LD'], pep_roja: ['b', 'LD'], pep_inter: ['b', 'LD'], pep_db: ['b', 'LD'], pep_ext: ['b', 'LD'],
+  geo_csnu: ['c', 'LD,FT'], geo_vig: ['c', 'LD,FT'], geo_fiscal: ['c', 'LD'], geo_roja: ['c', 'LD'], geo_ext: ['c', 'LD'], geo_rel: ['c', 'LD,FT'],
+  act: ['b', 'LD'], db: ['b', 'LD'], osfl: ['b', 'FT'], pm_joven: ['b', 'LD'], fid_joven: ['b', 'LD'], edad: ['b', 'LD'],
+  c_act_geo: ['b,c', 'LD'], c_pm_db: ['b', 'LD'],
+  cv_ef_menor: ['a', 'LD,FT'], cv_ef_mitad: ['a', 'LD,FT'], arr_ef_ocas: ['a', 'LD,FT'], arr_ef_hab: ['a', 'LD,FT'],
+  t_otro: ['a', 'LD'], t_her: ['a', 'LD'], t_div: ['d', 'LD'], t_usd: ['d', 'LD'], t_terc: ['d', 'LD,FT'], t_interm: ['d', 'LD'],
+  t_vol: ['a', 'LD'], arr_anual: ['a', 'LD'],
+  c_ef_terc: ['a,d', 'LD,FT'], c_ef_otro: ['a', 'LD'], c_div_terc: ['d', 'LD,FT'], c_pep_ingreso: ['a', 'LD'],
+  r_desv: ['a', 'LD,FT'], r_ef: ['a', 'LD,FT']
+};
+function etiquetaRegla(id) {
+  var e = ETIQUETAS_REGLA[id];
+  if (!e) return '';
+  return e[0].split(',').map(function(k){ return k + ') ' + ELEMENTOS_RIESGO[k]; }).join(' y ')
+    + ' · ' + e[1].split(',').map(function(k){ return k === 'LD' ? 'lavado' : 'terrorismo'; }).join(' y ');
+}
+// Cuantas reglas cubren cada elemento para cada delito.
+function ebrCoberturaHtml() {
+  var celda = function(el, de){
+    var rs = REGLAS_EBR.filter(function(r){ var e = ETIQUETAS_REGLA[r.id]; return e && e[0].split(',').indexOf(el) >= 0 && e[1].split(',').indexOf(de) >= 0; });
+    return '<td style="text-align:center' + (rs.length ? '' : ';background:var(--am3);color:var(--am);font-weight:600') + '" title="'
+      + capEsc(rs.map(function(r){ return textoRegla(r, r.ops[0]); }).join('\n')) + '">' + rs.length + '</td>';
+  };
+  return '<div class="card"><div class="card-h"><span class="card-t">Indicadores por elemento y delito</span>'
+    + '<span style="font-size:12px;color:var(--tx3)">Art. 10 Septies 1, ultimo parrafo</span></div><div class="card-b">'
+    + '<div style="font-size:12px;color:var(--tx3);margin-bottom:8px;line-height:1.6">Numero de reglas que funcionan como indicador de cada delito en cada elemento de riesgo. Pasa el cursor sobre un numero para ver las reglas; en amarillo, un cruce sin indicadores.</div>'
+    + '<div class="twrap"><table><thead><tr><th>Elemento</th><th style="text-align:center">' + DELITOS_RIESGO.LD + '</th><th style="text-align:center">' + DELITOS_RIESGO.FT + '</th></tr></thead><tbody>'
+    + Object.keys(ELEMENTOS_RIESGO).map(function(k){ return '<tr><td>' + k + ') ' + ELEMENTOS_RIESGO[k] + '</td>' + celda(k, 'LD') + celda(k, 'FT') + '</tr>'; }).join('')
+    + '</tbody></table></div></div></div>';
+}
 function reglaAplica(r, op, tipo) { return r.ops.indexOf(op) >= 0 && r.tipos.indexOf(tipo) >= 0; }
 function fmtVecesRegla(n) { n = Number(n) || 0; return (Math.round(n * 100) / 100).toLocaleString('es-MX') + (n === 1 ? ' vez' : ' veces'); }
 function textoRegla(r, op, cfg) {
@@ -7435,6 +7479,8 @@ function perfilRiesgo(d) {
 
   // Estructura.
   p.db = d.tiene_dueno_ben === 'SI';
+  p.osfl = p.tipo === 'PM' && d.es_osfl === 'SI';
+  p.intermediario = d.canal_operacion === 'INTERMEDIARIO';
   var actCod = String(d.actividad_scian || d.actividad_pf || '');
   p.act = !!actCod && (CFG_EBR.actividades_alto_riesgo || []).indexOf(actCod) >= 0;
   var anios = edadDesde(d.fecha_const);
@@ -7943,13 +7989,14 @@ var LISTA_HIST = 'PLD_HistorialRiesgo';
 var CAMPOS_PTX_HIST = ['es_arrendamiento', 'ptx_arr_pago', 'ptx_arr_numops', 'ptx_arr_frec', 'renta_monto', 'renta_moneda',
   'ptx_arr_efectivo', 'ptx_arr_origen', 'ptx_arr_origen_otro', 'ptx_cv_pago', 'ptx_cv_numops', 'ptx_cv_moneda',
   'ptx_cv_contrapartes', 'ptx_cv_efectivo_mxn', 'ptx_cv_origen', 'ptx_cv_origen_otro', 'ptx_monto_max_mensual', 'razon_opera_mx', 'razon_opera_mx_otro',
+  'canal_operacion', 'canal_intermediario',
   'pep_ingreso_mensual'];
 var ETQ_PTX_HIST = { es_arrendamiento: 'tipo de operacion', ptx_arr_pago: 'tipo de pago', ptx_arr_numops: 'operaciones por periodo',
   ptx_arr_frec: 'frecuencia', renta_monto: 'renta', renta_moneda: 'moneda de la renta', ptx_arr_efectivo: 'uso de efectivo',
   ptx_arr_origen: 'origen de los recursos', ptx_arr_origen_otro: 'origen de los recursos', ptx_cv_pago: 'tipo de pago',
   ptx_cv_numops: 'numero de operaciones', ptx_cv_moneda: 'moneda de pago', ptx_cv_contrapartes: 'contrapartes',
   ptx_cv_efectivo_mxn: 'monto en efectivo', ptx_cv_origen: 'origen de los recursos', ptx_cv_origen_otro: 'origen de los recursos',
-  ptx_monto_max_mensual: 'monto maximo mensual',
+  ptx_monto_max_mensual: 'monto maximo mensual', canal_operacion: 'forma en que opera', canal_intermediario: 'intermediario',
   razon_opera_mx: 'razon para operar en Mexico', razon_opera_mx_otro: 'razon para operar en Mexico',
   pep_ingreso_mensual: 'ingreso mensual declarado del PEP' };
 
@@ -7995,6 +8042,7 @@ function fmtCampoPtx(k, o) {
               ptx_cv_contrapartes: PTX_CONTRAPARTES, ptx_cv_origen: PTX_ORIGEN, razon_opera_mx: RAZON_OPERA_MX }[k];
   if (k === 'renta_monto' || k === 'ptx_cv_efectivo_mxn' || k === 'ptx_monto_max_mensual' || k === 'pep_ingreso_mensual') return fmtMXN(v);
   if (k === 'renta_moneda') return v === 'USD' ? 'USD - Dolares' : 'MXN - Pesos';
+  if (k === 'canal_operacion') return ptxEtiqueta(CANALES_OPERACION, v) + (v === 'INTERMEDIARIO' && o.canal_intermediario ? ': ' + o.canal_intermediario : '');
   var t = cat ? ptxEtiqueta(cat, v) : String(v);
   var otro = { ptx_arr_origen: 'ptx_arr_origen_otro', ptx_cv_origen: 'ptx_cv_origen_otro', razon_opera_mx: 'razon_opera_mx_otro' }[k];
   if (otro && v === 'OTRO' && o[otro]) t += ': ' + o[otro];
@@ -8002,10 +8050,10 @@ function fmtCampoPtx(k, o) {
 }
 var FILAS_PTX_ARR = [['ptx_arr_pago', 'Tipo de pago'], ['ptx_arr_numops', 'Operaciones por periodo'], ['ptx_arr_frec', 'Frecuencia'],
   ['renta_monto', 'Renta'], ['renta_moneda', 'Moneda de la renta'], ['ptx_arr_efectivo', 'Uso de efectivo'],
-  ['ptx_arr_origen', 'Origen de los recursos'], ['ptx_monto_max_mensual', 'Monto maximo mensual'], ['razon_opera_mx', 'Razon para operar en Mexico']];
+  ['ptx_arr_origen', 'Origen de los recursos'], ['ptx_monto_max_mensual', 'Monto maximo mensual'], ['canal_operacion', 'Forma en que opera'], ['razon_opera_mx', 'Razon para operar en Mexico']];
 var FILAS_PTX_CV = [['ptx_cv_pago', 'Tipo de pago'], ['ptx_cv_numops', 'Numero de operaciones'], ['ptx_cv_moneda', 'Moneda de pago'],
   ['ptx_cv_contrapartes', 'Contrapartes'], ['ptx_cv_efectivo_mxn', 'Monto en efectivo'], ['ptx_cv_origen', 'Origen de los recursos'],
-  ['ptx_monto_max_mensual', 'Monto maximo mensual'], ['razon_opera_mx', 'Razon para operar en Mexico']];
+  ['ptx_monto_max_mensual', 'Monto maximo mensual'], ['canal_operacion', 'Forma en que opera'], ['razon_opera_mx', 'Razon para operar en Mexico']];
 var MONTOS_PTX = { ptx_cv_efectivo_mxn: 1, ptx_monto_max_mensual: 1 };
 // Una diferencia entre lo operado y lo declarado vigente: en montos, solo si lo
 // operado es mayor; en lo demas, si no coincide.
@@ -8401,6 +8449,9 @@ var PTX_MONEDA     = [['MXN','MXN - Pesos'],['USD','USD - Dolares'],['OTRA','Otr
 // Razon por la que el cliente celebra actos u operaciones en Mexico. Se pide a
 // los clientes de riesgo Alto por pais (lista gris del GAFI o regimen fiscal
 // preferente) y a los PEP extranjeros: articulo 23 Bis 4, segundo parrafo.
+// Canal por el que opera el cliente (art. 10 Septies 1 fr. I, inciso d). No
+// hay alta remota: el expediente siempre se integra en persona.
+var CANALES_OPERACION = [['DIRECTA','Directamente con el cliente'],['INTERMEDIARIO','A traves de un intermediario (comisionista, broker o apoderado)']];
 var RAZON_OPERA_MX = [['NEG_PERSONALES','Negocios personales'],['NEG_EMPRESARIALES','Negocios empresariales'],['INVERSIONES','Inversiones'],
   ['VIVIENDA','Vivienda para residir en Mexico'],['SEGUNDA_RESIDENCIA','Segunda residencia o uso vacacional'],
   ['PATRIMONIO_FAMILIAR','Patrimonio familiar'],['RETIRO','Retiro o jubilacion en Mexico'],
@@ -8468,6 +8519,10 @@ function htmlPerfilTx(d) {
     // Articulo 23 Ter 1: el perfil inicial incluye los montos maximos mensuales
     // que el cliente estima operar; se comparan con lo operado.
     + fg('Monto maximo mensual que estima operar (MXN)', null, true) + num('ptx_monto_max_mensual', d.ptx_monto_max_mensual, '0.00')
+    + fg('Forma en que opera', null, true) + sel('canal_operacion', CANALES_OPERACION, d.canal_operacion || 'DIRECTA',
+        ' onchange="var v=this.value;document.querySelectorAll(\'.canal-int\').forEach(function(e){e.style.display=(v===\'INTERMEDIARIO\'?\'\':\'none\');})"')
+    + '<div class="fg canal-int" style="' + (d.canal_operacion === 'INTERMEDIARIO' ? '' : 'display:none') + '"><label class="lbl">Nombre del intermediario <span class="req">*</span></label>'
+    + '<input class="inp" name="canal_intermediario" value="' + capEsc(d.canal_intermediario || '') + '" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>'
     + '</div>'
     // Solo aparece cuando el expediente tiene un pais de la lista gris del GAFI
     // o con regimen fiscal preferente, o un PEP extranjero (actualizarRazonMx).
@@ -8664,6 +8719,10 @@ function htmlFormPM_MEX(d) {
     +fg('Fecha de constitucion',null,true)+fi('fecha_const',d.fecha_const||'','DD-MM-AAAA')
     +fg('Pais de nacionalidad',null,true)+fs('pais_nac',optsPais(d.pais_nac||'MEXICO'))
     +fg('Giro mercantil / actividad u objeto social (catalogo SAT)',null,true)+'<select class="sel" name="actividad_scian">'+optsGiroPM(d.actividad_scian||'1000000')+'</select></div>'
+    +fg('Es una organizacion sin fines de lucro',null,true)+'<select class="sel" name="es_osfl">'
+    +'<option value="NO"'+(d.es_osfl!=='SI'?' selected':'')+'>NO</option>'
+    +'<option value="SI"'+(d.es_osfl==='SI'?' selected':'')+'>SI - asociacion civil, fundacion, institucion de asistencia privada o donataria autorizada</option>'
+    +'</select></div>'
     +fg('Numero(s) de telefono',null,true)+fi('telefono',d.telefono||'','10 digitos')
     +fg('Clave pais telefono (ISO)',null,false)+fi('tel_clave_pais',d.tel_clave_pais||'MX','Ej: MX')
     +fg('Correo electronico',null,false)+fi('email',d.email||'','correo@dominio.com')
@@ -9169,6 +9228,8 @@ function validarCliente(frm, datos, tipo) {
   // vinculado a un pais de la lista gris del GAFI o con regimen fiscal
   // preferente se le pide por que opera en Mexico. Falta para estatus Activo.
   var pr23 = perfilRiesgo(datos);
+  if (datos.canal_operacion === 'INTERMEDIARIO' && !String(datos.canal_intermediario || '').trim())
+    faltan.push('Nombre del intermediario');
   if (pr23.pepExt || pr23.vig || pr23.fiscal || pr23.relGeo) {
     if (!datos.razon_opera_mx) faltan.push('Razon por la que celebra actos u operaciones en Mexico (art. 23 Bis 4)');
     else if (datos.razon_opera_mx === 'OTRO' && !String(datos.razon_opera_mx_otro || '').trim()) faltan.push('Especificar la razon por la que opera en Mexico');
@@ -9654,7 +9715,7 @@ function renderDatosGenerales(c) {
     campos = fgHtml(
       fcHtml('Razon social',c.razon_social)+fcHtml('RFC',c.rfc)
       +fcHtml('Fecha de constitucion',c.fecha_const)+fcHtml('Pais de nacionalidad',c.pais_nac)
-      +fcHtml('Giro mercantil',giroPMLabel(c.actividad_scian)||c.actividad)+fcHtml('Telefono',c.telefono)
+      +fcHtml('Giro mercantil',giroPMLabel(c.actividad_scian)||c.actividad)+fcHtml('Organizacion sin fines de lucro',c.es_osfl==='SI'?'SI':'NO')+fcHtml('Telefono',c.telefono)
       +fcHtml('Correo electronico',c.email)+fcHtml('Nombre de la identificacion',c.tipo_id)
       +fcHtml('No. identificacion',c.num_id)+fcHtml('Autoridad',c.autoridad_id)
       +fcHtml('Estatus PEP',c.estatus_pep)
@@ -13636,6 +13697,7 @@ function _nombresAScreening(datos) {
   if (datos.tiene_dueno_ben === 'SI')
     add('Dueño beneficiario', nom([datos.db_nombre, datos.db_ap_pat, datos.db_ap_mat]));
   add('Fiduciario', datos.fiduciario);
+  if (datos.canal_operacion === 'INTERMEDIARIO') add('Intermediario', datos.canal_intermediario);
   ['fte', 'fsa'].forEach(function(pref){
     var etq = pref === 'fte' ? 'Fideicomitente' : 'Fideicomisario', lista = partesFid(datos, pref);
     lista.forEach(function(p, i){ add(etq + (lista.length > 1 ? ' #' + (i + 1) : ''), p.nombre); });
