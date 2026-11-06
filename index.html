@@ -5347,6 +5347,16 @@ function bannerTipoCambio() {
 }
 
 // ── Pantalla de configuración: PERFIL TRANSACCIONAL ───────────
+// Margen de desviacion que toca a un cliente: menor si es de riesgo Alto, por
+// el monitoreo mas estricto que pide el articulo 23 Ter 3.
+function pctDesviacionDe(c) {
+  if (c && c.riesgo === 'Alto') {
+    var a = parseFloat(CFG_PERFIL.pct_desviacion_alto);
+    return isNaN(a) ? 10 : a;
+  }
+  return parseFloat(CFG_PERFIL.pct_desviacion) || 0;
+}
+
 function pgConfigPerfil() {
   var p = CFG_PERFIL;
   function num(id, val, min, max, step) {
@@ -5381,6 +5391,13 @@ function pgConfigPerfil() {
     +'<div class="card-b">'
     + fila('Desviacion permitida sobre la renta', 'Si el total del mes supera la renta esperada mas este porcentaje, se alerta.',
            num('pct_desviacion', p.pct_desviacion, 0, 1000), '%')
+    +'</div></div>'
+
+    +'<div class="card"><div class="card-h"><span class="card-t">Clientes de riesgo Alto</span>'
+    +'<span style="font-size:12px;color:var(--tx3)">Art. 23 Ter 3 · Monitoreo mas estricto</span></div>'
+    +'<div class="card-b">'
+    + fila('Desviacion permitida para clientes de riesgo Alto', 'Sustituye a la desviacion general en los clientes de riesgo Alto: en la alerta sobre la renta y en las desviaciones de la revaloracion.',
+           num('pct_desviacion_alto', (p.pct_desviacion_alto !== undefined ? p.pct_desviacion_alto : 10), 0, 1000), '%')
     +'</div></div>'
 
     +'<div class="card"><div class="card-h"><span class="card-t">Perfil transaccional inicial</span>'
@@ -5442,6 +5459,7 @@ function guardarPerfil() {
   CFG_PERFIL.max_operaciones = g('max_operaciones', CFG_PERFIL.max_operaciones);
   CFG_PERFIL.max_efectivo    = g('max_efectivo', CFG_PERFIL.max_efectivo);
   CFG_PERFIL.pct_desviacion  = g('pct_desviacion', CFG_PERFIL.pct_desviacion);
+  CFG_PERFIL.pct_desviacion_alto = Math.max(0, g('pct_desviacion_alto', CFG_PERFIL.pct_desviacion_alto !== undefined ? CFG_PERFIL.pct_desviacion_alto : 10));
   // La regla pide vigilar al menos los seis primeros meses.
   CFG_PERFIL.meses_inicial   = Math.max(6, Math.round(g('meses_inicial', CFG_PERFIL.meses_inicial)));
   CFG_PERFIL.pct_inicial     = Math.max(0, g('pct_inicial', CFG_PERFIL.pct_inicial));
@@ -6393,7 +6411,7 @@ function aplicarObservadoReval(c, ob) {
   if (!ob.n) return { datos: d, desv: desv };
   var mas = function(orden, a, b){ return orden.indexOf(a) > orden.indexOf(b); };
   var pesos = function(v){ return '$' + Math.round(v).toLocaleString('es-MX'); };
-  var pct = parseFloat(CFG_PERFIL.pct_desviacion) || 0;
+  var pct = pctDesviacionDe(c);
 
   if (c.es_arrendamiento === 'SI') {
     var ORD_EF = ['NUNCA', 'OCASIONAL', 'HABITUAL'];
@@ -6649,6 +6667,7 @@ function actualizarPerfilConOperado(i) {
   if (just.length < 10) { toast('Escribe una justificacion para actualizar el perfil', 'w'); return; }
   var c = e.c, antes = JSON.parse(JSON.stringify(c)), c2 = JSON.parse(JSON.stringify(c));
   asegurarPerfilOriginal(c2, antes);
+  activarDDR(c2, antes);
   Object.keys(e.operado.campos).forEach(function(k){ c2[k] = e.operado.campos[k]; });
   c2.perfil_tx_actualizado = { fecha: hoy(), usuario: App.cuenta ? App.cuenta.username : '', ciclo: R.ciclo.clave, justificacion: just };
   pensador('Actualizando el perfil declarado...');
@@ -6718,6 +6737,7 @@ function guardarReval(e, texto, cb) {
     if (!item) { cb(false); return; }
     var c2 = JSON.parse(JSON.stringify(c));
     aplicarRiesgo(c2, r);
+    activarDDR(c2, c);
     asegurarPerfilOriginal(c2, c);
     if (e.operado) c2.perfil_operado_ult = Object.assign({ ciclo: cic.clave }, e.operado);
     c2.ciclo_ult_revaluacion = cic.clave;
@@ -7494,6 +7514,236 @@ function aplicarRiesgo(obj, r) {
     obj.riesgo_reglas = ''; obj.riesgo_agravantes = ''; obj.riesgo_subio = '';
   }
   return obj;
+}
+
+// ── Debida diligencia reforzada (arts. 23 Ter 3, 4 y 5) ──
+// Se abre cuando el cliente queda en riesgo Alto, por alta, edicion,
+// revaloracion o resolucion de screening. Un cliente nuevo no se aprueba hasta
+// completarla; uno que ya operaba tiene 45 dias naturales, y despues cada
+// operacion nueva genera una alerta. Vale un anio, o hasta que cambie el perfil
+// transaccional. Vive en el expediente, en el campo ddr.
+var DDR_PLAZO_DIAS = 45, DDR_VIGENCIA_DIAS = 365;
+var DDR_ROLES = ['admin', 'supervisor'];
+var DDR_DESTINOS = [['HABITACION','Casa habitacion'],['RENTA','Renta a terceros'],['REVENTA','Reventa'],['OFICINAS','Oficinas o negocio propio'],['OTRO','Otro']];
+function sumarDias(iso, n) {
+  var d = new Date(String(iso).substring(0, 10) + 'T12:00:00');
+  if (isNaN(d.getTime())) d = new Date();
+  d.setDate(d.getDate() + n);
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+}
+// Estado de la debida diligencia de un cliente: aplica solo en riesgo Alto.
+function estadoDDR(c) {
+  if (!c || c.riesgo !== 'Alto') return { aplica: false, estado: '' };
+  var r = c.ddr || {}, h = hoy();
+  if (r.completada && r.completada.fecha) {
+    var vig = r.vigencia_hasta || sumarDias(r.completada.fecha, DDR_VIGENCIA_DIAS);
+    if (h > vig) {
+      var lim = sumarDias(vig, DDR_PLAZO_DIAS);
+      return { aplica: true, estado: 'vencida', limite: lim, plazoVencido: h > lim, motivo: 'La vigencia de un anio vencio el ' + vig + '.' };
+    }
+    return { aplica: true, estado: 'completa', vigencia: vig };
+  }
+  // Un expediente que ya era de riesgo Alto antes de este cambio no tiene fecha
+  // de inicio: el plazo corre desde su ultima revaloracion o su registro.
+  var desde = r.desde || c.fecha_ult_revaluacion || c.fecha_registro || h;
+  var lim2 = r.limite || sumarDias(desde, DDR_PLAZO_DIAS);
+  return { aplica: true, estado: 'pendiente', limite: lim2, plazoVencido: h > lim2, motivo: r.motivo || 'Cliente en riesgo Alto.' };
+}
+// Abre o renueva la debida diligencia al guardar un expediente. anterior es el
+// expediente antes del cambio (null en el alta).
+function activarDDR(obj, anterior) {
+  if (!obj || obj.riesgo !== 'Alto') return obj;
+  var r = obj.ddr, eraAlto = !!(anterior && anterior.riesgo === 'Alto');
+  var nuevo = !anterior || (anterior.aprobacion !== 'Aprobado' && anterior.estatus !== 'Activo');
+  var abrir = function(motivo){
+    var prev = r && (r.desde || r.completada) ? { desde: r.desde || '', completada: r.completada || null, vigencia_hasta: r.vigencia_hasta || '' } : null;
+    obj.ddr = { desde: hoy(), limite: sumarDias(hoy(), DDR_PLAZO_DIAS), motivo: motivo, alta: nuevo,
+                cuestionario: (r && r.cuestionario) || null, anterior: prev };
+  };
+  if (!r || !r.desde) { abrir('Cliente en riesgo Alto.'); return obj; }
+  var est = estadoDDR(obj);
+  if (!eraAlto && est.estado !== 'completa') { abrir('El cliente volvio a riesgo Alto.'); return obj; }
+  if (r.completada && r.perfil && cambiosPerfilTx(r.perfil, obj).length) { abrir('Cambio el perfil transaccional.'); return obj; }
+  return obj;
+}
+// Alerta en cada operacion de un cliente de riesgo Alto con el plazo vencido.
+function alertaDDROperacion(idCli, op) {
+  var c = null;
+  (App.clientes || []).forEach(function(x){ if (String(x.id) === String(idCli)) c = x; });
+  if (!c) return;
+  var est = estadoDDR(c);
+  if (!est.aplica || est.estado === 'completa' || !est.plazoVencido) return;
+  spCreate('PLD_Alertas', {
+    Title: 'ALT-DDR-' + Date.now(), nombre_cliente: nombreCliente(c), num_cliente: c.num_cliente || '', id_cliente_ref: c.id,
+    categoria: 'Riesgo', tipo: 'Debida diligencia reforzada vencida', nivel: 'Alto',
+    descripcion: 'Operacion del ' + (op.fecha_pago || '') + ' por ' + fmtMXN(op.total_operacion || op.monto || 0)
+      + ' con un cliente de riesgo Alto sin debida diligencia reforzada completa. El plazo vencio el ' + est.limite + ' (arts. 23 Ter 3 y 4).',
+    estatus: 'Abierta', estatus_atencion: 'Pendiente', asesor_id: c.asesor_id || '', asesor_nombre: c.asesor_nombre || '',
+    registrado_por: App.cuenta ? App.cuenta.username : '', fecha_registro: hoy(),
+    entidad_id: c.entidad_id || '', entidad_nombre: c.entidad_nombre || ''
+  }, null);
+}
+function pillDDR(c) {
+  var est = estadoDDR(c);
+  if (!est.aplica) return '';
+  if (est.estado === 'completa') return '<span class="pill p-vd" title="Vigente hasta ' + est.vigencia + '">Debida diligencia reforzada completa</span>';
+  return '<span class="pill ' + (est.plazoVencido ? 'p-rj' : 'p-am') + '">Debida diligencia reforzada ' + (est.estado === 'vencida' ? 'vencida' : 'pendiente')
+    + (est.plazoVencido ? ' · plazo vencido' : ' · plazo ' + est.limite) + '</span>';
+}
+
+// Pestana de la ficha: estado, cuestionario de identificacion y su firma.
+function renderDDR() {
+  var c = App.clienteActual, ct = document.getElementById('fd-ddr');
+  if (!c || !ct) return;
+  var est = estadoDDR(c), r = c.ddr || {}, q = r.cuestionario || {};
+  var editable = est.estado !== 'completa';
+  var banner;
+  if (!est.aplica) banner = '<div class="alerta-banner" style="background:var(--bg2);color:var(--tx2);border-color:var(--brd)">El cliente no es de riesgo Alto: la debida diligencia reforzada no aplica por ahora. Se conserva lo capturado.</div>';
+  else if (est.estado === 'completa') banner = '<div class="alerta-banner" style="background:var(--vd3);color:var(--vd);border-color:rgba(15,110,86,.15)"><span><strong>Completa.</strong> Vigente hasta el ' + est.vigencia
+    + ' o hasta que cambie el perfil transaccional. Completada por ' + capEsc((r.completada && r.completada.usuario) || '') + ' el ' + capEsc((r.completada && r.completada.fecha) || '') + '.</span></div>';
+  else banner = '<div class="alerta-banner"' + (est.plazoVencido ? ' style="background:var(--rj3);color:var(--rj);border-color:var(--rj)"' : '') + '><span><strong>'
+    + (est.estado === 'vencida' ? 'Vencida.' : 'Pendiente.') + '</strong> ' + capEsc(est.motivo || '')
+    + (est.plazoVencido ? ' El plazo de ' + DDR_PLAZO_DIAS + ' dias vencio el ' + est.limite + ': cada operacion nueva genera una alerta.'
+                        : ' Plazo para completarla: ' + est.limite + '.')
+    + (r.alta ? ' Es un cliente nuevo: no se puede aprobar hasta completarla.' : '') + '</span></div>';
+  var dis = editable ? '' : ' disabled';
+  var ta = function(k, lbl){ return '<div class="fg full"><label class="lbl">' + lbl + ' <span class="req">*</span></label><textarea class="txa" id="ddr-' + k + '" rows="2"' + dis + '>' + capEsc(q[k] || '') + '</textarea></div>'; };
+  var inp = function(k, lbl, ph){ return '<div class="fg"><label class="lbl">' + lbl + ' <span class="req">*</span></label><input class="inp" id="ddr-' + k + '" value="' + capEsc(q[k] || '') + '" placeholder="' + ph + '"' + dis + '></div>'; };
+  var destOpts = '<option value="">-- Seleccionar --</option>' + DDR_DESTINOS.map(function(o){ return '<option value="' + o[0] + '"' + (q.destino === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('');
+  var form = '<div class="sec-hdr" style="margin-top:14px">Cuestionario de identificacion (art. 23 Ter 3)</div><div class="fgrid">'
+    + ta('actividad', 'Actividad preponderante: descripcion')
+    + inp('antiguedad', 'Antiguedad en la actividad (anios)', '0')
+    + inp('ingreso', 'Ingreso mensual aproximado (MXN)', '0.00')
+    + ta('origen', 'Origen de los recursos de la operacion')
+    + inp('soporte', 'Documento que soporta el origen', 'Estado de cuenta, contrato de credito, escritura de venta...')
+    + '<div class="fg"><label class="lbl">Destino del inmueble <span class="req">*</span></label><select class="sel" id="ddr-destino"' + dis
+    + ' onchange="document.getElementById(\'ddr-destino-otro-w\').style.display=(this.value===\'OTRO\'?\'\':\'none\')">' + destOpts + '</select></div>'
+    + '<div class="fg" id="ddr-destino-otro-w" style="' + (q.destino === 'OTRO' ? '' : 'display:none') + '"><label class="lbl">Especifique el destino</label><input class="inp" id="ddr-destino_otro" value="' + capEsc(q.destino_otro || '') + '"' + dis + '></div>'
+    + ta('proposito', 'Proposito de la relacion con la empresa')
+    + '</div>';
+  var docTxt = r.documento
+    ? 'Cuestionario firmado: <strong>' + capEsc(r.documento.nombre || '') + '</strong>, subido el ' + capEsc(r.documento.fecha || '') + (r.documento.usuario ? ' por ' + capEsc(r.documento.usuario) : '') + '.'
+    : 'Todavia no se sube el cuestionario firmado.';
+  var acciones = '<div style="font-size:12px;color:var(--tx2);margin:10px 0">' + docTxt + ' La firma puede ser autografa o electronica; si el cuestionario se aplica a distancia debe llevar firma electronica (art. 23 Ter 3).</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    + (editable ? '<button class="btn" onclick="guardarCuestionarioDDR()">Guardar cuestionario</button>' : '')
+    + '<button class="btn" onclick="pdfCuestionarioDDR()">Descargar PDF para firma</button>'
+    + (editable ? '<label class="btn" style="cursor:pointer">Subir cuestionario firmado<input type="file" accept=".pdf,image/*" style="display:none" onchange="subirCuestionarioDDR(this)"></label>' : '')
+    + (editable && est.aplica && DDR_ROLES.indexOf(App.rol) >= 0 ? '<button class="btn btn-p" onclick="completarDDR()">Marcar como completa</button>' : '')
+    + '</div>'
+    + (editable && est.aplica && DDR_ROLES.indexOf(App.rol) < 0 ? '<div style="font-size:11px;color:var(--tx3);margin-top:6px">Un administrador o supervisor la marca como completa.</div>' : '');
+  ct.innerHTML = banner + form + acciones;
+}
+function leerCuestionarioDDR() {
+  var q = {};
+  ['actividad', 'antiguedad', 'ingreso', 'origen', 'soporte', 'destino', 'destino_otro', 'proposito'].forEach(function(k){
+    var el = document.getElementById('ddr-' + k);
+    q[k] = el ? String(el.value || '').trim() : '';
+  });
+  if (q.destino !== 'OTRO') q.destino_otro = '';
+  return q;
+}
+function faltantesCuestionarioDDR(q) {
+  var f = [];
+  [['actividad','actividad preponderante'],['antiguedad','antiguedad'],['ingreso','ingreso mensual'],['origen','origen de los recursos'],
+   ['soporte','documento de soporte'],['destino','destino del inmueble'],['proposito','proposito de la relacion']].forEach(function(x){ if (!q[x[0]]) f.push(x[1]); });
+  if (q.destino === 'OTRO' && !q.destino_otro) f.push('especificar el destino');
+  return f;
+}
+function patchDDR(c, r, msg, cb) {
+  spPatch('PLD_Clientes', c.id, { ddr: r }, function(ok){
+    if (!ok || ok.error) { toast('No se pudo guardar la debida diligencia reforzada', 'e'); return; }
+    c.ddr = r;
+    if (msg) toast(msg, 's');
+    renderDDR();
+    if (cb) cb();
+  });
+}
+function guardarCuestionarioDDR() {
+  var c = App.clienteActual; if (!c) return;
+  var r = JSON.parse(JSON.stringify(c.ddr || {}));
+  r.cuestionario = leerCuestionarioDDR();
+  r.cuestionario_fecha = hoy();
+  r.cuestionario_usuario = App.cuenta ? App.cuenta.username : '';
+  patchDDR(c, r, 'Cuestionario guardado');
+}
+function subirCuestionarioDDR(input) {
+  var c = App.clienteActual, file = input.files && input.files[0];
+  input.value = '';
+  if (!c || !file) return;
+  var nom = nombreCliente(c).replace(/[^a-zA-Z0-9_\-]/g, '_').substring(0, 40);
+  var carpeta = 'PLD_Documentos/' + nStr(c.num_cliente) + '_' + nom;
+  var nombre = 'Cuestionario_DDR_' + Date.now().toString(36) + '_' + file.name.replace(/[^a-zA-Z0-9._\-]/g, '_');
+  var ruta = carpeta.split('/').map(encodeURIComponent).join('/') + '/' + encodeURIComponent(nombre);
+  var q = leerCuestionarioDDR();
+  toast('Subiendo el cuestionario firmado...');
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    fetch(GRAPH + '/sites/' + App.siteId + '/drive/root:/' + ruta + ':/content',
+      { method: 'PUT', headers: { 'Authorization': 'Bearer ' + App.token, 'Content-Type': file.type || 'application/octet-stream' }, body: e.target.result })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (!d || !d.id) { toast('No se pudo subir el archivo', 'e'); return; }
+        var r = JSON.parse(JSON.stringify(c.ddr || {}));
+        r.cuestionario = q;
+        r.documento = { nombre: nombre, id: d.id, url: d.webUrl || '', fecha: hoy(), usuario: App.cuenta ? App.cuenta.username : '' };
+        patchDDR(c, r, 'Cuestionario firmado guardado en los documentos del cliente');
+      })
+      .catch(function(){ toast('No se pudo subir el archivo', 'e'); });
+  };
+  reader.readAsArrayBuffer(file);
+}
+function completarDDR() {
+  var c = App.clienteActual; if (!c) return;
+  if (DDR_ROLES.indexOf(App.rol) < 0) { sinAcceso(); return; }
+  var q = leerCuestionarioDDR(), falta = faltantesCuestionarioDDR(q), r0 = c.ddr || {};
+  if (falta.length) { toast('Falta en el cuestionario: ' + falta.join(', '), 'w'); return; }
+  if (!r0.documento) { toast('Sube el cuestionario firmado antes de marcarla como completa', 'w'); return; }
+  if (!confirm('¿Marcar como completa la debida diligencia reforzada de ' + nombreCliente(c) + '?\n\nQueda vigente un anio o hasta que cambie el perfil transaccional.')) return;
+  var r = { desde: r0.desde || hoy(), limite: r0.limite || '', motivo: r0.motivo || '', alta: !!r0.alta, anterior: r0.anterior || null,
+            cuestionario: q, documento: r0.documento,
+            completada: { fecha: hoy(), usuario: App.cuenta ? App.cuenta.username : '' },
+            vigencia_hasta: sumarDias(hoy(), DDR_VIGENCIA_DIAS), perfil: perfilTxDe(c) };
+  var antes = JSON.parse(JSON.stringify(c));
+  patchDDR(c, r, 'Debida diligencia reforzada completa', function(){
+    registrarHistorialRiesgo('Debida diligencia reforzada', antes, c, { justificacion: 'Cuestionario completo y firmado: ' + r0.documento.nombre, vigencia_hasta: r.vigencia_hasta });
+  });
+}
+// PDF del cuestionario ya llenado, para firmarlo.
+function pdfCuestionarioDDR() {
+  var c = App.clienteActual; if (!c) return;
+  var q = document.getElementById('ddr-actividad') ? leerCuestionarioDDR() : ((c.ddr || {}).cuestionario || {});
+  cargarJsPDF(function(){
+    if (!(window.jspdf && window.jspdf.jsPDF)) return;
+    var doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4' });
+    var L = 15, W = 180, y = 16;
+    var txt = function(s, size, bold){
+      doc.setFontSize(size); doc.setFont('helvetica', bold ? 'bold' : 'normal');
+      doc.splitTextToSize(String(s || ''), W).forEach(function(ln){ if (y > 280) { doc.addPage(); y = 16; } doc.text(ln, L, y); y += size * 0.45 + 0.8; });
+    };
+    var par = function(p, r){ txt(p, 10, true); txt(r || '________________________________________', 10, false); y += 2; };
+    var dest = DDR_DESTINOS.filter(function(o){ return o[0] === q.destino; })[0];
+    txt('Cuestionario de identificacion del cliente', 14, true);
+    txt('Debida diligencia reforzada para clientes de grado de riesgo alto (arts. 23 Ter 3 y 23 Ter 4 de las Reglas de la LFPIORPI)', 9, false);
+    y += 3;
+    txt('Cliente: ' + nombreCliente(c) + '    Numero: ' + nStr(c.num_cliente) + '    RFC: ' + (c.rfc || '-'), 10, false);
+    txt('Tipo: ' + labelTipo(c.tipo) + '    Entidad: ' + (c.entidad_nombre || '') + '    Fecha: ' + hoy(), 10, false);
+    y += 4;
+    par('1. Actividad preponderante', q.actividad);
+    par('2. Antiguedad en la actividad (anios)', q.antiguedad);
+    par('3. Ingreso mensual aproximado (MXN)', q.ingreso ? fmtMXN(q.ingreso) : '');
+    par('4. Origen de los recursos de la operacion', q.origen);
+    par('5. Documento que soporta el origen de los recursos', q.soporte);
+    par('6. Destino del inmueble', dest ? dest[1] + (q.destino === 'OTRO' && q.destino_otro ? ': ' + q.destino_otro : '') : '');
+    par('7. Proposito de la relacion con la empresa', q.proposito);
+    y += 4;
+    txt('Declaro bajo protesta de decir verdad que la informacion de este cuestionario es veridica y que los recursos de la operacion no provienen de actividades ilicitas.', 10, false);
+    y += 22;
+    doc.line(L, y, L + 75, y); doc.line(L + 105, y, L + W, y); y += 5;
+    txt('Firma del cliente o de su representante', 9, false);
+    doc.text('Nombre y firma de quien aplica el cuestionario', L + 105, y - 4.6);
+    doc.save('Cuestionario_DDR_' + nStr(c.num_cliente) + '.pdf');
+  });
 }
 
 // ── Historial del grado de riesgo ──
@@ -8871,7 +9121,7 @@ function submitCliente(tipo, idEx) {
   if (_orig) {
     ['scr_resoluciones','pep_origen','pep_confirmado_por','pep_confirmado_fecha','bloqueo_scr',
      'ciclo_ult_revaluacion','fecha_ult_revaluacion','curp_qr_url','curp_folio','curp_constancia_fecha','id_cif','rfc_qr_url',
-     'perfil_tx_original','perfil_operado_ult','perfil_tx_actualizado'
+     'perfil_tx_original','perfil_operado_ult','perfil_tx_actualizado','ddr','aprobado_por','aprobado_cargo','fecha_aprobacion'
     ].forEach(function(k){
       if ((datos[k] === undefined || datos[k] === '') && _orig[k] !== undefined) datos[k] = _orig[k];
     });
@@ -8908,6 +9158,7 @@ function submitCliente(tipo, idEx) {
   }
 
   aplicarRiesgo(datos, calcEBR(datos));
+  activarDDR(datos, _orig);
 
   // Asegurar que las listas de screening estén cargadas (última versión en SharePoint)
   // antes de cotejar — sin importar quién ni cuándo las cargó ese día.
@@ -9087,6 +9338,7 @@ function renderFicha(c) {
     +'<span style="font-family:monospace;font-size:13px;color:var(--tx3)">#'+nStr(c.num_cliente)+'</span>'
     +'<div class="ptit">'+nom+'</div>'
     +'<span class="pill '+pE(c.estatus)+'">'+(c.estatus||'-')+'</span>'
+    +pillDDR(c)
     +'<span class="pill '+pR(c.riesgo)+'">'+(c.riesgo||'-')+'</span>'
     +(c.riesgo_modelo === 'reglas'
         ? '<span class="pill p-gr" title="'+capEsc(c.riesgo_motivo||'')+'">Modelo por reglas</span>'
@@ -9127,6 +9379,7 @@ function renderFicha(c) {
     +'<div class="ftab" onclick="fichaTab(this,\'fd-ptx\');cargarOperadoFicha()">Perfil transaccional</div>'
     +'<div class="ftab" onclick="fichaTab(this,\'fd-scr\')">Screening</div>'
     +'<div class="ftab" onclick="fichaTab(this,\'fd-hist\');renderHistorialRiesgo(App.clienteActual)">Historial de riesgo</div>'
+    +((estadoDDR(c).aplica || c.ddr) ? '<div class="ftab" onclick="fichaTab(this,\'fd-ddr\');renderDDR()">Debida diligencia reforzada</div>' : '')
     +'</div>'
     +'<div class="card" style="border-radius:0 0 var(--rl) var(--rl)">'
     +'<div id="fd-datos" class="card-b">'+renderDatosGenerales(c)+'</div>'
@@ -9142,13 +9395,14 @@ function renderFicha(c) {
     +'<div id="fd-ptx" class="card-b" style="display:none">'+renderPerfilTx(c)+'</div>'
     +'<div id="fd-scr" class="card-b" style="display:none">'+renderResolucionesScr(c)+'</div>'
     +'<div id="fd-hist" class="card-b" style="display:none"></div>'
+    +'<div id="fd-ddr" class="card-b" style="display:none"></div>'
     +'</div>';
   setMain(html);
 }
 
 function fichaTab(el,id) {
   document.querySelectorAll('.ftab').forEach(function(t){t.classList.remove('on');}); el.classList.add('on');
-  ['fd-datos','fd-dom','fd-rl','fd-bcs','fd-fid','fd-df','fd-dom-ext','fd-duen','fd-docs','fd-ops','fd-ptx','fd-scr','fd-hist'].forEach(function(i){
+  ['fd-datos','fd-dom','fd-rl','fd-bcs','fd-fid','fd-df','fd-dom-ext','fd-duen','fd-docs','fd-ops','fd-ptx','fd-scr','fd-hist','fd-ddr'].forEach(function(i){
     var e=document.getElementById(i); if(e) e.style.display='none';
   });
   var t=document.getElementById(id); if(t) t.style.display='block';
@@ -10196,6 +10450,8 @@ function resolverCoincidencia(alertaId, i, decision) {
       var cli2 = Object.assign({}, cli, cambios);
       var r = calcEBR(cli2);
       aplicarRiesgo(cambios, r);
+      var cliDdr = activarDDR(Object.assign({}, cli, cambios), cli);
+      if (cliDdr.ddr && cliDdr.ddr !== cli.ddr) cambios.ddr = cliDdr.ddr;
       spPatch('PLD_Clientes', cli.id, cambios, function(okC) {
         if (!okC || okC.error) { toast('No se pudo actualizar el expediente', 'e'); return; }
         if ((cli.riesgo || '') !== (cambios.riesgo || ''))
@@ -10242,11 +10498,14 @@ function seccionAprobacionAlerta(a) {
     +fcHtml('Asesor comercial', a.asesor_nombre||'')
     +(a.comentario_aprobacion?fcHtml('Comentario de resolución', a.comentario_aprobacion):'')
     +(a.resuelto_por?fcHtml('Resuelto por', a.resuelto_por):'')
+    +(a.cargo_aprobador?fcHtml('Cargo de quien aprobo', a.cargo_aprobador):'')
     +'</div>';
   if (puedeAprobar) {
     h += '<div class="fgrid" style="margin-top:10px">'
       +'<div class="fg full"><label class="lbl">Comentario de aprobación / resolución <span class="req">*</span></label>'
       +'<textarea class="txa" id="apr-comentario" rows="3" placeholder="Fundamento de la decisión (obligatorio)"></textarea></div>'
+      +'<div class="fg"><label class="lbl">Cargo de quien aprueba <span class="req">*</span></label>'
+      +'<input class="inp" id="apr-cargo" placeholder="Directivo o equivalente (art. 23 Ter 5)"></div>'
       +'<div class="fg full" style="display:flex;justify-content:flex-end;gap:8px">'
       +'<button class="btn" style="color:var(--rj);border-color:var(--rj)" onclick="rechazarClienteModificar(\''+a.id+'\')">Rechazar para modificar</button>'
       +'<button class="btn btn-p" style="background:var(--vd);border-color:var(--vd)" onclick="aprobarCliente(\''+a.id+'\')">✓ Aprobar y activar cliente</button>'
@@ -11130,6 +11389,7 @@ var CFG_PERFIL = {
   max_operaciones: 10,       // operaciones en el mes
   max_efectivo: 100000,      // MXN acumulados en efectivo en el mes
   pct_desviacion: 20,        // % permitido por encima de la renta esperada
+  pct_desviacion_alto: 10,   // el mismo margen, menor, para clientes de riesgo Alto (art. 23 Ter 3)
   tipo_cambio_usd: 17.00,    // para normalizar montos en USD a MXN
   meses_inicial: 6,          // art. 23 Ter 1: meses desde la primera operacion
   pct_inicial: 0             // % tolerado sobre el monto maximo mensual declarado
@@ -13603,6 +13863,9 @@ function aprobarCliente(alertaId) {
   var comEl = document.getElementById('apr-comentario');
   var comentario = comEl ? comEl.value.trim() : '';
   if (!comentario) { toast('Escribe un comentario de aprobación (obligatorio)','e'); if(comEl) comEl.focus(); return; }
+  var cargoEl = document.getElementById('apr-cargo');
+  var cargo = cargoEl ? cargoEl.value.trim() : '';
+  if (!cargo) { toast('Escribe el cargo de quien aprueba (obligatorio)','e'); if(cargoEl) cargoEl.focus(); return; }
   spGetUno('PLD_Alertas', alertaId, function(a) {
     if (!a) { toast('Alerta no encontrada','e'); return; }
     var coins = _coincidenciasAlerta(a);
@@ -13613,17 +13876,27 @@ function aprobarCliente(alertaId) {
       listaCli.forEach(function(c){ if(String(c.id)===String(a.id_cliente_ref) || (a.num_cliente && String(c.num_cliente)===String(a.num_cliente))) cli=c; });
       if (!cli) { toast('Cliente no encontrado','e'); return; }
       if (cli.bloqueo_scr) { toast('El cliente esta bloqueado por una coincidencia confirmada en lista de sanciones', 'e'); return; }
+      // Un cliente nuevo de riesgo Alto no se aprueba sin debida diligencia
+      // reforzada completa (art. 23 Ter 3).
+      var estDdr = estadoDDR(cli);
+      if (estDdr.aplica && cli.ddr && cli.ddr.alta && estDdr.estado !== 'completa') {
+        toast('Completa la debida diligencia reforzada del cliente antes de aprobarlo (pestana en su ficha)', 'e'); return;
+      }
       if (!confirm('¿Aprobar y ACTIVAR al cliente "' + nombreClienteDatos(cli) + '"?' + (cli.riesgo ? '\n\nNivel de riesgo actual: ' + cli.riesgo : ''))) return;
       // Paso de verificación: re-autenticar antes de aprobar
       reautenticar(function(ok){
         if (!ok) { toast('Aprobación cancelada: no se verificó la identidad','e'); return; }
         var quien = App.cuenta ? (App.cuenta.name || App.cuenta.username) : '';
-        spPatch('PLD_Clientes', cli.id, { aprobacion:'Aprobado', estatus:'Activo' }, function(){
+        spPatch('PLD_Clientes', cli.id, { aprobacion:'Aprobado', estatus:'Activo', aprobado_por: quien, aprobado_cargo: cargo, fecha_aprobacion: hoy() }, function(){
           spPatch('PLD_Alertas', a.id, {
             aprobacion_estado:'Aprobado', estatus_atencion:'Cerrada', estatus:'Cerrada',
-            comentario_aprobacion: comentario, resuelto_por: quien, fecha_resolucion: hoy()
+            comentario_aprobacion: comentario, resuelto_por: quien, cargo_aprobador: cargo, fecha_resolucion: hoy()
           }, function(){
+            var esPepAlto = cli.riesgo === 'Alto' && cli.estatus_pep && cli.estatus_pep !== 'NO APLICA';
+            registrarHistorialRiesgo('Aprobacion', cli, Object.assign({}, cli, { aprobacion: 'Aprobado', estatus: 'Activo' }),
+              { aprobado_por: quien, cargo: cargo, justificacion: comentario, fundamento: esPepAlto ? 'Aprobacion de directivo para PEP de riesgo Alto (art. 23 Ter 5)' : '' });
             cli.aprobacion='Aprobado'; cli.estatus='Activo';
+            cli.aprobado_por = quien; cli.aprobado_cargo = cargo; cli.fecha_aprobacion = hoy();
             correoAprobado(cli);
             toast('Cliente aprobado y activado. Alerta CERRADA. Se notificó por correo.','s');
             pgAlertas();
@@ -13787,7 +14060,7 @@ function verificarPerfilTransaccional(idCli, nomCli, numCli, fechaOp, cb) {
       var convRenta = montoAMXN(cli.renta_monto, (cli.renta_moneda === 'USD' ? '2' : '1'), fechaOp);
       rentaMXN = convRenta.mxn;
       if (convRenta.estimado) hayEstimado = true;
-      var pct = parseFloat(CFG_PERFIL.pct_desviacion) || 0;
+      var pct = pctDesviacionDe(cli);
       limite = rentaMXN * (1 + pct/100);
       if (totalMes > limite)
         motivos.push('Total del mes $' + Math.round(totalMes).toLocaleString('es-MX')
@@ -13984,6 +14257,7 @@ function guardarLiq(idEx) {
         if (item) {
           // Pasar el id del item recién creado para excluirlo del acumulado
           verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, subtotal, datos.fecha_pago, item.id, function(){
+            alertaDDROperacion(idCli, datos);
             verificarPerfilTransaccional(idCli, nomCli, numCli, datos.fecha_pago, function(){
               toast('Operacion guardada','s');
               pgOps();
