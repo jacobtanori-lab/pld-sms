@@ -7272,7 +7272,6 @@ var REGLAS_EBR = [
   { id: 'fid_joven', g: 'est', ops: R_AMB, tipos: ['FID'], def: 'Agravante', t: function(c){ return 'Fideicomiso con menos de ' + c.anios_joven + ' años de constituido'; }, c: function(p){ return p.joven; } },
   { id: 'edad', g: 'est', ops: R_AMB, tipos: ['PF'], def: 'Agravante', t: function(c){ return 'Menor de ' + c.edad_min + ' o mayor de ' + c.edad_max + ' años'; }, c: function(p){ return p.edad; } },
 
-  { id: 'c_act_geo', g: 'cc', ops: R_AMB, tipos: ['PF', 'PM'], def: 'Alto', t: 'Actividad de alto riesgo con país en vigilancia del GAFI o régimen fiscal preferente', c: function(p){ return p.act && (p.vig || p.fiscal); } },
   { id: 'c_pm_db', g: 'cc', ops: R_AMB, tipos: ['PM'], def: 'Alto', t: 'Persona moral de reciente constitución que declara dueño beneficiario', c: function(p){ return p.joven && p.db; } },
 
   { id: 'cv_ef_menor', g: 'tx', ops: ['cv'], tipos: R_C4, def: 'Agravante', t: 'Efectivo por menos de la mitad del límite legal', c: function(p){ return p.ef === 'menor'; } },
@@ -7314,7 +7313,7 @@ var ETIQUETAS_REGLA = {
   pep_afr: ['b', 'LD'], pep_iv: ['b', 'LD'], pep_roja: ['b', 'LD'], pep_inter: ['b', 'LD'], pep_db: ['b', 'LD'], pep_ext: ['b', 'LD'],
   geo_csnu: ['c', 'LD,FT'], geo_vig: ['c', 'LD,FT'], geo_fiscal: ['c', 'LD'], geo_roja: ['c', 'LD'], geo_ext: ['c', 'LD'], geo_rel: ['c', 'LD,FT'],
   act: ['b', 'LD'], db: ['b', 'LD'], osfl: ['b', 'FT'], pm_joven: ['b', 'LD'], fid_joven: ['b', 'LD'], edad: ['b', 'LD'],
-  c_act_geo: ['b,c', 'LD'], c_pm_db: ['b', 'LD'],
+  c_pm_db: ['b', 'LD'],
   cv_ef_menor: ['a', 'LD,FT'], cv_ef_mitad: ['a', 'LD,FT'], arr_ef_ocas: ['a', 'LD,FT'], arr_ef_hab: ['a', 'LD,FT'],
   t_otro: ['a', 'LD'], t_her: ['a', 'LD'], t_div: ['d', 'LD'], t_usd: ['d', 'LD'], t_terc: ['d', 'LD,FT'], t_interm: ['d', 'LD'], t_inst: ['d', 'LD,FT'],
   t_vol: ['a', 'LD'], arr_anual: ['a', 'LD'],
