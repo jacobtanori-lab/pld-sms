@@ -1,24 +1,24 @@
 {
   "_comentario": "Catalogo de jurisdicciones de riesgo para el modelo EBR. Los paises se identifican por codigo ISO 3166-1 alfa-2, que es lo que devuelve paisISO() en la app. Cada categoria trae su propia fuente y fecha de corte porque se actualizan por separado. Este archivo recoge datos publicos de sus fuentes originales; no reproduce ningun documento reservado.",
-  "actualizado": "2026-09-03",
+  "actualizado": "2026-11-06",
   "categorias": {
     "gafi_contramedidas": {
       "etiqueta": "GAFI: llamado a aplicar contramedidas",
       "descripcion": "Jurisdicciones de alto riesgo con deficiencias estrategicas que no han comprometido un plan de accion. El GAFI llama a sus miembros a aplicar contramedidas.",
-      "fuente": "GAFI / FATF, plenaria de junio de 2026",
-      "url": "https://www.fatf-gafi.org/en/countries/black-and-grey-lists.html",
-      "fecha_corte": "2026-06-19",
+      "fuente": "GAFI / FATF, plenaria del 28 al 30 de octubre de 2026",
+      "url": "https://www.fatf-gafi.org/en/publications/High-risk-and-other-monitored-jurisdictions/call-for-action-october-2026.html",
+      "fecha_corte": "2026-10-28",
       "revision": "Plenarias de febrero, junio y octubre",
       "paises": ["IR", "KP", "MM"]
     },
     "gafi_vigilancia": {
       "etiqueta": "GAFI: vigilancia intensificada",
       "descripcion": "Jurisdicciones con deficiencias estrategicas que trabajan un plan de accion acordado con el GAFI. Es la llamada lista gris.",
-      "fuente": "GAFI / FATF, plenaria de junio de 2026",
-      "url": "https://www.fatf-gafi.org/en/countries/black-and-grey-lists.html",
-      "fecha_corte": "2026-06-19",
+      "fuente": "GAFI / FATF, plenaria del 28 al 30 de octubre de 2026",
+      "url": "https://www.fatf-gafi.org/en/publications/High-risk-and-other-monitored-jurisdictions/increased-monitoring-october-2026.html",
+      "fecha_corte": "2026-10-28",
       "revision": "Plenarias de febrero, junio y octubre",
-      "paises": ["AO", "BO", "BA", "BG", "CM", "CI", "CD", "HT", "IQ", "KE", "KW", "LA", "LB", "MC", "NP", "PG", "SS", "SY", "VE", "VN", "VG", "YE"]
+      "paises": ["AO", "BO", "BA", "CM", "HT", "IQ", "KE", "KW", "LA", "LB", "NP", "PG", "SS", "SY", "VE", "VN", "VG", "YE"]
     },
     "csnu_sanciones": {
       "etiqueta": "Sanciones financieras del Consejo de Seguridad de la ONU",
