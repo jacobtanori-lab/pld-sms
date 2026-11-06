@@ -7566,18 +7566,21 @@ function activarDDR(obj, anterior) {
   if (r.completada && r.perfil && cambiosPerfilTx(r.perfil, obj).length) { abrir('Cambio el perfil transaccional.'); return obj; }
   return obj;
 }
-// Alerta en cada operacion de un cliente de riesgo Alto con el plazo vencido.
+// Cada operacion de un cliente de riesgo Alto genera una alerta de revision
+// (monitoreo mas estricto, art. 23 Ter 3). Si ademas su debida diligencia
+// reforzada no esta completa y el plazo ya vencio, la alerta lo dice.
 function alertaDDROperacion(idCli, op) {
   var c = null;
   (App.clientes || []).forEach(function(x){ if (String(x.id) === String(idCli)) c = x; });
-  if (!c) return;
-  var est = estadoDDR(c);
-  if (!est.aplica || est.estado === 'completa' || !est.plazoVencido) return;
+  if (!c || c.riesgo !== 'Alto') return;
+  var est = estadoDDR(c), vencida = est.aplica && est.estado !== 'completa' && est.plazoVencido;
+  var monto = fmtMXN(op.total_operacion || op.monto || 0);
   spCreate('PLD_Alertas', {
-    Title: 'ALT-DDR-' + Date.now(), nombre_cliente: nombreCliente(c), num_cliente: c.num_cliente || '', id_cliente_ref: c.id,
-    categoria: 'Riesgo', tipo: 'Debida diligencia reforzada vencida', nivel: 'Alto',
-    descripcion: 'Operacion del ' + (op.fecha_pago || '') + ' por ' + fmtMXN(op.total_operacion || op.monto || 0)
-      + ' con un cliente de riesgo Alto sin debida diligencia reforzada completa. El plazo vencio el ' + est.limite + ' (arts. 23 Ter 3 y 4).',
+    Title: (vencida ? 'ALT-DDR-' : 'ALT-RAL-') + Date.now(), nombre_cliente: nombreCliente(c), num_cliente: c.num_cliente || '', id_cliente_ref: c.id,
+    categoria: 'Riesgo', tipo: vencida ? 'Debida diligencia reforzada vencida' : 'Operacion con cliente de riesgo Alto', nivel: 'Alto',
+    descripcion: vencida
+      ? 'Operacion del ' + (op.fecha_pago || '') + ' por ' + monto + ' con un cliente de riesgo Alto sin debida diligencia reforzada completa. El plazo vencio el ' + est.limite + ' (arts. 23 Ter 3 y 4).'
+      : 'Operacion del ' + (op.fecha_pago || '') + ' por ' + monto + ' con un cliente de riesgo Alto: revisar que corresponda con su perfil transaccional y su debida diligencia reforzada (art. 23 Ter 3).',
     estatus: 'Abierta', estatus_atencion: 'Pendiente', asesor_id: c.asesor_id || '', asesor_nombre: c.asesor_nombre || '',
     registrado_por: App.cuenta ? App.cuenta.username : '', fecha_registro: hoy(),
     entidad_id: c.entidad_id || '', entidad_nombre: c.entidad_nombre || ''
@@ -7591,11 +7594,29 @@ function pillDDR(c) {
     + (est.plazoVencido ? ' · plazo vencido' : ' · plazo ' + est.limite) + '</span>';
 }
 
-// Pestana de la ficha: estado, cuestionario de identificacion y su firma.
-function renderDDR() {
+// Pestana de la ficha: estado, cuestionario de identificacion, las personas
+// que pide el articulo 23 Ter 4 y los documentos firmados. Lo que se captura
+// vive en un borrador (App._ddrBorrador) hasta que se guarda.
+var DDR_SIGER_URL = 'https://rpc.economia.gob.mx/siger2/xhtml/login/login2.xhtml';
+var DDR_PARENTESCOS = [['CONYUGE','Conyuge'],['CONCUBINO','Concubina o concubino'],['HIJO','Hija o hijo'],['PADRE','Madre o padre'],['OTRO_DEP','Otro dependiente economico']];
+var DDR_LISTAS = {
+  familiares:  [['nombre','Nombre completo'],['parentesco','Parentesco',DDR_PARENTESCOS],['fecha_nac','Fecha de nacimiento'],['nacionalidad','Nacionalidad'],['rfc_curp','RFC o CURP'],['ocupacion','Ocupacion']],
+  sociedades:  [['razon_social','Razon social'],['rfc','RFC'],['participacion','% de participacion']],
+  accionistas: [['nombre','Nombre o razon social'],['tipo','Tipo',[['PF','Persona fisica'],['PM','Persona moral']]],['rfc','RFC'],['participacion','% de participacion'],['nacionalidad','Nacionalidad o pais de constitucion']]
+};
+var DDR_SIGER_RES = [['COINCIDE','Coincide con lo declarado'],['DISCREPANCIA','Hay discrepancias'],['SIN_REGISTRO','Sin registro en el SIGER']];
+function ddrEsPF(c) { return c.tipo === 'PF_MEX' || c.tipo === 'PF_EXT'; }
+function ddrEsPM(c) { return c.tipo === 'PM_MEX' || c.tipo === 'PM_SIMP'; }
+function ddrPepExt(c) { return c.pep_extranjero === 'SI' && !!c.estatus_pep && c.estatus_pep !== 'NO APLICA'; }
+
+function renderDDR(conservar) {
   var c = App.clienteActual, ct = document.getElementById('fd-ddr');
   if (!c || !ct) return;
-  var est = estadoDDR(c), r = c.ddr || {}, q = r.cuestionario || {};
+  if (!conservar || !App._ddrBorrador || App._ddrBorradorId !== c.id) {
+    App._ddrBorrador = JSON.parse(JSON.stringify(c.ddr || {}));
+    App._ddrBorradorId = c.id;
+  }
+  var r = App._ddrBorrador, est = estadoDDR(c), q = r.cuestionario || {};
   var editable = est.estado !== 'completa';
   var banner;
   if (!est.aplica) banner = '<div class="alerta-banner" style="background:var(--bg2);color:var(--tx2);border-color:var(--brd)">El cliente no es de riesgo Alto: la debida diligencia reforzada no aplica por ahora. Se conserva lo capturado.</div>';
@@ -7607,32 +7628,82 @@ function renderDDR() {
                         : ' Plazo para completarla: ' + est.limite + '.')
     + (r.alta ? ' Es un cliente nuevo: no se puede aprobar hasta completarla.' : '') + '</span></div>';
   var dis = editable ? '' : ' disabled';
+  var sec = function(t){ return '<div class="sec-hdr" style="margin-top:16px">' + t + '</div>'; };
   var ta = function(k, lbl){ return '<div class="fg full"><label class="lbl">' + lbl + ' <span class="req">*</span></label><textarea class="txa" id="ddr-' + k + '" rows="2"' + dis + '>' + capEsc(q[k] || '') + '</textarea></div>'; };
   var inp = function(k, lbl, ph){ return '<div class="fg"><label class="lbl">' + lbl + ' <span class="req">*</span></label><input class="inp" id="ddr-' + k + '" value="' + capEsc(q[k] || '') + '" placeholder="' + ph + '"' + dis + '></div>'; };
-  var destOpts = '<option value="">-- Seleccionar --</option>' + DDR_DESTINOS.map(function(o){ return '<option value="' + o[0] + '"' + (q.destino === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('');
-  var form = '<div class="sec-hdr" style="margin-top:14px">Cuestionario de identificacion (art. 23 Ter 3)</div><div class="fgrid">'
+  var opciones = function(cat, v){ return '<option value="">-- Seleccionar --</option>' + cat.map(function(o){ return '<option value="' + o[0] + '"' + (v === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join(''); };
+  var chk = function(k, lbl){ return '<label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:6px 0"><input type="checkbox" id="ddr-' + k + '"' + (r[k] ? ' checked' : '') + dis + '> ' + lbl + '</label>'; };
+  var tablaLista = function(k){
+    var campos = DDR_LISTAS[k], filas = r[k] || [];
+    var body = filas.map(function(p, i){
+      return '<tr data-ddr-lista="' + k + '">' + campos.map(function(f){
+        var v = p[f[0]] || '';
+        if (f[2]) return '<td><select class="sel" data-k="' + f[0] + '"' + dis + '>' + opciones(f[2], v) + '</select></td>';
+        return '<td><input class="inp" data-k="' + f[0] + '" value="' + capEsc(v) + '"' + dis + '></td>';
+      }).join('') + (editable ? '<td><button class="btn btn-sm" onclick="ddrQuitarFila(\'' + k + '\',' + i + ')">Quitar</button></td>' : '') + '</tr>';
+    }).join('');
+    return '<div class="twrap" data-ddr-tabla="' + k + '"><table><thead><tr>' + campos.map(function(f){ return '<th>' + f[1] + '</th>'; }).join('') + (editable ? '<th></th>' : '') + '</tr></thead><tbody>'
+      + (body || '<tr><td colspan="' + (campos.length + 1) + '" style="color:var(--tx3);font-size:12px">Sin registros.</td></tr>') + '</tbody></table></div>'
+      + (editable ? '<button class="btn btn-sm" style="margin-top:6px" onclick="ddrAgregarFila(\'' + k + '\')">Agregar</button>' : '');
+  };
+  var subir = function(cual, etq){
+    return editable ? '<label class="btn" style="cursor:pointer">' + etq + '<input type="file" accept=".pdf,image/*" style="display:none" onchange="subirArchivoDDR(this,\'' + cual + '\')"></label>' : '';
+  };
+  var docTxt = function(d){ return d ? '<strong>' + capEsc(d.nombre || '') + '</strong>, subido el ' + capEsc(d.fecha || '') + (d.usuario ? ' por ' + capEsc(d.usuario) : '') : ''; };
+
+  var form = sec('Cuestionario de identificacion (art. 23 Ter 3)') + '<div class="fgrid">'
     + ta('actividad', 'Actividad preponderante: descripcion')
     + inp('antiguedad', 'Antiguedad en la actividad (anios)', '0')
     + inp('ingreso', 'Ingreso mensual aproximado (MXN)', '0.00')
     + ta('origen', 'Origen de los recursos de la operacion')
     + inp('soporte', 'Documento que soporta el origen', 'Estado de cuenta, contrato de credito, escritura de venta...')
     + '<div class="fg"><label class="lbl">Destino del inmueble <span class="req">*</span></label><select class="sel" id="ddr-destino"' + dis
-    + ' onchange="document.getElementById(\'ddr-destino-otro-w\').style.display=(this.value===\'OTRO\'?\'\':\'none\')">' + destOpts + '</select></div>'
+    + ' onchange="document.getElementById(\'ddr-destino-otro-w\').style.display=(this.value===\'OTRO\'?\'\':\'none\')">' + opciones(DDR_DESTINOS, q.destino) + '</select></div>'
     + '<div class="fg" id="ddr-destino-otro-w" style="' + (q.destino === 'OTRO' ? '' : 'display:none') + '"><label class="lbl">Especifique el destino</label><input class="inp" id="ddr-destino_otro" value="' + capEsc(q.destino_otro || '') + '"' + dis + '></div>'
     + ta('proposito', 'Proposito de la relacion con la empresa')
     + '</div>';
-  var docTxt = r.documento
-    ? 'Cuestionario firmado: <strong>' + capEsc(r.documento.nombre || '') + '</strong>, subido el ' + capEsc(r.documento.fecha || '') + (r.documento.usuario ? ' por ' + capEsc(r.documento.usuario) : '') + '.'
-    : 'Todavia no se sube el cuestionario firmado.';
-  var acciones = '<div style="font-size:12px;color:var(--tx2);margin:10px 0">' + docTxt + ' La firma puede ser autografa o electronica; si el cuestionario se aplica a distancia debe llevar firma electronica (art. 23 Ter 3).</div>'
+
+  var personas = '';
+  if (ddrEsPF(c)) {
+    personas += sec('Conyuge y dependientes economicos (art. 23 Ter 4 fr. I, inciso b)')
+      + chk('sin_familiares', 'No tiene conyuge ni dependientes economicos') + tablaLista('familiares')
+      + sec('Sociedades y asociaciones con vinculos patrimoniales (art. 23 Ter 4 fr. I, inciso b)')
+      + chk('sin_sociedades', 'No tiene vinculos patrimoniales con sociedades o asociaciones') + tablaLista('sociedades');
+    if (ddrPepExt(c)) {
+      personas += sec('Identificaciones del conyuge y dependientes, PEP extranjero (art. 23 Ter 4 fr. III)')
+        + '<div style="font-size:12px;color:var(--tx2);margin-bottom:6px">' + ((r.docs_familiares || []).length
+            ? (r.docs_familiares || []).map(function(d){ return docTxt(d); }).join('<br>') : 'Todavia no se sube ninguna identificacion.') + '</div>'
+        + subir('familiares', 'Subir identificacion');
+    }
+  }
+  if (ddrEsPM(c)) {
+    var s = r.siger || {};
+    personas += sec('Accionistas o socios principales (art. 23 Ter 4 fr. II)') + tablaLista('accionistas')
+      + sec('Verificacion en los registros electronicos de la Secretaria de Economia')
+      + '<div style="font-size:12px;color:var(--tx2);margin-bottom:8px">Consulta la sociedad en el SIGER y anota el resultado. '
+      + '<a href="' + DDR_SIGER_URL + '" target="_blank" rel="noopener">Abrir el SIGER</a></div>'
+      + '<div class="fgrid">'
+      + '<div class="fg"><label class="lbl">Fecha de la consulta <span class="req">*</span></label><input class="inp" type="date" id="ddr-siger-fecha" value="' + capEsc(s.fecha || '') + '"' + dis + '></div>'
+      + '<div class="fg"><label class="lbl">Folio mercantil electronico</label><input class="inp" id="ddr-siger-fme" value="' + capEsc(s.fme || '') + '"' + dis + '></div>'
+      + '<div class="fg"><label class="lbl">Resultado <span class="req">*</span></label><select class="sel" id="ddr-siger-resultado"' + dis + '>' + opciones(DDR_SIGER_RES, s.resultado) + '</select></div>'
+      + '<div class="fg full"><label class="lbl">Observaciones</label><textarea class="txa" id="ddr-siger-obs" rows="2"' + dis + '>' + capEsc(s.observaciones || '') + '</textarea></div>'
+      + '</div>'
+      + '<div style="font-size:12px;color:var(--tx2);margin:6px 0">' + (s.evidencia ? 'Evidencia: ' + docTxt(s.evidencia) : 'Todavia no se sube la evidencia de la consulta.') + '</div>'
+      + subir('siger', 'Subir evidencia de la consulta');
+  }
+  if (personas) personas += '<div style="font-size:11px;color:var(--tx3);margin-top:8px">Las personas de estas secciones pasan por screening de listas al guardar. Si una coincidencia se confirma como PEP, cuenta como PEP relacionado del cliente; si se confirma en una lista de sanciones, bloquea al cliente.</div>';
+
+  var acciones = sec('Cuestionario firmado')
+    + '<div style="font-size:12px;color:var(--tx2);margin-bottom:8px">' + (r.documento ? docTxt(r.documento) + '.' : 'Todavia no se sube el cuestionario firmado.')
+    + ' La firma puede ser autografa o electronica; si el cuestionario se aplica a distancia debe llevar firma electronica (art. 23 Ter 3).</div>'
     + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
-    + (editable ? '<button class="btn" onclick="guardarCuestionarioDDR()">Guardar cuestionario</button>' : '')
+    + (editable ? '<button class="btn" onclick="guardarDDR()">Guardar</button>' : '')
     + '<button class="btn" onclick="pdfCuestionarioDDR()">Descargar PDF para firma</button>'
-    + (editable ? '<label class="btn" style="cursor:pointer">Subir cuestionario firmado<input type="file" accept=".pdf,image/*" style="display:none" onchange="subirCuestionarioDDR(this)"></label>' : '')
+    + subir('cuestionario', 'Subir cuestionario firmado')
     + (editable && est.aplica && DDR_ROLES.indexOf(App.rol) >= 0 ? '<button class="btn btn-p" onclick="completarDDR()">Marcar como completa</button>' : '')
     + '</div>'
     + (editable && est.aplica && DDR_ROLES.indexOf(App.rol) < 0 ? '<div style="font-size:11px;color:var(--tx3);margin-top:6px">Un administrador o supervisor la marca como completa.</div>' : '');
-  ct.innerHTML = banner + form + acciones;
+  ct.innerHTML = banner + form + personas + acciones;
 }
 function leerCuestionarioDDR() {
   var q = {};
@@ -7643,12 +7714,84 @@ function leerCuestionarioDDR() {
   if (q.destino !== 'OTRO') q.destino_otro = '';
   return q;
 }
+// Pasa al borrador lo que hay en pantalla: cuestionario, listas, casillas y
+// verificacion en el SIGER.
+function ddrLeerDom() {
+  var c = App.clienteActual;
+  var r = (App._ddrBorrador && App._ddrBorradorId === (c && c.id)) ? App._ddrBorrador : JSON.parse(JSON.stringify((c && c.ddr) || {}));
+  if (!document.getElementById('fd-ddr')) return r;
+  if (document.getElementById('ddr-actividad')) r.cuestionario = leerCuestionarioDDR();
+  Object.keys(DDR_LISTAS).forEach(function(k){
+    if (!document.querySelector('#fd-ddr [data-ddr-tabla="' + k + '"]')) return;
+    var arr = [];
+    document.querySelectorAll('#fd-ddr tr[data-ddr-lista="' + k + '"]').forEach(function(tr){
+      var p = {};
+      tr.querySelectorAll('[data-k]').forEach(function(el){
+        var v = String(el.value || '').trim();
+        p[el.getAttribute('data-k')] = el.tagName === 'SELECT' ? v : v.toUpperCase();
+      });
+      arr.push(p);
+    });
+    r[k] = arr;
+  });
+  ['sin_familiares', 'sin_sociedades'].forEach(function(k){ var el = document.getElementById('ddr-' + k); if (el) r[k] = !!el.checked; });
+  if (document.getElementById('ddr-siger-fecha')) {
+    r.siger = Object.assign({}, r.siger || {}, {
+      fecha: document.getElementById('ddr-siger-fecha').value,
+      fme: String(document.getElementById('ddr-siger-fme').value || '').trim().toUpperCase(),
+      resultado: document.getElementById('ddr-siger-resultado').value,
+      observaciones: String(document.getElementById('ddr-siger-obs').value || '').trim()
+    });
+  }
+  App._ddrBorrador = r;
+  App._ddrBorradorId = c && c.id;
+  return r;
+}
+function ddrAgregarFila(k) {
+  var r = ddrLeerDom();
+  r[k] = (r[k] || []).concat([{}]);
+  if (k === 'familiares') r.sin_familiares = false;
+  if (k === 'sociedades') r.sin_sociedades = false;
+  renderDDR(true);
+}
+function ddrQuitarFila(k, i) {
+  var r = ddrLeerDom();
+  (r[k] || []).splice(i, 1);
+  renderDDR(true);
+}
 function faltantesCuestionarioDDR(q) {
   var f = [];
   [['actividad','actividad preponderante'],['antiguedad','antiguedad'],['ingreso','ingreso mensual'],['origen','origen de los recursos'],
    ['soporte','documento de soporte'],['destino','destino del inmueble'],['proposito','proposito de la relacion']].forEach(function(x){ if (!q[x[0]]) f.push(x[1]); });
   if (q.destino === 'OTRO' && !q.destino_otro) f.push('especificar el destino');
   return f;
+}
+// Todo lo que falta para marcar como completa la debida diligencia.
+function faltantesDDR(c, r) {
+  var f = faltantesCuestionarioDDR(r.cuestionario || {}).map(function(x){ return 'cuestionario: ' + x; });
+  if (!r.documento) f.push('cuestionario firmado');
+  var incompletas = function(k, req){ return (r[k] || []).some(function(p){ return req.some(function(x){ return !p[x]; }); }); };
+  if (ddrEsPF(c)) {
+    if (!(r.familiares || []).length && !r.sin_familiares) f.push('conyuge y dependientes, o marcar que no tiene');
+    if (incompletas('familiares', ['nombre', 'parentesco', 'fecha_nac', 'nacionalidad', 'rfc_curp', 'ocupacion'])) f.push('los seis datos de cada conyuge o dependiente');
+    if (!(r.sociedades || []).length && !r.sin_sociedades) f.push('sociedades con vinculos patrimoniales, o marcar que no tiene');
+    if (incompletas('sociedades', ['razon_social', 'rfc', 'participacion'])) f.push('razon social, RFC y participacion de cada sociedad');
+    if (ddrPepExt(c) && (r.familiares || []).length && !(r.docs_familiares || []).length) f.push('identificaciones del conyuge y dependientes (PEP extranjero)');
+  }
+  if (ddrEsPM(c)) {
+    if (!(r.accionistas || []).length) f.push('al menos un accionista o socio principal');
+    if (incompletas('accionistas', ['nombre', 'tipo', 'participacion'])) f.push('nombre, tipo y participacion de cada accionista');
+    var s = r.siger || {};
+    if (!s.fecha || !s.resultado) f.push('fecha y resultado de la verificacion en el SIGER');
+    if (!s.evidencia) f.push('evidencia de la consulta al SIGER');
+  }
+  return f;
+}
+// Las personas nuevas pasan por screening en cuanto se guardan; si hay
+// coincidencias sin resolver se crea la alerta de resolucion de siempre.
+function screeningDDR(c) {
+  if (typeof cargarListasScreening !== 'function') return;
+  cargarListasScreening(function(){ scrAlertasResolucionMasivo([c]); });
 }
 function patchDDR(c, r, msg, cb) {
   spPatch('PLD_Clientes', c.id, { ddr: r }, function(ok){
@@ -7659,35 +7802,39 @@ function patchDDR(c, r, msg, cb) {
     if (cb) cb();
   });
 }
-function guardarCuestionarioDDR() {
+function guardarDDR() {
   var c = App.clienteActual; if (!c) return;
-  var r = JSON.parse(JSON.stringify(c.ddr || {}));
-  r.cuestionario = leerCuestionarioDDR();
+  var r = ddrLeerDom();
   r.cuestionario_fecha = hoy();
   r.cuestionario_usuario = App.cuenta ? App.cuenta.username : '';
-  patchDDR(c, r, 'Cuestionario guardado');
+  patchDDR(c, r, 'Debida diligencia reforzada guardada', function(){ screeningDDR(c); });
 }
-function subirCuestionarioDDR(input) {
+// Sube un documento a la carpeta del cliente y lo liga a la debida diligencia:
+// el cuestionario firmado, la evidencia del SIGER o una identificacion de un
+// familiar de un PEP extranjero.
+function subirArchivoDDR(input, cual) {
   var c = App.clienteActual, file = input.files && input.files[0];
   input.value = '';
   if (!c || !file) return;
+  var pref = { cuestionario: 'Cuestionario_DDR', siger: 'Verificacion_SIGER', familiares: 'Identificacion_familiar' }[cual] || 'DDR';
   var nom = nombreCliente(c).replace(/[^a-zA-Z0-9_\-]/g, '_').substring(0, 40);
   var carpeta = 'PLD_Documentos/' + nStr(c.num_cliente) + '_' + nom;
-  var nombre = 'Cuestionario_DDR_' + Date.now().toString(36) + '_' + file.name.replace(/[^a-zA-Z0-9._\-]/g, '_');
+  var nombre = pref + '_' + Date.now().toString(36) + '_' + file.name.replace(/[^a-zA-Z0-9._\-]/g, '_');
   var ruta = carpeta.split('/').map(encodeURIComponent).join('/') + '/' + encodeURIComponent(nombre);
-  var q = leerCuestionarioDDR();
-  toast('Subiendo el cuestionario firmado...');
+  var r = ddrLeerDom();
+  toast('Subiendo el documento...');
   var reader = new FileReader();
   reader.onload = function(e) {
     fetch(GRAPH + '/sites/' + App.siteId + '/drive/root:/' + ruta + ':/content',
       { method: 'PUT', headers: { 'Authorization': 'Bearer ' + App.token, 'Content-Type': file.type || 'application/octet-stream' }, body: e.target.result })
-      .then(function(r){ return r.json(); })
+      .then(function(x){ return x.json(); })
       .then(function(d){
         if (!d || !d.id) { toast('No se pudo subir el archivo', 'e'); return; }
-        var r = JSON.parse(JSON.stringify(c.ddr || {}));
-        r.cuestionario = q;
-        r.documento = { nombre: nombre, id: d.id, url: d.webUrl || '', fecha: hoy(), usuario: App.cuenta ? App.cuenta.username : '' };
-        patchDDR(c, r, 'Cuestionario firmado guardado en los documentos del cliente');
+        var doc = { nombre: nombre, id: d.id, url: d.webUrl || '', fecha: hoy(), usuario: App.cuenta ? App.cuenta.username : '' };
+        if (cual === 'cuestionario') r.documento = doc;
+        else if (cual === 'siger') r.siger = Object.assign({}, r.siger || {}, { evidencia: doc, usuario: doc.usuario });
+        else r.docs_familiares = (r.docs_familiares || []).concat([doc]);
+        patchDDR(c, r, 'Documento guardado en los documentos del cliente');
       })
       .catch(function(){ toast('No se pudo subir el archivo', 'e'); });
   };
@@ -7696,23 +7843,26 @@ function subirCuestionarioDDR(input) {
 function completarDDR() {
   var c = App.clienteActual; if (!c) return;
   if (DDR_ROLES.indexOf(App.rol) < 0) { sinAcceso(); return; }
-  var q = leerCuestionarioDDR(), falta = faltantesCuestionarioDDR(q), r0 = c.ddr || {};
-  if (falta.length) { toast('Falta en el cuestionario: ' + falta.join(', '), 'w'); return; }
-  if (!r0.documento) { toast('Sube el cuestionario firmado antes de marcarla como completa', 'w'); return; }
+  var r0 = ddrLeerDom(), falta = faltantesDDR(c, r0);
+  if (falta.length) { toast('Falta: ' + falta.join('; '), 'w'); return; }
   if (!confirm('¿Marcar como completa la debida diligencia reforzada de ' + nombreCliente(c) + '?\n\nQueda vigente un anio o hasta que cambie el perfil transaccional.')) return;
-  var r = { desde: r0.desde || hoy(), limite: r0.limite || '', motivo: r0.motivo || '', alta: !!r0.alta, anterior: r0.anterior || null,
-            cuestionario: q, documento: r0.documento,
-            completada: { fecha: hoy(), usuario: App.cuenta ? App.cuenta.username : '' },
-            vigencia_hasta: sumarDias(hoy(), DDR_VIGENCIA_DIAS), perfil: perfilTxDe(c) };
+  var r = JSON.parse(JSON.stringify(r0));
+  r.desde = r0.desde || hoy();
+  r.completada = { fecha: hoy(), usuario: App.cuenta ? App.cuenta.username : '' };
+  r.vigencia_hasta = sumarDias(hoy(), DDR_VIGENCIA_DIAS);
+  r.perfil = perfilTxDe(c);
   var antes = JSON.parse(JSON.stringify(c));
   patchDDR(c, r, 'Debida diligencia reforzada completa', function(){
     registrarHistorialRiesgo('Debida diligencia reforzada', antes, c, { justificacion: 'Cuestionario completo y firmado: ' + r0.documento.nombre, vigencia_hasta: r.vigencia_hasta });
+    screeningDDR(c);
   });
 }
-// PDF del cuestionario ya llenado, para firmarlo.
+// PDF del cuestionario ya llenado, con las personas que pide el art. 23 Ter 4,
+// para firmarlo.
 function pdfCuestionarioDDR() {
   var c = App.clienteActual; if (!c) return;
-  var q = document.getElementById('ddr-actividad') ? leerCuestionarioDDR() : ((c.ddr || {}).cuestionario || {});
+  var r = document.getElementById('ddr-actividad') ? ddrLeerDom() : (c.ddr || {});
+  var q = r.cuestionario || {};
   cargarJsPDF(function(){
     if (!(window.jspdf && window.jspdf.jsPDF)) return;
     var doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4' });
@@ -7721,8 +7871,16 @@ function pdfCuestionarioDDR() {
       doc.setFontSize(size); doc.setFont('helvetica', bold ? 'bold' : 'normal');
       doc.splitTextToSize(String(s || ''), W).forEach(function(ln){ if (y > 280) { doc.addPage(); y = 16; } doc.text(ln, L, y); y += size * 0.45 + 0.8; });
     };
-    var par = function(p, r){ txt(p, 10, true); txt(r || '________________________________________', 10, false); y += 2; };
-    var dest = DDR_DESTINOS.filter(function(o){ return o[0] === q.destino; })[0];
+    var par = function(p, v){ txt(p, 10, true); txt(v || '________________________________________', 10, false); y += 2; };
+    var etq = function(cat, v){ var o = cat.filter(function(x){ return x[0] === v; })[0]; return o ? o[1] : (v || ''); };
+    var lista = function(titulo, k, fmt, vacio){
+      txt(titulo, 10, true);
+      var filas = r[k] || [];
+      if (!filas.length) txt(vacio, 10, false);
+      filas.forEach(function(p, i){ txt((i + 1) + '. ' + fmt(p), 10, false); });
+      y += 2;
+    };
+    var n = 8;
     txt('Cuestionario de identificacion del cliente', 14, true);
     txt('Debida diligencia reforzada para clientes de grado de riesgo alto (arts. 23 Ter 3 y 23 Ter 4 de las Reglas de la LFPIORPI)', 9, false);
     y += 3;
@@ -7734,11 +7892,25 @@ function pdfCuestionarioDDR() {
     par('3. Ingreso mensual aproximado (MXN)', q.ingreso ? fmtMXN(q.ingreso) : '');
     par('4. Origen de los recursos de la operacion', q.origen);
     par('5. Documento que soporta el origen de los recursos', q.soporte);
-    par('6. Destino del inmueble', dest ? dest[1] + (q.destino === 'OTRO' && q.destino_otro ? ': ' + q.destino_otro : '') : '');
+    par('6. Destino del inmueble', q.destino ? etq(DDR_DESTINOS, q.destino) + (q.destino === 'OTRO' && q.destino_otro ? ': ' + q.destino_otro : '') : '');
     par('7. Proposito de la relacion con la empresa', q.proposito);
-    y += 4;
+    if (ddrEsPF(c)) {
+      lista((n++) + '. Conyuge y dependientes economicos', 'familiares', function(p){
+        return [p.nombre, etq(DDR_PARENTESCOS, p.parentesco), 'nacimiento ' + (p.fecha_nac || '-'), p.nacionalidad, p.rfc_curp, p.ocupacion].filter(Boolean).join(' · ');
+      }, r.sin_familiares ? 'Declara que no tiene conyuge ni dependientes economicos.' : '________________________________________');
+      lista((n++) + '. Sociedades y asociaciones con vinculos patrimoniales', 'sociedades', function(p){
+        return [p.razon_social, p.rfc, p.participacion ? p.participacion + '%' : ''].filter(Boolean).join(' · ');
+      }, r.sin_sociedades ? 'Declara que no tiene vinculos patrimoniales con sociedades o asociaciones.' : '________________________________________');
+    }
+    if (ddrEsPM(c)) {
+      lista((n++) + '. Accionistas o socios principales', 'accionistas', function(p){
+        return [p.nombre, etq(DDR_LISTAS.accionistas[1][2], p.tipo), p.rfc, p.participacion ? p.participacion + '%' : '', p.nacionalidad].filter(Boolean).join(' · ');
+      }, '________________________________________');
+    }
+    y += 2;
     txt('Declaro bajo protesta de decir verdad que la informacion de este cuestionario es veridica y que los recursos de la operacion no provienen de actividades ilicitas.', 10, false);
     y += 22;
+    if (y > 270) { doc.addPage(); y = 40; }
     doc.line(L, y, L + 75, y); doc.line(L + 105, y, L + W, y); y += 5;
     txt('Firma del cliente o de su representante', 9, false);
     doc.text('Nombre y firma de quien aplica el cuestionario', L + 105, y - 4.6);
@@ -13456,6 +13628,12 @@ function _nombresAScreening(datos) {
   (datos.beneficiarios || []).forEach(function(bc, i){
     add('Beneficiario controlador #'+(i+1), nom([bc.nombre, bc.ap_pat, bc.ap_mat]));
   });
+  // Debida diligencia reforzada (art. 23 Ter 4): conyuge, dependientes,
+  // sociedades con vinculos patrimoniales y accionistas.
+  var ddr = datos.ddr || {};
+  (ddr.familiares || []).forEach(function(p, i){ add('Conyuge o dependiente #' + (i + 1), p.nombre); });
+  (ddr.sociedades || []).forEach(function(p, i){ add('Sociedad vinculada #' + (i + 1), p.razon_social); });
+  (ddr.accionistas || []).forEach(function(p, i){ add('Accionista #' + (i + 1), p.nombre); });
   return arr;
 }
 
@@ -13489,10 +13667,15 @@ function estatusPEPDeLista(c) {
   return 'Activo';
 }
 // Personas relacionadas confirmadas como PEP, en persona moral y fideicomiso.
+// Las personas de la debida diligencia reforzada cuentan en cualquier tipo
+// de cliente; las demas personas relacionadas, solo en persona moral y
+// fideicomiso.
+var PARTES_DDR = /^(Conyuge o dependiente|Sociedad vinculada|Accionista) #/;
 function pepPartesConfirmadas(d) {
-  if (d.tipo !== 'PM_MEX' && d.tipo !== 'FIDEICOMISO') return [];
+  var todas = (d.tipo === 'PM_MEX' || d.tipo === 'FIDEICOMISO');
   return (d.scr_resoluciones || []).filter(function(r){
-    return r.decision === 'CONFIRMADA' && r.categoria === 'PEP' && r.parte !== 'Cliente' && r.estatus_pep;
+    return r.decision === 'CONFIRMADA' && r.categoria === 'PEP' && r.parte !== 'Cliente' && r.estatus_pep
+      && (todas || PARTES_DDR.test(r.parte || ''));
   }).map(function(r){ return { parte: r.parte, nombre: r.nombre_evaluado, estatus: r.estatus_pep }; });
 }
 
