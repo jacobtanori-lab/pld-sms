@@ -7566,21 +7566,36 @@ function activarDDR(obj, anterior) {
   if (r.completada && r.perfil && cambiosPerfilTx(r.perfil, obj).length) { abrir('Cambio el perfil transaccional.'); return obj; }
   return obj;
 }
-// Cada operacion de un cliente de riesgo Alto genera una alerta de revision
-// (monitoreo mas estricto, art. 23 Ter 3). Si ademas su debida diligencia
-// reforzada no esta completa y el plazo ya vencio, la alerta lo dice.
+// Articulo 41, fraccion V: cada operacion con un cliente de riesgo Alto, un
+// PEP (propio o de una persona relacionada confirmada) o un vinculo con paises
+// de la lista gris del GAFI, con regimen fiscal preferente o con sanciones del
+// Consejo de Seguridad genera una alerta, una sola con todos los motivos. Si
+// el cliente es de riesgo Alto y su debida diligencia reforzada tiene el plazo
+// vencido, la alerta lo dice (arts. 23 Ter 3 y 4). La usan la captura manual
+// y la importacion desde Excel.
 function alertaDDROperacion(idCli, op) {
   var c = null;
   (App.clientes || []).forEach(function(x){ if (String(x.id) === String(idCli)) c = x; });
-  if (!c || c.riesgo !== 'Alto') return;
+  if (!c) return;
+  var p = perfilRiesgo(c), motivos = [];
+  if (c.riesgo === 'Alto') motivos.push('cliente de riesgo Alto');
+  if (p.pepAFR || p.pepExt)
+    motivos.push('PEP' + (p.pepAFR && p.det.pep ? ' (' + p.det.pep + ')' : '') + (p.pepExt ? ', extranjero' : ''));
+  var paises = [];
+  [p.det.vig, p.det.fiscal, p.det.csnu, p.det.rel].forEach(function(t){
+    String(t || '').split('; ').forEach(function(x){ if (x && paises.indexOf(x) < 0) paises.push(x); });
+  });
+  if (paises.length) motivos.push('vinculo con paises de las listas: ' + paises.join('; '));
+  if (!motivos.length) return;
   var est = estadoDDR(c), vencida = est.aplica && est.estado !== 'completa' && est.plazoVencido;
   var monto = fmtMXN(op.total_operacion || op.monto || 0);
   spCreate('PLD_Alertas', {
-    Title: (vencida ? 'ALT-DDR-' : 'ALT-RAL-') + Date.now(), nombre_cliente: nombreCliente(c), num_cliente: c.num_cliente || '', id_cliente_ref: c.id,
-    categoria: 'Riesgo', tipo: vencida ? 'Debida diligencia reforzada vencida' : 'Operacion con cliente de riesgo Alto', nivel: 'Alto',
-    descripcion: vencida
-      ? 'Operacion del ' + (op.fecha_pago || '') + ' por ' + monto + ' con un cliente de riesgo Alto sin debida diligencia reforzada completa. El plazo vencio el ' + est.limite + ' (arts. 23 Ter 3 y 4).'
-      : 'Operacion del ' + (op.fecha_pago || '') + ' por ' + monto + ' con un cliente de riesgo Alto: revisar que corresponda con su perfil transaccional y su debida diligencia reforzada (art. 23 Ter 3).',
+    Title: (vencida ? 'ALT-DDR-' : 'ALT-V41-') + Date.now(), nombre_cliente: nombreCliente(c), num_cliente: c.num_cliente || '', id_cliente_ref: c.id,
+    categoria: 'Riesgo', tipo: vencida ? 'Debida diligencia reforzada vencida' : 'Operacion sujeta a vigilancia (art. 41 fr. V)',
+    nivel: (c.riesgo === 'Alto' || vencida || paises.length) ? 'Alto' : 'Medio',
+    descripcion: 'Operacion del ' + (op.fecha_pago || '') + ' por ' + monto + '. Motivo: ' + motivos.join('; ') + '.'
+      + (vencida ? ' La debida diligencia reforzada no esta completa y el plazo vencio el ' + est.limite + ' (arts. 23 Ter 3 y 4).' : '')
+      + ' Revisar que la operacion corresponda con el perfil transaccional del cliente (art. 41 fr. V).',
     estatus: 'Abierta', estatus_atencion: 'Pendiente', asesor_id: c.asesor_id || '', asesor_nombre: c.asesor_nombre || '',
     registrado_por: App.cuenta ? App.cuenta.username : '', fecha_registro: hoy(),
     entidad_id: c.entidad_id || '', entidad_nombre: c.entidad_nombre || ''
