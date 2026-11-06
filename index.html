@@ -14700,6 +14700,9 @@ function procesarExcel(data, fraccion) {
         verificarPerfilTransaccional(
           datos.id_cliente_ref, datos.nombre_cliente, datos.num_cliente, datos.fecha_pago, null
         );
+        // Cliente de riesgo Alto: alerta de revision, o de debida diligencia
+        // reforzada vencida, igual que en la captura manual.
+        if (datos.id_cliente_ref) alertaDDROperacion(datos.id_cliente_ref, datos);
         if (guardados === registros.length) {
           pensadorOff();
           toast(guardados + ' registros importados de "' + sheetName + '"', 's');
