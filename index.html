@@ -4509,6 +4509,7 @@ function pgConfigEBRReglas() {
     + '<div class="fg"><label class="lbl">Dueño beneficiario</label><select class="sel" id="sim-db"><option value="NO">No declarado</option><option value="SI">Declarado</option></select></div>'
     + '<div class="fg"><label class="lbl">Organizacion sin fines de lucro (persona moral)</label>' + siNo('sim-osfl') + '</div>'
     + '<div class="fg"><label class="lbl">Opera a traves de un intermediario</label>' + siNo('sim-interm') + '</div>'
+    + '<div class="fg"><label class="lbl">Instrumentos de alto riesgo</label><select class="sel" id="sim-inst">' + INST_ALTO.map(function(o){ return '<option value="' + o[0] + '">' + o[1] + '</option>'; }).join('') + '</select></div>'
     + '<div class="fg"><label class="lbl">Edad (persona fisica)</label><input class="inp mono" id="sim-edad" type="number" min="0" max="130" value="35" style="width:90px"></div>'
     + '<div class="fg"><label class="lbl">Antigüedad en años (moral o fideicomiso)</label><input class="inp mono" id="sim-antig" type="number" min="0" max="200" value="10" style="width:90px"></div>'
     + '<div class="fg full" style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-top:6px">Perfil transaccional</div>'
@@ -4915,6 +4916,7 @@ function ebrSimMock() {
   mock.pep_extranjero = v('sim-pepext') === 'SI' ? 'SI' : 'NO';
   mock.es_osfl = v('sim-osfl') === 'SI' ? 'SI' : 'NO';
   mock.canal_operacion = v('sim-interm') === 'SI' ? 'INTERMEDIARIO' : 'DIRECTA';
+  mock.ptx_inst_alto = v('sim-inst') || 'NINGUNO';
   mock.pep_ingreso_mensual = v('sim-ing');
   mock.ptx_monto_max_mensual = v('sim-mes');
   mock._reval = { desv: v('sim-desv') === 'SI', efNoDecl: v('sim-efnd') === 'SI' };
@@ -6470,7 +6472,12 @@ function evaluarReval(c, ops) {
     ? (!c.ptx_arr_efectivo || c.ptx_arr_efectivo === 'NUNCA')
     : !((parseFloat(c.ptx_cv_efectivo_mxn) || 0) > 0);
   // Sin operaciones en la ventana, la regla del ingreso del PEP sigue con lo declarado.
-  ap.datos._reval = { desv: ap.desv.length > 0, efNoDecl: ob.efectivoN > 0 && sinEfDecl, maxMesMXN: ob.n ? ob.maxMesMXN : undefined };
+  // Instrumentos de alto riesgo usados en la ventana, contra lo declarado.
+  var instObs = ob.n ? instAltoObservado(ob.instrumentos) : '';
+  if (instObs && instObs !== 'NINGUNO' && (c.ptx_inst_alto || 'NINGUNO') === 'NINGUNO')
+    ap.desv.push('Pagos con ' + ptxEtiqueta(INST_ALTO, instObs).toLowerCase() + '; declaro que no usaria instrumentos de alto riesgo');
+  ap.datos._reval = { desv: ap.desv.length > 0, efNoDecl: ob.efectivoN > 0 && sinEfDecl, maxMesMXN: ob.n ? ob.maxMesMXN : undefined,
+                      instAlto: (instObs && instObs !== 'NINGUNO') ? instObs : undefined };
   var r = calcEBR(ap.datos);
   var ant = c.riesgo || '';
   var ia = NIVELES_EBR.indexOf(ant), in_ = NIVELES_EBR.indexOf(r.nivel);
@@ -7277,6 +7284,7 @@ var REGLAS_EBR = [
   { id: 't_div', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Medio', t: 'Pago en una divisa distinta de pesos o dólares', c: function(p){ return p.moneda === 'OTRA'; } },
   { id: 't_usd', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Agravante', t: 'Pago en dólares', c: function(p){ return p.moneda === 'USD'; } },
   { id: 't_terc', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Medio', t: { cv: 'Precio pagado desde cuentas de terceros', arr: 'Renta pagada por un tercero' }, c: function(p){ return p.terceros; } },
+  { id: 't_inst', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Medio', d: 'inst', t: 'Pago con activos virtuales, metales preciosos o cheques de viajero', n: 'Lo declarado en el perfil o, al revalorar, lo operado', c: function(p){ return p.instAlto; } },
   { id: 't_interm', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Agravante', t: 'Opera a traves de un intermediario', n: 'Comisionista, broker o apoderado que actua entre el cliente y la empresa', c: function(p){ return p.intermediario; } },
   { id: 't_vol', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Agravante', t: { cv: 'Más de 5 operaciones', arr: 'Más de una operación por periodo' }, c: function(p){ return p.volumen; } },
   { id: 'arr_anual', g: 'tx', ops: ['arr'], tipos: R_C4, def: 'Agravante', t: 'Pago anual por adelantado', c: function(p){ return p.anual; } },
@@ -7308,7 +7316,7 @@ var ETIQUETAS_REGLA = {
   act: ['b', 'LD'], db: ['b', 'LD'], osfl: ['b', 'FT'], pm_joven: ['b', 'LD'], fid_joven: ['b', 'LD'], edad: ['b', 'LD'],
   c_act_geo: ['b,c', 'LD'], c_pm_db: ['b', 'LD'],
   cv_ef_menor: ['a', 'LD,FT'], cv_ef_mitad: ['a', 'LD,FT'], arr_ef_ocas: ['a', 'LD,FT'], arr_ef_hab: ['a', 'LD,FT'],
-  t_otro: ['a', 'LD'], t_her: ['a', 'LD'], t_div: ['d', 'LD'], t_usd: ['d', 'LD'], t_terc: ['d', 'LD,FT'], t_interm: ['d', 'LD'],
+  t_otro: ['a', 'LD'], t_her: ['a', 'LD'], t_div: ['d', 'LD'], t_usd: ['d', 'LD'], t_terc: ['d', 'LD,FT'], t_interm: ['d', 'LD'], t_inst: ['d', 'LD,FT'],
   t_vol: ['a', 'LD'], arr_anual: ['a', 'LD'],
   c_ef_terc: ['a,d', 'LD,FT'], c_ef_otro: ['a', 'LD'], c_div_terc: ['d', 'LD,FT'], c_pep_ingreso: ['a', 'LD'],
   r_desv: ['a', 'LD,FT'], r_ef: ['a', 'LD,FT']
@@ -7509,6 +7517,10 @@ function perfilRiesgo(d) {
   var rv = d._reval || {};
   p.desv = !!rv.desv;
   p.efNoDecl = !!rv.efNoDecl;
+  // Instrumentos de alto riesgo: lo observado en la revaloracion, o lo declarado.
+  var inst = rv.instAlto || d.ptx_inst_alto || 'NINGUNO';
+  p.instAlto = inst !== 'NINGUNO';
+  p.det.inst = p.instAlto ? ptxEtiqueta(INST_ALTO, inst).toLowerCase() : '';
   return p;
 }
 
@@ -7632,6 +7644,8 @@ function alertaDDROperacion(idCli, op) {
     String(t || '').split('; ').forEach(function(x){ if (x && paises.indexOf(x) < 0) paises.push(x); });
   });
   if (paises.length) motivos.push('vinculo con paises de las listas: ' + paises.join('; '));
+  var instOp = INST_ALTO_COD[String(op.instrumento_monetario || '')];
+  if (instOp) motivos.push('pago con ' + ptxEtiqueta(INST_ALTO, instOp).toLowerCase());
   if (!motivos.length) return;
   var est = estadoDDR(c), vencida = est.aplica && est.estado !== 'completa' && est.plazoVencido;
   var monto = fmtMXN(op.total_operacion || op.monto || 0);
@@ -7989,14 +8003,14 @@ var LISTA_HIST = 'PLD_HistorialRiesgo';
 var CAMPOS_PTX_HIST = ['es_arrendamiento', 'ptx_arr_pago', 'ptx_arr_numops', 'ptx_arr_frec', 'renta_monto', 'renta_moneda',
   'ptx_arr_efectivo', 'ptx_arr_origen', 'ptx_arr_origen_otro', 'ptx_cv_pago', 'ptx_cv_numops', 'ptx_cv_moneda',
   'ptx_cv_contrapartes', 'ptx_cv_efectivo_mxn', 'ptx_cv_origen', 'ptx_cv_origen_otro', 'ptx_monto_max_mensual', 'razon_opera_mx', 'razon_opera_mx_otro',
-  'canal_operacion', 'canal_intermediario',
+  'canal_operacion', 'canal_intermediario', 'ptx_inst_alto',
   'pep_ingreso_mensual'];
 var ETQ_PTX_HIST = { es_arrendamiento: 'tipo de operacion', ptx_arr_pago: 'tipo de pago', ptx_arr_numops: 'operaciones por periodo',
   ptx_arr_frec: 'frecuencia', renta_monto: 'renta', renta_moneda: 'moneda de la renta', ptx_arr_efectivo: 'uso de efectivo',
   ptx_arr_origen: 'origen de los recursos', ptx_arr_origen_otro: 'origen de los recursos', ptx_cv_pago: 'tipo de pago',
   ptx_cv_numops: 'numero de operaciones', ptx_cv_moneda: 'moneda de pago', ptx_cv_contrapartes: 'contrapartes',
   ptx_cv_efectivo_mxn: 'monto en efectivo', ptx_cv_origen: 'origen de los recursos', ptx_cv_origen_otro: 'origen de los recursos',
-  ptx_monto_max_mensual: 'monto maximo mensual', canal_operacion: 'forma en que opera', canal_intermediario: 'intermediario',
+  ptx_monto_max_mensual: 'monto maximo mensual', canal_operacion: 'forma en que opera', canal_intermediario: 'intermediario', ptx_inst_alto: 'instrumentos de alto riesgo',
   razon_opera_mx: 'razon para operar en Mexico', razon_opera_mx_otro: 'razon para operar en Mexico',
   pep_ingreso_mensual: 'ingreso mensual declarado del PEP' };
 
@@ -8031,6 +8045,7 @@ function perfilOperado(c, ob, desde, hasta) {
     p.campos.ptx_cv_moneda = ob.moneda;
   }
   p.campos.ptx_monto_max_mensual = r2(ob.maxMesMXN);
+  p.campos.ptx_inst_alto = instAltoObservado(ob.instrumentos);
   return p;
 }
 // Texto de un campo del perfil, con el catalogo que le corresponde.
@@ -8042,6 +8057,7 @@ function fmtCampoPtx(k, o) {
               ptx_cv_contrapartes: PTX_CONTRAPARTES, ptx_cv_origen: PTX_ORIGEN, razon_opera_mx: RAZON_OPERA_MX }[k];
   if (k === 'renta_monto' || k === 'ptx_cv_efectivo_mxn' || k === 'ptx_monto_max_mensual' || k === 'pep_ingreso_mensual') return fmtMXN(v);
   if (k === 'renta_moneda') return v === 'USD' ? 'USD - Dolares' : 'MXN - Pesos';
+  if (k === 'ptx_inst_alto') return ptxEtiqueta(INST_ALTO, v);
   if (k === 'canal_operacion') return ptxEtiqueta(CANALES_OPERACION, v) + (v === 'INTERMEDIARIO' && o.canal_intermediario ? ': ' + o.canal_intermediario : '');
   var t = cat ? ptxEtiqueta(cat, v) : String(v);
   var otro = { ptx_arr_origen: 'ptx_arr_origen_otro', ptx_cv_origen: 'ptx_cv_origen_otro', razon_opera_mx: 'razon_opera_mx_otro' }[k];
@@ -8050,10 +8066,10 @@ function fmtCampoPtx(k, o) {
 }
 var FILAS_PTX_ARR = [['ptx_arr_pago', 'Tipo de pago'], ['ptx_arr_numops', 'Operaciones por periodo'], ['ptx_arr_frec', 'Frecuencia'],
   ['renta_monto', 'Renta'], ['renta_moneda', 'Moneda de la renta'], ['ptx_arr_efectivo', 'Uso de efectivo'],
-  ['ptx_arr_origen', 'Origen de los recursos'], ['ptx_monto_max_mensual', 'Monto maximo mensual'], ['canal_operacion', 'Forma en que opera'], ['razon_opera_mx', 'Razon para operar en Mexico']];
+  ['ptx_arr_origen', 'Origen de los recursos'], ['ptx_monto_max_mensual', 'Monto maximo mensual'], ['ptx_inst_alto', 'Instrumentos de alto riesgo'], ['canal_operacion', 'Forma en que opera'], ['razon_opera_mx', 'Razon para operar en Mexico']];
 var FILAS_PTX_CV = [['ptx_cv_pago', 'Tipo de pago'], ['ptx_cv_numops', 'Numero de operaciones'], ['ptx_cv_moneda', 'Moneda de pago'],
   ['ptx_cv_contrapartes', 'Contrapartes'], ['ptx_cv_efectivo_mxn', 'Monto en efectivo'], ['ptx_cv_origen', 'Origen de los recursos'],
-  ['ptx_monto_max_mensual', 'Monto maximo mensual'], ['canal_operacion', 'Forma en que opera'], ['razon_opera_mx', 'Razon para operar en Mexico']];
+  ['ptx_monto_max_mensual', 'Monto maximo mensual'], ['ptx_inst_alto', 'Instrumentos de alto riesgo'], ['canal_operacion', 'Forma en que opera'], ['razon_opera_mx', 'Razon para operar en Mexico']];
 var MONTOS_PTX = { ptx_cv_efectivo_mxn: 1, ptx_monto_max_mensual: 1 };
 // Una diferencia entre lo operado y lo declarado vigente: en montos, solo si lo
 // operado es mayor; en lo demas, si no coincide.
@@ -8451,6 +8467,22 @@ var PTX_MONEDA     = [['MXN','MXN - Pesos'],['USD','USD - Dolares'],['OTRA','Otr
 // preferente) y a los PEP extranjeros: articulo 23 Bis 4, segundo parrafo.
 // Canal por el que opera el cliente (art. 10 Septies 1 fr. I, inciso d). No
 // hay alta remota: el expediente siempre se integra en persona.
+// Instrumentos monetarios de alto riesgo (art. 23 Bis 2 fr. II): activos
+// virtuales, metales preciosos y cheques de viajero, con su codigo del
+// catalogo UIF de instrumentos monetarios.
+var INST_ALTO = [['NINGUNO','Ninguno'],['ACTIVOS_VIRTUALES','Activos virtuales'],['METALES','Oro, plata o metales preciosos'],['CHEQUES_VIAJERO','Cheques de viajero'],['VARIOS','Mas de uno de los anteriores']];
+var INST_ALTO_COD = { '16': 'ACTIVOS_VIRTUALES', '13': 'METALES', '14': 'METALES', '15': 'METALES', '7': 'CHEQUES_VIAJERO' };
+// Valor del perfil para una lista de categorias usadas.
+function instAltoDe(cats) {
+  var u = []; (cats || []).forEach(function(k){ if (k && u.indexOf(k) < 0) u.push(k); });
+  return !u.length ? 'NINGUNO' : u.length === 1 ? u[0] : 'VARIOS';
+}
+// Categorias de alto riesgo entre los instrumentos observados (descripciones).
+function instAltoObservado(descs) {
+  var cats = [];
+  INSTRUMENTOS_MON.forEach(function(x){ if (INST_ALTO_COD[x.codigo] && (descs || []).indexOf(x.desc) >= 0) cats.push(INST_ALTO_COD[x.codigo]); });
+  return instAltoDe(cats);
+}
 var CANALES_OPERACION = [['DIRECTA','Directamente con el cliente'],['INTERMEDIARIO','A traves de un intermediario (comisionista, broker o apoderado)']];
 var RAZON_OPERA_MX = [['NEG_PERSONALES','Negocios personales'],['NEG_EMPRESARIALES','Negocios empresariales'],['INVERSIONES','Inversiones'],
   ['VIVIENDA','Vivienda para residir en Mexico'],['SEGUNDA_RESIDENCIA','Segunda residencia o uso vacacional'],
@@ -8519,6 +8551,7 @@ function htmlPerfilTx(d) {
     // Articulo 23 Ter 1: el perfil inicial incluye los montos maximos mensuales
     // que el cliente estima operar; se comparan con lo operado.
     + fg('Monto maximo mensual que estima operar (MXN)', null, true) + num('ptx_monto_max_mensual', d.ptx_monto_max_mensual, '0.00')
+    + fg('Instrumentos de alto riesgo que usara', null, true) + sel('ptx_inst_alto', INST_ALTO, d.ptx_inst_alto || 'NINGUNO')
     + fg('Forma en que opera', null, true) + sel('canal_operacion', CANALES_OPERACION, d.canal_operacion || 'DIRECTA',
         ' onchange="var v=this.value;document.querySelectorAll(\'.canal-int\').forEach(function(e){e.style.display=(v===\'INTERMEDIARIO\'?\'\':\'none\');})"')
     + '<div class="fg canal-int" style="' + (d.canal_operacion === 'INTERMEDIARIO' ? '' : 'display:none') + '"><label class="lbl">Nombre del intermediario <span class="req">*</span></label>'
