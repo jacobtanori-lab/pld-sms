@@ -14919,7 +14919,31 @@ function guardarLiq(idEx) {
 
   var guardar = function() {
     if (idEx) {
-      spUpdate('PLD_Ops_Liq', idEx, datos, function(){ toast('Operacion actualizada','s'); pgOps(); });
+      spGetUno('PLD_Ops_Liq', idEx, function(prev){
+        prev = prev || {};
+        // La edicion reescribe el registro: se conserva lo que ya decidieron el
+        // screening, el oficial de cumplimiento y los avisos.
+        ['tercero_scr', 'scr_estado', 'scr_motivo', 'devolucion', 'decision_69b', 'reportada', 'ref_aviso_reportado'].forEach(function(k){
+          if (prev[k] !== undefined && datos[k] === undefined) datos[k] = prev[k];
+        });
+        // Si ahora paga un tercero, o cambia el tercero, se repite el screening.
+        var cambioTer = datos.pagador === 'TERCERO'
+          && (prev.pagador !== 'TERCERO' || scrNorm(prev.tercero_nombre || '') !== scrNorm(datos.tercero_nombre || ''));
+        var stTer = cambioTer ? screeningTercero(cliOp, datos) : null;
+        if (stTer) {
+          datos.tercero_scr = stTer.campos.tercero_scr;
+          // Una operacion ya rechazada sigue rechazada aunque cambie el tercero.
+          if (prev.scr_estado !== 'RECHAZADA') {
+            datos.scr_estado = stTer.campos.scr_estado || '';
+            datos.scr_motivo = stTer.campos.scr_motivo || '';
+          }
+        }
+        spUpdate('PLD_Ops_Liq', idEx, datos, function(){
+          datos.id = idEx;
+          if (stTer) alertasTercero(cliOp, datos, stTer);
+          toast('Operacion actualizada','s'); pgOps();
+        });
+      });
     } else {
       var stTer = screeningTercero(cliOp, datos);
       if (stTer) Object.assign(datos, stTer.campos);
