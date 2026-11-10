@@ -4458,7 +4458,7 @@ function pgConfigEBRReglas() {
     + fijo('Contramedidas del GAFI en el cliente o en sus personas relacionadas', 'Bloquea el alta')
     + fijo('Coincidencia confirmada en una lista de sanciones o en el 69-B del SAT', 'Bloquea al cliente')
     + fijo('Compraventa: efectivo declarado por encima de 8,025 UMA (art. 32 LFPIORPI)', 'Bloquea el alta')
-    + fijo('Arrendamiento: efectivo por encima de 3,210 UMA al mes (art. 32 LFPIORPI)', 'Se revisara en las operaciones')
+    + fijo('Arrendamiento: efectivo de 3,210 UMA o mas al mes por contrato (art. 32 LFPIORPI)', 'Alerta en cada operacion; Alto en la revaloracion')
     + '</div></div>'
 
     + '<div class="card"><div class="card-h"><span class="card-t">Matriz de reglas</span><span style="font-size:12px;color:var(--tx3)">Una por operacion, una columna por tipo de persona</span></div>'
@@ -6393,7 +6393,7 @@ function opsDelClienteReval(c, ops, desde, hasta) {
 // Lo que realmente paso en la ventana.
 function observadoReval(ops) {
   var o = { n: ops.length, meses: {}, porMes: {}, efectivoN: 0, efectivoMXN: 0, totalMXN: 0, monedas: {}, instrumentos: [],
-            pagoConDato: 0, terceros: false, tercerosNombres: [], contratos: [] };
+            pagoConDato: 0, terceros: false, tercerosNombres: [], contratos: [], efArt32: {} };
   ops.forEach(function(op){
     var m = (op.monto_mxn !== undefined && op.monto_mxn !== null && op.monto_mxn !== '')
       ? (parseFloat(op.monto_mxn) || 0)
@@ -6404,6 +6404,10 @@ function observadoReval(ops) {
     var im = INSTRUMENTOS_MON.filter(function(x){ return x.codigo === String(op.instrumento_monetario || ''); })[0];
     if (im && o.instrumentos.indexOf(im.desc) < 0) o.instrumentos.push(im.desc);
     if (String(op.instrumento_monetario) === '1') { o.efectivoN++; o.efectivoMXN += m; }   // 1 = Efectivo
+    if ((op.fraccion || 'INM') === 'ARI' && esEfectivoArt32(op) && f) {
+      var kEf = String(op.contrato_id || '') + '|' + f.substring(0, 6);
+      o.efArt32[kEf] = (o.efArt32[kEf] || 0) + m;
+    }
     if (op.pagador) {
       o.pagoConDato++;
       if (op.pagador === 'TERCERO') { o.terceros = true; if (op.tercero_nombre && o.tercerosNombres.indexOf(op.tercero_nombre) < 0) o.tercerosNombres.push(op.tercero_nombre); }
@@ -6495,8 +6499,12 @@ function evaluarReval(c, ops) {
   var instObs = ob.n ? instAltoObservado(ob.instrumentos) : '';
   if (instObs && instObs !== 'NINGUNO' && (c.ptx_inst_alto || 'NINGUNO') === 'NINGUNO')
     ap.desv.push('Pagos con ' + ptxEtiqueta(INST_ALTO, instObs).toLowerCase() + '; declaro que no usaria instrumentos de alto riesgo');
+  // Arrendamiento: efectivo de un contrato en un mes por encima del art. 32.
+  var limA = limiteEfectivoArr();
+  var efExc = c.es_arrendamiento === 'SI' && limA > 0 && Object.keys(ob.efArt32 || {}).some(function(k){ return ob.efArt32[k] >= limA; });
+  if (efExc) ap.desv.push('Efectivo o metales preciosos de 3,210 UMA o mas en un mes y contrato (art. 32 fr. VII LFPIORPI): pago prohibido');
   ap.datos._reval = { desv: ap.desv.length > 0, efNoDecl: ob.efectivoN > 0 && sinEfDecl, maxMesMXN: ob.n ? ob.maxMesMXN : undefined,
-                      instAlto: (instObs && instObs !== 'NINGUNO') ? instObs : undefined };
+                      instAlto: (instObs && instObs !== 'NINGUNO') ? instObs : undefined, efExcede: efExc || undefined };
   var r = calcEBR(ap.datos);
   var ant = c.riesgo || '';
   var ia = NIVELES_EBR.indexOf(ant), in_ = NIVELES_EBR.indexOf(r.nivel);
@@ -7554,6 +7562,7 @@ function perfilRiesgo(d) {
     p.anual = false;
   }
   var rv = d._reval || {};
+  if (rv.efExcede) p.ef = 'excede';   // arrendamiento: efectivo observado sobre el limite del art. 32
   p.desv = !!rv.desv;
   p.efNoDecl = !!rv.efNoDecl;
   // Instrumentos de alto riesgo: lo observado en la revaloracion, o lo declarado.
@@ -10344,7 +10353,7 @@ function renderOpsCliente() {
         var badgeOp = o.reportada===true
           ? '<span class="pill p-vd" style="font-size:10px">Reportada: '+(o.ref_aviso_reportado||o.ref_aviso||'')+'</span>'
           : '<span class="pill p-gr" style="font-size:10px">Pendiente</span>';
-        badgeOp = pillScrOp(o) || badgeOp;
+        badgeOp = (pillScrOp(o) || badgeOp) + pillEfArt32(o);
         return '<tr>'
           +'<td><a href="#" onclick="verLiq(\''+o.id+'\',\''+c.id+'\');return false" title="Ver detalle">'+String(o.fecha_pago||'-').substring(0,10)+'</a>'
           +((o.ediciones||[]).length ? ' <span style="font-size:10px;color:var(--tx3)" title="Editada">editada</span>' : '')+'</td>'
@@ -13555,7 +13564,7 @@ function cargarOpsRegistros(fraccion) {
         var badgeOp = op.reportada===true
           ? '<span class="pill p-vd" style="font-size:10px">Reportada: '+(op.ref_aviso_reportado||op.ref_aviso||'')+'</span>'
           : '<span class="pill p-gr" style="font-size:10px">Pendiente</span>';
-        badgeOp = pillScrOp(op) || badgeOp;
+        badgeOp = (pillScrOp(op) || badgeOp) + pillEfArt32(op);
         var sub = parseFloat(op.subtotal||op.monto||0);
         var iva = parseFloat(op.iva||0);
         var acc = parseFloat(op.accesorios||0);
@@ -13637,6 +13646,7 @@ function verLiq(id, origen) {
       + fcHtml('Accesorios', fmtMXN(parseFloat(o.accesorios) || 0))
       + fcHtml('Total de la operacion', fmtMXN(parseFloat(o.total_operacion || o.monto) || 0))
       + fcHtml('Monto en MXN', fmtMXN(parseFloat(o.monto_mxn) || 0) + capEsc(tc))
+      + (o.ef_art32 && o.ef_art32.excede ? fcHtml('Limite de efectivo (art. 32)', '<span style="color:var(--rj)">' + capEsc(textoEfArt32(o.ef_art32)) + '</span>') : '')
       + fcHtml('Quien realiza el pago', o.pagador === 'TERCERO' ? 'Un tercero: ' + capEsc(o.tercero_nombre || '') : o.pagador === 'CLIENTE' ? 'El cliente' : 'Sin dato')
       + (o.fraccion === 'ARI' ? fcHtml('Contrato', capEsc(o.contrato_desc || '')) : '')
       + fcHtml('Referencia de aviso', capEsc(o.ref_aviso || ''))
@@ -14183,6 +14193,68 @@ function alertasTercero(cli, op, st) {
   (function sig(){ var p = pasos.shift(); if (p) p(sig); })();
   if (st.exacta.length) toast('Operacion RECHAZADA: el tercero que paga coincide con ' + st.exacta[0].lista + '. Se aviso al oficial de cumplimiento', 'e');
   else if (st.fiscal.length || st.similares.length) toast('El tercero que paga tiene coincidencias en listas: la operacion queda en revision', 'w');
+}
+// ── Limite de efectivo en arrendamiento (art. 32 fr. VII LFPIORPI) ──
+// Queda prohibido pagar en efectivo (monedas y billetes, nacionales o
+// extranjeros, y metales preciosos) el uso o goce de inmuebles por un valor
+// igual o superior a 3,210 UMA mensuales. Se revisa por cliente, contrato y
+// mes, con cada operacion que se registra o se edita.
+var INST_EFECTIVO_ART32 = ['1', '13', '14', '15'];   // efectivo, oro o platino amonedados, plata amonedada, metales preciosos
+function esEfectivoArt32(o) { return !!o && INST_EFECTIVO_ART32.indexOf(String(o.instrumento_monetario || '')) >= 0; }
+function limiteEfectivoArr() { return (Number(CFG_UMA.DIARIA) || 0) * (Number(CFG_UMA.UMBRAL_ARI) || 3210); }
+function montoOpMXN(o) {
+  return (o.monto_mxn !== undefined && o.monto_mxn !== null && o.monto_mxn !== '')
+    ? (parseFloat(o.monto_mxn) || 0)
+    : montoAMXN(o.total_operacion || o.monto || 0, o.moneda, o.fecha_pago).mxn;
+}
+// Efectivo del mismo cliente, contrato y mes que la operacion op (incluida).
+function efectivoArrMes(ops, op) {
+  var mes = String(op.fecha_pago || '').substring(0, 7), ctr = String(op.contrato_id || '');
+  var mismo = function(o){
+    return op.id_cliente_ref ? String(o.id_cliente_ref || '') === String(op.id_cliente_ref)
+      : (op.num_cliente && String(o.num_cliente || '') === String(op.num_cliente));
+  };
+  var lista = (ops || []).filter(function(o){
+    return (!op.id || String(o.id) !== String(op.id)) && mismo(o) && (o.fraccion || 'INM') === 'ARI'
+      && String(o.fecha_pago || '').substring(0, 7) === mes && String(o.contrato_id || '') === ctr
+      && esEfectivoArt32(o) && !opDevuelta(o);
+  });
+  if (esEfectivoArt32(op) && !opDevuelta(op)) lista = lista.concat([op]);
+  var total = lista.reduce(function(s, o){ return s + montoOpMXN(o); }, 0), lim = limiteEfectivoArr();
+  return { mes: mes, contrato_id: ctr, contrato_desc: op.contrato_desc || '', efectivo: Math.round(total * 100) / 100,
+           pagos: lista.length, limite: Math.round(lim * 100) / 100, uma: CFG_UMA.DIARIA, excede: lim > 0 && total >= lim, fecha: hoy() };
+}
+function textoEfArt32(r) {
+  return 'En ' + r.mes + (r.contrato_desc ? ', contrato ' + r.contrato_desc : '') + ', se recibieron ' + fmtMXN(r.efectivo)
+    + ' en efectivo o metales preciosos en ' + r.pagos + (r.pagos === 1 ? ' pago' : ' pagos') + '. El limite del art. 32 fr. VII de la LFPIORPI'
+    + ' para el uso o goce de inmuebles es de 3,210 UMA mensuales (' + fmtMXN(r.limite) + '): desde ese monto no se puede aceptar el pago en efectivo.';
+}
+// Alerta al oficial de cumplimiento: una por cliente, contrato y mes; si ya
+// hay una abierta, se actualiza con el nuevo monto.
+function alertaEfectivoArt32(cli, op, r) {
+  if (!r || !r.excede) return;
+  var clave = [op.id_cliente_ref || op.num_cliente || '', r.contrato_id, r.mes].join('|');
+  var desc = textoEfArt32(r) + '\nEl oficial de cumplimiento debe revisar la operacion.';
+  spAlertasDeCliente({ id_cliente_ref: op.id_cliente_ref, num_cliente: op.num_cliente }, function(alts){
+    var ab = (alts || []).filter(function(a){ return a.clave_art32 === clave && a.estatus !== 'Cerrada'; })[0];
+    if (ab) { spPatch('PLD_Alertas', ab.id, { descripcion: desc, monto_acumulado: r.efectivo, num_operaciones: r.pagos, op_ref: op.id || ab.op_ref || '' }, null); return; }
+    spCreate('PLD_Alertas', {
+      Title: 'ALT-EF32-' + Date.now(),
+      nombre_cliente: cli ? nombreCliente(cli) : (op.nombre_cliente || ''), num_cliente: (cli && cli.num_cliente) || op.num_cliente || '',
+      id_cliente_ref: (cli && cli.id) || op.id_cliente_ref || '', fraccion: 'ARI',
+      categoria: 'Efectivo', tipo: 'Efectivo por encima del limite legal (art. 32 LFPIORPI)', nivel: 'Alto',
+      clave_art32: clave, op_ref: op.id || '', monto_acumulado: r.efectivo, monto_umbral: r.limite, num_operaciones: r.pagos,
+      descripcion: desc, estatus: 'Abierta', estatus_atencion: 'Pendiente',
+      asesor_id: (cli && cli.asesor_id) || '', asesor_nombre: (cli && cli.asesor_nombre) || '',
+      registrado_por: App.cuenta ? App.cuenta.username : '', fecha_registro: hoy(),
+      entidad_id: op.entidad_id || (cli && cli.entidad_id) || '', entidad_nombre: op.entidad_nombre || (cli && cli.entidad_nombre) || ''
+    }, null);
+  });
+  toast('Efectivo por encima del limite del art. 32: ' + fmtMXN(r.efectivo) + ' en ' + r.mes + '. Se aviso al oficial de cumplimiento', 'e');
+}
+function pillEfArt32(o) {
+  return (o && o.ef_art32 && o.ef_art32.excede)
+    ? ' <span class="pill p-rj" style="font-size:10px" title="' + capEsc(textoEfArt32(o.ef_art32)) + '">Efectivo art. 32</span>' : '';
 }
 // Operacion cuyos recursos se devolvieron: no cuenta en acumulados, umbrales,
 // perfil ni avisos. Rechazada sin devolucion sigue contando.
@@ -15018,7 +15090,7 @@ function guardarLiq(idEx) {
   datos.tc_fecha             = conv.fecha_tc;
   datos.tc_estimado          = conv.estimado;
 
-  var guardar = function() {
+  var guardarFinal = function(rEf) {
     if (idEx) {
       spGetUno('PLD_Ops_Liq', idEx, function(prev){
         if (!prev) { toast('No se pudo leer la operacion; no se guardo el cambio','e'); return; }
@@ -15054,6 +15126,7 @@ function guardarLiq(idEx) {
         spUpdate('PLD_Ops_Liq', idEx, datos, function(){
           datos.id = idEx;
           if (stTer) alertasTercero(cliOp, datos, stTer);
+          if (rEf) alertaEfectivoArt32(cliOp, datos, rEf);
           // El monto o la fecha pudieron cambiar: se revisan de nuevo los
           // umbrales (la alerta abierta se actualiza, no se duplica) y el perfil.
           verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, opDevuelta(datos) ? 0 : subtotal, datos.fecha_pago, idEx, function(){
@@ -15070,6 +15143,7 @@ function guardarLiq(idEx) {
       spCreate('PLD_Ops_Liq', datos, function(item){
         if (item) {
           alertasTercero(cliOp, item, stTer);
+          if (rEf) alertaEfectivoArt32(cliOp, item, rEf);
           // Pasar el id del item recién creado para excluirlo del acumulado
           verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, subtotal, datos.fecha_pago, item.id, function(){
             alertaDDROperacion(idCli, datos);
@@ -15081,6 +15155,17 @@ function guardarLiq(idEx) {
         }
       });
     }
+  };
+  // Arrendamiento pagado en efectivo: se suma lo del mismo contrato y mes y,
+  // si llega al limite del art. 32, se confirma antes de registrar.
+  var guardar = function() {
+    if (fraccion !== 'ARI' || !esEfectivoArt32(datos)) { datos.ef_art32 = ''; guardarFinal(null); return; }
+    spGet('PLD_Ops_Liq', function(todas){
+      var r = efectivoArrMes(todas || [], Object.assign({}, datos, { id: idEx || '' }));
+      if (r.excede && !confirm(textoEfArt32(r) + '\n\nSi registras la operacion, se marca y se avisa al oficial de cumplimiento. ¿Registrarla?')) return;
+      datos.ef_art32 = r.excede ? r : '';
+      guardarFinal(r.excede ? r : null);
+    });
   };
   if (pagador === 'TERCERO') { pensador('Revisando al tercero en las listas...'); conListasScr(function(){ pensadorOff(); guardar(); }); }
   else guardar();
@@ -15157,11 +15242,11 @@ function cargarLayoutExcel(input) {
         // Cargar SheetJS dinámicamente
         var script = document.createElement('script');
         script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-        script.onload = function() { conListasScr(function(){ procesarExcel(data, fraccion); }); };
+        script.onload = function() { conListasScr(function(){ spGet('PLD_Ops_Liq', function(t){ App._opsLiqPrevias = t || []; procesarExcel(data, fraccion); }); }); };
         script.onerror = function() { pensadorOff(); toast('No se pudo cargar el procesador de Excel. Usa formato CSV.', 'e'); };
         document.head.appendChild(script);
       } else {
-        conListasScr(function(){ procesarExcel(data, fraccion); });
+        conListasScr(function(){ spGet('PLD_Ops_Liq', function(t){ App._opsLiqPrevias = t || []; procesarExcel(data, fraccion); }); });
       }
     } catch(err) {
       console.error(err);
@@ -15330,6 +15415,16 @@ function procesarExcel(data, fraccion) {
 
     pensadorPaso('Guardando ' + registros.length + ' registros...');
     var guardados = 0;
+    // Limite de efectivo en arrendamiento: cada fila suma lo ya registrado y
+    // las filas anteriores del archivo; la alerta sale una vez por cliente,
+    // contrato y mes, con la ultima fila (el monto mas alto).
+    var rArt32 = [], ultimoArt32 = {};
+    registros.forEach(function(d, i){
+      var r = ((d.fraccion || 'INM') === 'ARI' && esEfectivoArt32(d)) ? efectivoArrMes((App._opsLiqPrevias || []).concat(registros.slice(0, i)), d) : null;
+      rArt32[i] = r;
+      d.ef_art32 = r && r.excede ? r : '';
+      if (r && r.excede) ultimoArt32[[d.id_cliente_ref || d.num_cliente || '', r.contrato_id, r.mes].join('|')] = i;
+    });
     registros.forEach(function(datos, idx) {
       datos.Title = 'LIQ-EXCEL-' + Date.now() + '-' + idx;
       var cliTer = null; App.clientes.forEach(function(c){ if (String(c.id) === String(datos.id_cliente_ref)) cliTer = c; });
@@ -15338,6 +15433,8 @@ function procesarExcel(data, fraccion) {
 
       spCreate('PLD_Ops_Liq', datos, function() {
         alertasTercero(cliTer, datos, stTer);
+        var rE = rArt32[idx];
+        if (rE && rE.excede && ultimoArt32[[datos.id_cliente_ref || datos.num_cliente || '', rE.contrato_id, rE.mes].join('|')] === idx) alertaEfectivoArt32(cliTer, datos, rE);
         guardados++;
         pensadorPaso('Guardando registro ' + guardados + ' de ' + registros.length + '...');
         // Verificar umbrales por cada registro usando el motor central
