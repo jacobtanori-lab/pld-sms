@@ -10346,7 +10346,8 @@ function renderOpsCliente() {
           : '<span class="pill p-gr" style="font-size:10px">Pendiente</span>';
         badgeOp = pillScrOp(o) || badgeOp;
         return '<tr>'
-          +'<td>'+String(o.fecha_pago||'-').substring(0,10)+'</td>'
+          +'<td><a href="#" onclick="verLiq(\''+o.id+'\',\''+c.id+'\');return false" title="Ver detalle">'+String(o.fecha_pago||'-').substring(0,10)+'</a>'
+          +((o.ediciones||[]).length ? ' <span style="font-size:10px;color:var(--tx3)" title="Editada">editada</span>' : '')+'</td>'
           +'<td>'+(fp?fp.desc:o.forma_pago||'-')+'</td>'
           +'<td>'+(mo?mo.desc:o.moneda||'-')+'</td>'
           +'<td style="font-size:12px">'+(o.pagador==='TERCERO' ? 'Tercero: '+capEsc(o.tercero_nombre||'') : o.pagador==='CLIENTE' ? 'Cliente' : '<span style="color:var(--tx3)">Sin dato</span>')
@@ -13560,7 +13561,8 @@ function cargarOpsRegistros(fraccion) {
         var acc = parseFloat(op.accesorios||0);
         var tot = parseFloat(op.total_operacion||sub);
         html += '<tr>'
-          +'<td>'+String(op.fecha_pago||'-').substring(0,10)+'</td>'
+          +'<td><a href="#" onclick="verLiq(\''+op.id+'\',\'ops\');return false" title="Ver detalle">'+String(op.fecha_pago||'-').substring(0,10)+'</a>'
+          +((op.ediciones||[]).length ? ' <span style="font-size:10px;color:var(--tx3)" title="Editada">editada</span>' : '')+'</td>'
           +'<td>'+(fp?fp.desc:op.forma_pago||'-')+'</td>'
           +'<td>'+(im?im.desc:op.instrumento_monetario||'-')+'</td>'
           +'<td>'+(mo?mo.desc:op.moneda||'-')+'</td>'
@@ -13597,6 +13599,85 @@ function editarOp(opId) {
 var CAMPOS_EDICION_OP = [['id_cliente_ref','cliente'],['pagador','quien paga'],['tercero_nombre','tercero'],['contrato_id','contrato'],
   ['fecha_pago','fecha de pago'],['forma_pago','forma de pago'],['instrumento_monetario','instrumento'],['moneda','moneda'],
   ['subtotal','subtotal'],['iva','IVA'],['accesorios','accesorios'],['ref_aviso','referencia de aviso'],['observaciones','observaciones']];
+
+// Texto legible de un valor del rastro de ediciones.
+function fmtValorEdicionOp(campo, v) {
+  if (v === undefined || v === null || v === '') return '<span style="color:var(--tx3)">vacio</span>';
+  var desc = function(arr){ var x = arr.find(function(y){ return String(y.codigo) === String(v); }); return x ? x.codigo + ' - ' + x.desc : v; };
+  if (campo === 'forma de pago') return capEsc(desc(FORMAS_PAGO));
+  if (campo === 'instrumento') return capEsc(desc(INSTRUMENTOS_MON));
+  if (campo === 'moneda') return capEsc(desc(MONEDAS));
+  if (campo === 'quien paga') return v === 'TERCERO' ? 'Un tercero' : v === 'CLIENTE' ? 'El cliente' : capEsc(v);
+  if (campo === 'cliente') { var c = (App.clientes || []).find(function(x){ return String(x.id) === String(v); }); return capEsc(c ? nombreCliente(c) : v); }
+  if (['subtotal', 'IVA', 'accesorios'].indexOf(campo) >= 0) return fmtMXN(parseFloat(v) || 0);
+  return capEsc(v);
+}
+// Detalle de una operacion de liquidacion: datos, screening del tercero,
+// decisiones del oficial y rastro de cada edicion. origen: 'ops' o el id del
+// cliente cuya ficha se abrio.
+function verLiq(id, origen) {
+  spGetUno('PLD_Ops_Liq', id, function(o){
+    if (!o) { toast('No se encontro la operacion','e'); return; }
+    var desc = function(arr, v){ var x = arr.find(function(y){ return String(y.codigo) === String(v); }); return x ? x.desc : (v || ''); };
+    var volver = origen && origen !== 'ops' ? 'abrirFicha(\'' + origen + '\')' : 'pgOps()';
+    var puedeEditar = App.rol === 'admin' && o.reportada !== true;
+    var tc = o.tipo_cambio_aplicado && String(o.moneda) !== '1' ? ' (tipo de cambio ' + o.tipo_cambio_aplicado + (o.tc_fecha ? ' del ' + o.tc_fecha : '') + (o.tc_estimado ? ', estimado' : '') + ')' : '';
+    var estado = pillScrOp(o) || (o.reportada === true
+      ? '<span class="pill p-vd">Reportada: ' + capEsc(o.ref_aviso_reportado || o.ref_aviso || '') + '</span>'
+      : '<span class="pill p-gr">Pendiente</span>');
+    var datos = fgHtml(
+        fcHtml('Cliente', capEsc(o.nombre_cliente || '') + (o.num_cliente ? ' · #' + nStr(o.num_cliente) : ''))
+      + fcHtml('Fraccion', o.fraccion === 'ARI' ? 'XV - Arrendamiento' : 'V - Compraventa')
+      + fcHtml('Fecha de pago', capEsc(String(o.fecha_pago || '').substring(0, 10)))
+      + fcHtml('Forma de pago', capEsc(desc(FORMAS_PAGO, o.forma_pago)))
+      + fcHtml('Instrumento monetario', capEsc(desc(INSTRUMENTOS_MON, o.instrumento_monetario)))
+      + fcHtml('Moneda', capEsc(desc(MONEDAS, o.moneda)))
+      + fcHtml('Subtotal', fmtMXN(parseFloat(o.subtotal || o.monto) || 0))
+      + fcHtml('IVA', fmtMXN(parseFloat(o.iva) || 0))
+      + fcHtml('Accesorios', fmtMXN(parseFloat(o.accesorios) || 0))
+      + fcHtml('Total de la operacion', fmtMXN(parseFloat(o.total_operacion || o.monto) || 0))
+      + fcHtml('Monto en MXN', fmtMXN(parseFloat(o.monto_mxn) || 0) + capEsc(tc))
+      + fcHtml('Quien realiza el pago', o.pagador === 'TERCERO' ? 'Un tercero: ' + capEsc(o.tercero_nombre || '') : o.pagador === 'CLIENTE' ? 'El cliente' : 'Sin dato')
+      + (o.fraccion === 'ARI' ? fcHtml('Contrato', capEsc(o.contrato_desc || '')) : '')
+      + fcHtml('Referencia de aviso', capEsc(o.ref_aviso || ''))
+      + fcHtml('Observaciones', capEsc(o.observaciones || ''))
+      + fcHtml('Registrada por', capEsc((o.registrado_por || '') + (o.fecha_registro ? ', ' + String(o.fecha_registro).substring(0, 10) : ''))));
+    // Screening del tercero y decisiones del oficial.
+    var scr = '';
+    if (o.pagador === 'TERCERO') {
+      var ts = o.tercero_scr || {};
+      var res = { SIN_COINCIDENCIAS: 'Sin coincidencias', COINCIDENCIAS: ts.coincidencias + ' coincidencia(s)', SIN_LISTAS: 'No se hizo: no habia listas cargadas' }[ts.resultado] || 'Sin registro (operacion anterior al screening del tercero)';
+      var dec = function(d, etq){ return d ? fcHtml(etq, capEsc(({ DEVOLVER: 'Se devuelven los recursos', NO_DEVOLVER: 'No se devuelven los recursos', ACEPTAR: 'Aceptada', RECHAZAR: 'Rechazada' })[d.decision] || d.decision) + '. ' + capEsc(d.fundamento || '') + ' <span style="color:var(--tx3)">(' + capEsc(d.por || '') + ', ' + capEsc(d.fecha || '') + ')</span>') : ''; };
+      scr = '<div class="card"><div class="card-h"><span class="card-t">Screening del tercero que paga</span></div><div class="card-b">' + fgHtml(
+          fcHtml('Resultado', capEsc(res) + (ts.fecha ? ' <span style="color:var(--tx3)">(' + capEsc(ts.fecha) + (ts.listas ? ', ' + ts.listas + ' listas' : '') + ')</span>' : ''))
+        + (o.scr_estado ? fcHtml('Estado', capEsc({ RECHAZADA: 'Rechazada', EN_REVISION: 'En revision', ACEPTADA: 'Aceptada' }[o.scr_estado] || o.scr_estado) + (o.scr_motivo ? '. ' + capEsc(o.scr_motivo) : '')) : '')
+        + dec(o.decision_69b, 'Decision sobre el 69-B')
+        + dec(o.devolucion, 'Devolucion de los recursos')) + '</div></div>';
+    }
+    // Rastro de ediciones.
+    var ed = o.ediciones || [];
+    var filas = [];
+    ed.slice().reverse().forEach(function(e){
+      (e.cambios || []).forEach(function(c, i){
+        filas.push('<tr>' + (i === 0 ? '<td rowspan="' + e.cambios.length + '" style="vertical-align:top;white-space:nowrap">' + capEsc(e.fecha || '') + '</td><td rowspan="' + e.cambios.length + '" style="vertical-align:top">' + capEsc(e.usuario || '') + '</td>' : '')
+          + '<td>' + capEsc(c.campo) + '</td><td>' + fmtValorEdicionOp(c.campo, c.antes) + '</td><td>' + fmtValorEdicionOp(c.campo, c.despues) + '</td></tr>');
+      });
+    });
+    var hist = '<div class="card"><div class="card-h"><span class="card-t">Historial de cambios</span>'
+      + '<span class="pill ' + (ed.length ? 'p-am' : 'p-gr') + '">' + (ed.length ? ed.length + (ed.length === 1 ? ' edicion' : ' ediciones') : 'Sin ediciones') + '</span></div>'
+      + (filas.length
+          ? '<div class="twrap"><table><thead><tr><th>Fecha</th><th>Usuario</th><th>Campo</th><th>Antes</th><th>Despues</th></tr></thead><tbody>' + filas.join('') + '</tbody></table></div>'
+          : '<div class="card-b" style="font-size:13px;color:var(--tx3)">La operacion no se ha editado desde que se registro.</div>')
+      + '</div>';
+    setMain('<div class="phdr"><div><div class="ptit">Operacion del ' + capEsc(String(o.fecha_pago || '').substring(0, 10)) + '</div>'
+      + '<div class="psub">' + capEsc(o.nombre_cliente || '') + ' · ' + estado + '</div></div>'
+      + '<div style="display:flex;gap:8px">'
+      + (puedeEditar ? '<button class="btn btn-p" onclick="editarOp(\'' + o.id + '\')">Editar</button>' : '')
+      + '<button class="btn" onclick="' + volver + '">Volver</button></div></div>'
+      + '<div class="card"><div class="card-h"><span class="card-t">Datos de la operacion</span></div><div class="card-b">' + datos + '</div></div>'
+      + scr + hist);
+  });
+}
 
 function eliminarOp(opId) {
   if (App.rol !== 'admin') { toast('Solo un administrador puede eliminar operaciones','e'); return; }
