@@ -6386,7 +6386,7 @@ function opsDelClienteReval(c, ops, desde, hasta) {
     var mismo = (o.id_cliente_ref && String(o.id_cliente_ref) === String(c.id))
       || (!o.id_cliente_ref && c.num_cliente && String(o.num_cliente) === String(c.num_cliente));
     var f = fechaXML(o.fecha_pago);
-    return mismo && f && f >= d && f <= h;
+    return mismo && f && f >= d && f <= h && !opDevuelta(o);
   });
 }
 
@@ -10324,7 +10324,7 @@ function renderOpsCliente() {
     var opsINM = ops.filter(function(o){ return (o.fraccion||'INM')==='INM'; });
     var opsARI = ops.filter(function(o){ return (o.fraccion||'INM')==='ARI'; });
 
-    function totalOps(arr){ return arr.reduce(function(s,o){ return s+parseFloat(o.monto||0); },0); }
+    function totalOps(arr){ return arr.reduce(function(s,o){ return s+(opDevuelta(o) ? 0 : parseFloat(o.monto||0)); },0); }
     function umbralLabel(frac){
       var umas = frac==='ARI' ? CFG_UMA.UMBRAL_ARI : CFG_UMA.UMBRAL_INM;
       var pesos = CFG_UMA.DIARIA * umas;
@@ -11048,6 +11048,7 @@ function marcarOpsReportadasDeAlerta(alerta, folio) {
 
     var opsAMarcar = todasOps.filter(function(o) {
       if (o.reportada === true) return false; // ya reportada, no tocar
+      if (opDevuelta(o)) return false;          // devuelta: no va en el aviso
 
       var mismoCliente = false;
       if (alerta.id_cliente_ref && o.id_cliente_ref === alerta.id_cliente_ref) mismoCliente = true;
@@ -11302,7 +11303,7 @@ function crearAvisoDesdeAlerta(alertaId) {
                            (a.num_cliente && String(o.num_cliente)===String(a.num_cliente));
         var mismafrac = (o.fraccion||'INM')===fraccion;
         var fechaOp = new Date(o.fecha_pago || '2000-01-01');
-        return mismoCliente && mismafrac && fechaOp >= hace6m;
+        return mismoCliente && mismafrac && fechaOp >= hace6m && !opDevuelta(o);
       });
 
       // Guardar IDs de las ops que se incluirán en este aviso para marcarlas al guardar
@@ -13538,7 +13539,7 @@ function cargarOpsRegistros(fraccion) {
     var html = '';
     Object.keys(porCliente).forEach(function(key) {
       var grupo = porCliente[key];
-      var totalMonto = grupo.ops.reduce(function(s,o){ return s+parseFloat(o.total_operacion||o.monto||0); }, 0);
+      var totalMonto = grupo.ops.reduce(function(s,o){ return s+(opDevuelta(o) ? 0 : parseFloat(o.total_operacion||o.monto||0)); }, 0);
       html += '<div class="card" style="margin-bottom:12px">'
         +'<div class="card-h"><span class="card-t">'+grupo.nombre+'</span>'
         +'<span style="font-size:12px;color:var(--tx3)">'+grupo.ops.length+' ops | Total: $'+totalMonto.toLocaleString('es-MX')+'</span>'
@@ -13711,6 +13712,7 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
     var opsCliente = todas.filter(function(o) {
       if (idNuevoItem && String(o.id) === String(idNuevoItem)) return false; // excluir la nueva
       if (o.reportada === true) return false; // excluir ops ya reportadas en un aviso
+      if (opDevuelta(o)) return false;          // recursos devueltos: no acumula
 
       var mismoCliente = false;
       if (idCli  && o.id_cliente_ref === idCli)   mismoCliente = true;
@@ -14081,7 +14083,11 @@ function alertasTercero(cli, op, st) {
   if (st.exacta.length) toast('Operacion RECHAZADA: el tercero que paga coincide con ' + st.exacta[0].lista + '. Se aviso al oficial de cumplimiento', 'e');
   else if (st.fiscal.length || st.similares.length) toast('El tercero que paga tiene coincidencias en listas: la operacion queda en revision', 'w');
 }
+// Operacion cuyos recursos se devolvieron: no cuenta en acumulados, umbrales,
+// perfil ni avisos. Rechazada sin devolucion sigue contando.
+function opDevuelta(o) { return !!(o && o.devolucion && o.devolucion.decision === 'DEVOLVER'); }
 function pillScrOp(o) {
+  if (opDevuelta(o)) return '<span class="pill p-gr" style="font-size:10px" title="Rechazada por screening; recursos devueltos. No cuenta en acumulados ni umbrales">Devuelta</span>';
   if (o.scr_estado === 'RECHAZADA') return '<span class="pill p-rj" style="font-size:10px" title="' + capEsc(o.scr_motivo || '') + '">Rechazada (screening)</span>';
   if (o.scr_estado === 'EN_REVISION') return '<span class="pill p-am" style="font-size:10px" title="' + capEsc(o.scr_motivo || '') + '">En revision (screening)</span>';
   return '';
@@ -14660,7 +14666,7 @@ function verificarPerfilTransaccional(idCli, nomCli, numCli, fechaOp, cb) {
     var ops = (todas||[]).filter(function(o){
       var mismo = (idCli && o.id_cliente_ref === idCli) ||
                   (numCli && String(o.num_cliente) === String(numCli));
-      return mismo && String(o.fecha_pago||'').substring(0,7) === mes;
+      return mismo && String(o.fecha_pago||'').substring(0,7) === mes && !opDevuelta(o);
     });
     if (!ops.length) { if (cb) cb(); return; }
 
