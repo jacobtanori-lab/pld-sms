@@ -6392,7 +6392,8 @@ function opsDelClienteReval(c, ops, desde, hasta) {
 
 // Lo que realmente paso en la ventana.
 function observadoReval(ops) {
-  var o = { n: ops.length, meses: {}, porMes: {}, efectivoN: 0, efectivoMXN: 0, totalMXN: 0, monedas: {}, instrumentos: [] };
+  var o = { n: ops.length, meses: {}, porMes: {}, efectivoN: 0, efectivoMXN: 0, totalMXN: 0, monedas: {}, instrumentos: [],
+            pagoConDato: 0, terceros: false, tercerosNombres: [], contratos: [] };
   ops.forEach(function(op){
     var m = (op.monto_mxn !== undefined && op.monto_mxn !== null && op.monto_mxn !== '')
       ? (parseFloat(op.monto_mxn) || 0)
@@ -6403,6 +6404,11 @@ function observadoReval(ops) {
     var im = INSTRUMENTOS_MON.filter(function(x){ return x.codigo === String(op.instrumento_monetario || ''); })[0];
     if (im && o.instrumentos.indexOf(im.desc) < 0) o.instrumentos.push(im.desc);
     if (String(op.instrumento_monetario) === '1') { o.efectivoN++; o.efectivoMXN += m; }   // 1 = Efectivo
+    if (op.pagador) {
+      o.pagoConDato++;
+      if (op.pagador === 'TERCERO') { o.terceros = true; if (op.tercero_nombre && o.tercerosNombres.indexOf(op.tercero_nombre) < 0) o.tercerosNombres.push(op.tercero_nombre); }
+    }
+    if (op.contrato_id && o.contratos.indexOf(String(op.contrato_id)) < 0) o.contratos.push(String(op.contrato_id));
     var mon = String(op.moneda || '1');
     o.monedas[mon === '1' ? 'MXN' : mon === '2' ? 'USD' : 'OTRA'] = true;
   });
@@ -6429,9 +6435,11 @@ function aplicarObservadoReval(c, ob) {
         + (c.ptx_arr_efectivo ? ptxEtiqueta(PTX_EFECTIVO, c.ptx_arr_efectivo).toLowerCase() : 'sin dato'));
     d.ptx_arr_efectivo = ef;
 
-    var vol = ob.n > ob.numMeses ? 'VARIAS' : 'UNA';
+    var vol = (ob.n > ob.numMeses || ob.contratos.length >= 2) ? 'VARIAS' : 'UNA';
     if (vol === 'VARIAS' && c.ptx_arr_numops !== 'VARIAS')
-      desv.push(ob.n + ' operaciones en ' + ob.numMeses + ' meses: mas de una por periodo; declaro una sola exhibicion');
+      desv.push(ob.contratos.length >= 2
+        ? 'Pagos de ' + ob.contratos.length + ' contratos en la ventana; declaro una sola exhibicion'
+        : ob.n + ' operaciones en ' + ob.numMeses + ' meses: mas de una por periodo; declaro una sola exhibicion');
     d.ptx_arr_numops = vol;
 
     var frec = ob.numMeses >= 4 ? 'MENSUAL' : ob.numMeses >= 2 ? 'TRIMESTRAL' : (c.ptx_arr_frec === 'ANUAL' ? 'ANUAL' : 'SEMESTRAL');
@@ -6459,6 +6467,17 @@ function aplicarObservadoReval(c, ob) {
     if (c.ptx_cv_moneda && ob.moneda !== c.ptx_cv_moneda)
       desv.push('Pagos en ' + (ob.moneda === 'OTRA' ? 'otra divisa' : ob.moneda) + '; declaro ' + ptxEtiqueta(PTX_MONEDA, c.ptx_cv_moneda));
     d.ptx_cv_moneda = ob.moneda;
+  }
+  // Quien realizo los pagos: manda lo observado cuando las operaciones traen el
+  // dato. Sin pagos de terceros, solo se toma como "propias" si todas lo traen.
+  if (ob.pagoConDato) {
+    var esArrT = c.es_arrendamiento === 'SI';
+    var declTerc = esArrT ? c.ptx_arr_pago === 'TRANSF_TERCEROS' : c.ptx_cv_contrapartes === 'TERCEROS';
+    if (ob.terceros && !declTerc)
+      desv.push('Pagos de terceros' + (ob.tercerosNombres.length ? ' (' + ob.tercerosNombres.join(', ') + ')' : '') + '; declaro que paga el cliente');
+    var obsTerc = ob.terceros ? true : (ob.pagoConDato === ob.n ? false : declTerc);
+    if (esArrT) d.ptx_arr_pago = obsTerc ? 'TRANSF_TERCEROS' : (c.ptx_arr_pago === 'TRANSF_TERCEROS' ? 'TRANSF_PROPIA' : c.ptx_arr_pago);
+    else d.ptx_cv_contrapartes = obsTerc ? 'TERCEROS' : 'PROPIAS';
   }
   return { datos: d, desv: desv };
 }
@@ -7285,7 +7304,7 @@ var REGLAS_EBR = [
   { id: 't_terc', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Medio', t: { cv: 'Precio pagado desde cuentas de terceros', arr: 'Renta pagada por un tercero' }, c: function(p){ return p.terceros; } },
   { id: 't_inst', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Medio', d: 'inst', t: 'Pago con activos virtuales, metales preciosos o cheques de viajero', n: 'Lo declarado en el perfil o, al revalorar, lo operado', c: function(p){ return p.instAlto; } },
   { id: 't_interm', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Agravante', t: 'Opera a traves de un intermediario', n: 'Comisionista, broker o apoderado que actua entre el cliente y la empresa', c: function(p){ return p.intermediario; } },
-  { id: 't_vol', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Agravante', t: { cv: 'Más de 5 operaciones', arr: 'Más de una operación por periodo' }, c: function(p){ return p.volumen; } },
+  { id: 't_vol', g: 'tx', ops: R_AMB, tipos: R_C4, def: 'Agravante', t: { cv: 'Más de 5 operaciones', arr: 'Más de una operación por periodo, o pagos de varios contratos' }, c: function(p){ return p.volumen; } },
   { id: 'arr_anual', g: 'tx', ops: ['arr'], tipos: R_C4, def: 'Agravante', t: 'Pago anual por adelantado', c: function(p){ return p.anual; } },
 
   { id: 'c_ef_terc', g: 'ct', ops: R_AMB, tipos: R_C4, def: 'Alto', t: 'Cualquier uso de efectivo con pagos de terceros', c: function(p){ return p.ef !== 'nunca' && p.terceros; } },
@@ -7992,6 +8011,71 @@ function pdfCuestionarioDDR() {
   });
 }
 
+// ── Pestana "Contratos" (arrendamiento) ──
+var CTR_CAMPOS = [['identificador','Identificador'],['tipo_inmueble','Tipo de inmueble'],['domicilio','Domicilio del inmueble'],
+  ['inicio','Inicio'],['termino','Termino (vacio = indefinido)'],['renta','Renta mensual'],['moneda','Moneda']];
+function renderContratos(conservar) {
+  var c = App.clienteActual, ct = document.getElementById('fd-ctr');
+  if (!c || !ct) return;
+  if (!conservar || App._ctrId !== c.id) { App._ctrBorrador = JSON.parse(JSON.stringify(contratosDe(c))); App._ctrId = c.id; }
+  var lista = App._ctrBorrador;
+  var tipos = function(v){ return '<option value="">-- Seleccionar --</option>' + TIPOS_INMUEBLE.map(function(t){ return '<option value="' + t.codigo + '"' + (String(v) === t.codigo ? ' selected' : '') + '>' + t.desc + '</option>'; }).join(''); };
+  var filas = lista.map(function(k, i){
+    var inp = function(campo, tipo){ return '<td><input class="inp" data-k="' + campo + '"' + (tipo ? ' type="' + tipo + '"' : '') + ' value="' + capEsc(k[campo] || '') + '"></td>'; };
+    return '<tr data-ctr="' + capEsc(k.id) + '">' + inp('identificador')
+      + '<td><select class="sel" data-k="tipo_inmueble">' + tipos(k.tipo_inmueble) + '</select></td>'
+      + inp('domicilio') + inp('inicio', 'date') + inp('termino', 'date') + inp('renta', 'number')
+      + '<td><select class="sel" data-k="moneda"><option value="MXN"' + (k.moneda !== 'USD' ? ' selected' : '') + '>MXN</option><option value="USD"' + (k.moneda === 'USD' ? ' selected' : '') + '>USD</option></select></td>'
+      + '<td><button class="btn btn-sm" onclick="ctrQuitar(' + i + ')">Quitar</button></td></tr>';
+  }).join('');
+  var omision = lista.some(function(k){ return k.por_omision; });
+  ct.innerHTML = '<div style="font-size:12px;color:var(--tx2);margin-bottom:8px;line-height:1.6">Cada operacion de arrendamiento se liga a uno de estos contratos. '
+    + 'La revaloracion cuenta cuantos contratos tuvieron pagos en la ventana.</div>'
+    + (omision ? '<div class="alerta-banner"><span>Este expediente no tenia contratos registrados: se muestra uno tomado de su perfil. Revisa los datos y guarda para registrarlo.</span></div>' : '')
+    + '<div class="twrap"><table><thead><tr>' + CTR_CAMPOS.map(function(x){ return '<th>' + x[1] + '</th>'; }).join('') + '<th></th></tr></thead><tbody>'
+    + (filas || '<tr><td colspan="8" style="color:var(--tx3);font-size:12px">Sin contratos.</td></tr>') + '</tbody></table></div>'
+    + '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button class="btn btn-sm" onclick="ctrAgregar()">Agregar contrato</button>'
+    + '<button class="btn btn-p btn-sm" onclick="guardarContratos()">Guardar contratos</button></div>';
+}
+function ctrLeerDom() {
+  var lista = App._ctrBorrador || [];
+  document.querySelectorAll('#fd-ctr tr[data-ctr]').forEach(function(tr, i){
+    var k = lista[i]; if (!k) return;
+    tr.querySelectorAll('[data-k]').forEach(function(el){
+      var v = String(el.value || '').trim();
+      k[el.getAttribute('data-k')] = (el.tagName === 'SELECT' || el.type === 'date' || el.type === 'number') ? v : v.toUpperCase();
+    });
+  });
+  return lista;
+}
+function ctrAgregar() {
+  var lista = ctrLeerDom();
+  var n = lista.reduce(function(mx, k){ var x = parseInt(String(k.id).replace(/\D/g, ''), 10); return isNaN(x) ? mx : Math.max(mx, x); }, 0) + 1;
+  var c = App.clienteActual || {};
+  lista.push({ id: 'C' + n, identificador: 'CONTRATO ' + n, tipo_inmueble: '', domicilio: '', inicio: hoy(), termino: '', renta: '', moneda: c.renta_moneda === 'USD' ? 'USD' : 'MXN' });
+  renderContratos(true);
+}
+function ctrQuitar(i) {
+  var lista = ctrLeerDom();
+  lista.splice(i, 1);
+  renderContratos(true);
+}
+function guardarContratos() {
+  var c = App.clienteActual; if (!c) return;
+  var lista = ctrLeerDom().map(function(k){ var x = JSON.parse(JSON.stringify(k)); delete x.por_omision; return x; });
+  var falta = lista.filter(function(k){ return !k.identificador || !k.inicio; });
+  if (falta.length) { toast('Cada contrato necesita identificador y fecha de inicio', 'w'); return; }
+  var ids = lista.map(function(k){ return String(k.identificador).toUpperCase(); });
+  if (ids.some(function(x, i){ return ids.indexOf(x) !== i; })) { toast('Hay dos contratos con el mismo identificador', 'w'); return; }
+  spPatch('PLD_Clientes', c.id, { contratos_arr: lista }, function(ok){
+    if (!ok || ok.error) { toast('No se pudieron guardar los contratos', 'e'); return; }
+    c.contratos_arr = lista;
+    (App.clientes || []).forEach(function(x){ if (String(x.id) === String(c.id)) x.contratos_arr = lista; });
+    toast('Contratos guardados', 's');
+    renderContratos();
+  });
+}
+
 // ── Historial del grado de riesgo ──
 // Articulo 41, fraccion IV: conservar al menos diez anios los cambios del grado
 // de riesgo y del perfil transaccional. Cada evento queda como un registro
@@ -8035,14 +8119,17 @@ function perfilOperado(c, ob, desde, hasta) {
   if (!ob.n) return p;
   if (c.es_arrendamiento === 'SI') {
     p.campos.ptx_arr_efectivo = !ob.efectivoN ? 'NUNCA' : (ob.efectivoN / ob.n >= 0.5 ? 'HABITUAL' : 'OCASIONAL');
-    p.campos.ptx_arr_numops = ob.n > ob.numMeses ? 'VARIAS' : 'UNA';
+    p.campos.ptx_arr_numops = (ob.n > ob.numMeses || (ob.contratos || []).length >= 2) ? 'VARIAS' : 'UNA';
+    if (ob.pagoConDato) p.campos.ptx_arr_pago = ob.terceros ? 'TRANSF_TERCEROS' : (ob.pagoConDato === ob.n ? 'TRANSF_PROPIA' : c.ptx_arr_pago);
     p.campos.ptx_arr_frec = ob.numMeses >= 4 ? 'MENSUAL' : ob.numMeses >= 2 ? 'TRIMESTRAL' : (c.ptx_arr_frec === 'ANUAL' ? 'ANUAL' : 'SEMESTRAL');
     p.campos.renta_moneda = ob.moneda === 'MXN' ? 'MXN' : 'USD';
   } else {
     p.campos.ptx_cv_efectivo_mxn = r2(ob.efectivoMXN);
     p.campos.ptx_cv_numops = ob.n > 5 ? '5_MAS' : ob.n >= 2 ? '2_5' : '1';
     p.campos.ptx_cv_moneda = ob.moneda;
+    if (ob.pagoConDato) p.campos.ptx_cv_contrapartes = ob.terceros ? 'TERCEROS' : (ob.pagoConDato === ob.n ? 'PROPIAS' : c.ptx_cv_contrapartes);
   }
+  p.contratos = (ob.contratos || []).length; p.terceros = ob.tercerosNombres || [];
   p.campos.ptx_monto_max_mensual = r2(ob.maxMesMXN);
   p.campos.ptx_inst_alto = instAltoObservado(ob.instrumentos);
   return p;
@@ -8466,6 +8553,35 @@ var PTX_MONEDA     = [['MXN','MXN - Pesos'],['USD','USD - Dolares'],['OTRA','Otr
 // preferente) y a los PEP extranjeros: articulo 23 Bis 4, segundo parrafo.
 // Canal por el que opera el cliente (art. 10 Septies 1 fr. I, inciso d). No
 // hay alta remota: el expediente siempre se integra en persona.
+// ── Quien paga y contratos de arrendamiento ──
+// Cada operacion dice quien realizo el pago (el cliente o un tercero, con su
+// nombre) y, en arrendamiento, a que contrato del cliente corresponde. Las
+// operaciones anteriores quedan sin dato y la revaloracion usa lo declarado.
+var PAGADORES = [['CLIENTE','El cliente'],['TERCERO','Un tercero']];
+function pagadorDeTexto(v) {
+  var s = String(v || '').trim().toUpperCase();
+  if (/^TERC/.test(s)) return 'TERCERO';
+  if (/^(CLIENTE|PROPI|EL CLIENTE)/.test(s)) return 'CLIENTE';
+  return '';
+}
+// Contrato por omision de un expediente de arrendamiento: sale de su perfil.
+function contratoPorOmision(c) {
+  return { id: 'C1', identificador: 'CONTRATO PRINCIPAL', tipo_inmueble: '', domicilio: c.inmueble_arrendado || '',
+           inicio: String(c.fecha_alta || hoy()).substring(0, 10), termino: '', renta: c.renta_monto || '',
+           moneda: c.renta_moneda === 'USD' ? 'USD' : 'MXN', por_omision: true };
+}
+function contratosDe(c) {
+  if (!c || c.es_arrendamiento !== 'SI') return [];
+  return (c.contratos_arr && c.contratos_arr.length) ? c.contratos_arr : [contratoPorOmision(c)];
+}
+function contratoPorTexto(c, t) {
+  var s = String(t || '').trim().toUpperCase();
+  if (!s) return null;
+  return contratosDe(c).filter(function(k){ return String(k.id).toUpperCase() === s || String(k.identificador || '').toUpperCase() === s; })[0] || null;
+}
+function textoContrato(k) {
+  return k ? (k.identificador || k.id) + (k.domicilio ? ' · ' + k.domicilio : '') : '';
+}
 // Instrumentos monetarios de alto riesgo (art. 23 Bis 2 fr. II): activos
 // virtuales, metales preciosos y cheques de viajero, con su codigo del
 // catalogo UIF de instrumentos monetarios.
@@ -9401,7 +9517,7 @@ function submitCliente(tipo, idEx) {
   if (_orig) {
     ['scr_resoluciones','pep_origen','pep_confirmado_por','pep_confirmado_fecha','bloqueo_scr',
      'ciclo_ult_revaluacion','fecha_ult_revaluacion','curp_qr_url','curp_folio','curp_constancia_fecha','id_cif','rfc_qr_url',
-     'perfil_tx_original','perfil_operado_ult','perfil_tx_actualizado','ddr','aprobado_por','aprobado_cargo','fecha_aprobacion'
+     'perfil_tx_original','perfil_operado_ult','perfil_tx_actualizado','ddr','contratos_arr','aprobado_por','aprobado_cargo','fecha_aprobacion'
     ].forEach(function(k){
       if ((datos[k] === undefined || datos[k] === '') && _orig[k] !== undefined) datos[k] = _orig[k];
     });
@@ -9439,6 +9555,11 @@ function submitCliente(tipo, idEx) {
 
   aplicarRiesgo(datos, calcEBR(datos));
   activarDDR(datos, _orig);
+  // Arrendamiento: el expediente nace con un contrato tomado de su perfil.
+  if (datos.es_arrendamiento === 'SI' && !(datos.contratos_arr && datos.contratos_arr.length)) {
+    var ctr0 = contratoPorOmision(datos); delete ctr0.por_omision;
+    datos.contratos_arr = [ctr0];
+  }
 
   // Asegurar que las listas de screening estén cargadas (última versión en SharePoint)
   // antes de cotejar — sin importar quién ni cuándo las cargó ese día.
@@ -9658,6 +9779,7 @@ function renderFicha(c) {
     +'<div class="ftab" onclick="fichaTab(this,\'fd-ops\');renderOpsCliente()">Operaciones</div>'
     +'<div class="ftab" onclick="fichaTab(this,\'fd-ptx\');cargarOperadoFicha()">Perfil transaccional</div>'
     +'<div class="ftab" onclick="fichaTab(this,\'fd-scr\')">Screening</div>'
+    +(c.es_arrendamiento==='SI' ? '<div class="ftab" onclick="fichaTab(this,\'fd-ctr\');renderContratos()">Contratos</div>' : '')
     +'<div class="ftab" onclick="fichaTab(this,\'fd-hist\');renderHistorialRiesgo(App.clienteActual)">Historial de riesgo</div>'
     +((estadoDDR(c).aplica || c.ddr) ? '<div class="ftab" onclick="fichaTab(this,\'fd-ddr\');renderDDR()">Debida diligencia reforzada</div>' : '')
     +'</div>'
@@ -9674,6 +9796,7 @@ function renderFicha(c) {
     +'<div id="fd-ops" class="card-b" style="display:none"><div class="empty"><div class="spin" style="margin:0 auto"></div></div></div>'
     +'<div id="fd-ptx" class="card-b" style="display:none">'+renderPerfilTx(c)+'</div>'
     +'<div id="fd-scr" class="card-b" style="display:none">'+renderResolucionesScr(c)+'</div>'
+    +'<div id="fd-ctr" class="card-b" style="display:none"></div>'
     +'<div id="fd-hist" class="card-b" style="display:none"></div>'
     +'<div id="fd-ddr" class="card-b" style="display:none"></div>'
     +'</div>';
@@ -9682,7 +9805,7 @@ function renderFicha(c) {
 
 function fichaTab(el,id) {
   document.querySelectorAll('.ftab').forEach(function(t){t.classList.remove('on');}); el.classList.add('on');
-  ['fd-datos','fd-dom','fd-rl','fd-bcs','fd-fid','fd-df','fd-dom-ext','fd-duen','fd-docs','fd-ops','fd-ptx','fd-scr','fd-hist','fd-ddr'].forEach(function(i){
+  ['fd-datos','fd-dom','fd-rl','fd-bcs','fd-fid','fd-df','fd-dom-ext','fd-duen','fd-docs','fd-ops','fd-ptx','fd-scr','fd-ctr','fd-hist','fd-ddr'].forEach(function(i){
     var e=document.getElementById(i); if(e) e.style.display='none';
   });
   var t=document.getElementById(id); if(t) t.style.display='block';
@@ -10204,6 +10327,8 @@ function renderOpsCliente() {
           +'<td>'+String(o.fecha_pago||'-').substring(0,10)+'</td>'
           +'<td>'+(fp?fp.desc:o.forma_pago||'-')+'</td>'
           +'<td>'+(mo?mo.desc:o.moneda||'-')+'</td>'
+          +'<td style="font-size:12px">'+(o.pagador==='TERCERO' ? 'Tercero: '+capEsc(o.tercero_nombre||'') : o.pagador==='CLIENTE' ? 'Cliente' : '<span style="color:var(--tx3)">Sin dato</span>')
+          +(o.contrato_desc ? '<div style="font-size:11px;color:var(--tx3)">'+capEsc(o.contrato_desc)+'</div>' : '')+'</td>'
           +'<td style="font-weight:500;text-align:right">$'+(parseFloat(o.monto||0)).toLocaleString('es-MX')+'</td>'
           +'<td>'+badgeOp+'</td>'
           +'</tr>';
@@ -10219,9 +10344,9 @@ function renderOpsCliente() {
         +'</div>'
         +'</div>'
         +'<div class="twrap"><table>'
-        +'<thead><tr><th>Fecha pago</th><th>Forma pago</th><th>Moneda</th><th style="text-align:right">Monto</th><th>Estado</th></tr></thead>'
+        +'<thead><tr><th>Fecha pago</th><th>Forma pago</th><th>Moneda</th><th>Pago</th><th style="text-align:right">Monto</th><th>Estado</th></tr></thead>'
         +'<tbody>'+rows+'</tbody>'
-        +'<tfoot><tr><td colspan="3" style="font-weight:600;font-size:12px;padding:8px 12px">Total</td>'
+        +'<tfoot><tr><td colspan="4" style="font-weight:600;font-size:12px;padding:8px 12px">Total</td>'
         +'<td style="font-weight:600;text-align:right;padding:8px 12px">$'+total.toLocaleString('es-MX')+'</td><td></td></tr></tfoot>'
         +'</table></div>';
     }
@@ -13420,6 +13545,20 @@ function eliminarOp(opId) {
 }
 
 // ── NUEVA LIQUIDACIÓN / OPERACIÓN ────────────────────────────
+// Llena el selector de contratos con los del cliente elegido.
+function refrescarContratosOp() {
+  var sel = document.getElementById('contrato_op');
+  var cs = document.querySelector('[name="id_cliente_ref_op"]');
+  if (!sel || !cs) return;
+  var c = null; (App.clientes || []).forEach(function(x){ if (String(x.id) === String(cs.value)) c = x; });
+  var previo = sel.value || sel.getAttribute('data-sel') || '';
+  var lista = contratosDe(c);
+  sel.innerHTML = !c ? '<option value="">-- Selecciona primero el cliente --</option>'
+    : !lista.length ? '<option value="">El cliente no es de arrendamiento</option>'
+    : '<option value="">-- Seleccionar --</option>' + lista.map(function(k){ return '<option value="' + capEsc(k.id) + '"' + (String(k.id) === String(previo) ? ' selected' : '') + '>' + capEsc(textoContrato(k)) + '</option>'; }).join('');
+}
+document.addEventListener('change', function(ev){ if (ev.target && ev.target.name === 'id_cliente_ref_op') refrescarContratosOp(); });
+
 function nuevaLiqForm(datos) {
   var d = datos || {};
   var fraccion = d.fraccion || App._fraccionOps || 'INM';
@@ -13445,6 +13584,13 @@ function nuevaLiqForm(datos) {
     +'<div class="fgrid">'
     +'<input type="hidden" name="fraccion_op" value="'+fraccion+'">'
     +fsFull('Cliente','id_cliente_ref_op',clienteOpts)
+    +fg('Quien realiza el pago',null,true)+'<select class="sel" name="pagador_op" onchange="document.querySelectorAll(\'.tercero-op\').forEach(function(e){e.style.display=(this.value===\'TERCERO\'?\'\':\'none\');}.bind(this))">'
+    +'<option value="">-- Seleccionar --</option>'+PAGADORES.map(function(o){ return '<option value="'+o[0]+'"'+(d.pagador===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join('')+'</select></div>'
+    +'<div class="fg tercero-op" style="'+(d.pagador==='TERCERO'?'':'display:none')+'"><label class="lbl">Nombre del tercero <span class="req">*</span></label>'
+    +'<input class="inp" name="tercero_nombre_op" value="'+capEsc(d.tercero_nombre||'')+'" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>'
+    +(fraccion==='ARI'
+        ? fg('Contrato',null,true)+'<select class="sel" name="contrato_op" id="contrato_op" data-sel="'+capEsc(d.contrato_id||'')+'"><option value="">-- Selecciona primero el cliente --</option></select></div>'
+        : '')
     +fg('Fecha de pago',null,true)+fi('fecha_pago_op',d.fecha_pago||hoy(),'AAAA-MM-DD')
     +fg('Forma de pago',null,true)+'<select class="sel" name="forma_pago_op">'+optsC2(FORMAS_PAGO,d.forma_pago||'')+'</select></div>'
     +fg('Instrumento monetario',null,true)+'<select class="sel" name="instrumento_op">'+optsC2(INSTRUMENTOS_MON,d.instrumento_monetario||'')+'</select></div>'
@@ -13461,6 +13607,7 @@ function nuevaLiqForm(datos) {
     +'</div>'
     +'<div style="padding:12px 16px;border-top:1px solid var(--brd);display:flex;justify-content:flex-end">'
     +'<button class="btn btn-p liq-save-btn" data-idex="'+idEx+'">Guardar operacion</button>'
+    +'<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" style="display:none" onload="refrescarContratosOp()">'
     +'</div></div>';
   setMain(html);
 }
@@ -14513,12 +14660,31 @@ function guardarLiq(idEx) {
   var accesorios= parseFloat(v('accesorios_op')||0);
   var total_operacion = subtotal + iva + accesorios;
   var formaPago = v('forma_pago_op');
+  // Quien pago y, en arrendamiento, a que contrato corresponde.
+  var pagador = v('pagador_op'), terceroNom = String(v('tercero_nombre_op') || '').trim().toUpperCase();
+  if (!pagador) { toast('Indica quien realiza el pago', 'w'); return; }
+  if (pagador === 'TERCERO' && !terceroNom) { toast('Escribe el nombre del tercero que paga', 'w'); return; }
+  var cliOp = null; App.clientes.forEach(function(c){ if (c.id === idCli) cliOp = c; });
+  var ctrOp = null;
+  if (fraccion === 'ARI') {
+    var ctrId = v('contrato_op');
+    ctrOp = contratosDe(cliOp).filter(function(k){ return String(k.id) === String(ctrId); })[0] || null;
+    if (!ctrOp) { toast('Elige el contrato al que corresponde el pago', 'w'); return; }
+    // Si el cliente aun no tenia contratos registrados, se registra el de su perfil.
+    if (ctrOp.por_omision && cliOp) {
+      var k0 = JSON.parse(JSON.stringify(ctrOp)); delete k0.por_omision;
+      cliOp.contratos_arr = [k0];
+      spPatch('PLD_Clientes', cliOp.id, { contratos_arr: [k0] }, null);
+    }
+  }
 
   var datos = {
     id_cliente_ref: idCli, nombre_cliente: nomCli,
     num_cliente: numCli, fraccion: fraccion,
     fecha_pago: v('fecha_pago_op'),
     forma_pago: formaPago,
+    pagador: pagador, tercero_nombre: pagador === 'TERCERO' ? terceroNom : '',
+    contrato_id: ctrOp ? ctrOp.id : '', contrato_desc: ctrOp ? textoContrato(ctrOp) : '',
     instrumento_monetario: v('instrumento_op'),
     moneda: v('moneda_op'),
     subtotal: subtotal, iva: iva, accesorios: accesorios,
@@ -14571,8 +14737,9 @@ function descargarLayoutOps() {
     // Hoja de datos
     var cols = ['Num. Cliente','RFC','Nombre / Razon social','Fecha de pago (AAAA-MM-DD)',
       'Forma de pago (codigo)','Instrumento monetario (codigo)','Moneda (codigo)',
-      'Subtotal','IVA','Accesorios','Referencia de aviso','Observaciones'];
-    var ejemplo = ['CIN-0001','','JUAN PEREZ LOPEZ','2026-07-01','1','1','1',100000,16000,0,'','Fila de ejemplo — borrar antes de cargar'];
+      'Subtotal','IVA','Accesorios','Referencia de aviso','Observaciones',
+      'Quien paga (CLIENTE o TERCERO)','Nombre del tercero','Contrato (solo arrendamiento)'];
+    var ejemplo = ['CIN-0001','','JUAN PEREZ LOPEZ','2026-07-01','1','1','1',100000,16000,0,'','Fila de ejemplo — borrar antes de cargar','CLIENTE','',''];
     var wsDatos = XLSX.utils.aoa_to_sheet([cols, ejemplo]);
     wsDatos['!cols'] = cols.map(function(c,i){ return {wch: (i===2?34:(i===11?30:16))}; });
 
@@ -14602,7 +14769,8 @@ function descargarLayoutOps() {
       ['5. Subtotal, IVA y Accesorios: montos en pesos. El Total de operación se calcula solo (Subtotal + IVA + Accesorios).'],
       ['6. Los umbrales de identificación y aviso (Fr. V y Fr. XV) se calculan sobre el SUBTOTAL.'],
       ['7. La fracción (V Compraventa o XV Arrendamiento) se toma de la pestaña activa al momento de cargar el archivo.'],
-      ['8. Borra la fila de ejemplo antes de cargar.']
+      ['8. Quien paga: escribe CLIENTE o TERCERO; si es TERCERO, llena su nombre. En arrendamiento, Contrato es el identificador del contrato del cliente (ej. CONTRATO PRINCIPAL). Si se dejan vacias, la operacion queda sin ese dato.'],
+      ['9. Borra la fila de ejemplo antes de cargar.']
     ];
     var wsInst = XLSX.utils.aoa_to_sheet(inst);
     wsInst['!cols'] = [{wch:110}];
@@ -14685,6 +14853,9 @@ function procesarExcel(data, fraccion) {
         noVacias++;
         if (val.indexOf('num') >= 0 && val.indexOf('cliente') >= 0) map['num_cliente'] = c;
         else if (val === 'rfc' || val.indexOf('rfc') >= 0) map['rfc'] = c;
+        else if (/qui[eé]n/.test(val) && val.indexOf('paga') >= 0) map['pagador'] = c;
+        else if (val.indexOf('tercero') >= 0) map['tercero'] = c;
+        else if (val.indexOf('contrato') >= 0) map['contrato'] = c;
         else if (val.indexOf('nombre') >= 0 || val.indexOf('raz') >= 0) map['nombre'] = c;
         else if (val.indexOf('fecha') >= 0) map['fecha'] = c;
         else if (val.indexOf('forma') >= 0) map['forma'] = c;
@@ -14757,6 +14928,11 @@ function procesarExcel(data, fraccion) {
         });
       }
 
+      // Quien pago y contrato: columnas opcionales; vacias quedan sin dato.
+      var celda = function(k){ return headerMap[k] !== undefined ? String(row[headerMap[k]] || '').trim() : ''; };
+      var pagImp = pagadorDeTexto(celda('pagador'));
+      var cliImp = null; App.clientes.forEach(function(c){ if (String(c.id) === String(idCli)) cliImp = c; });
+      var ctrTxt = celda('contrato'), ctrImp = (fraccion === 'ARI' && cliImp) ? contratoPorTexto(cliImp, ctrTxt) : null;
       var monedaOp = String(row[headerMap['moneda'] !== undefined ? headerMap['moneda'] : 4] || '1').trim() || '1';
       // Congelar el tipo de cambio de la fecha de cada operacion importada
       var convOp = montoAMXN(total_operacion, monedaOp, fechaStr);
@@ -14767,6 +14943,8 @@ function procesarExcel(data, fraccion) {
         id_cliente_ref: idCli,
         fraccion: fraccion,
         fecha_pago: fechaStr,
+        pagador: pagImp, tercero_nombre: pagImp === 'TERCERO' ? celda('tercero').toUpperCase() : '',
+        contrato_id: ctrImp ? ctrImp.id : '', contrato_desc: ctrImp ? textoContrato(ctrImp) : ctrTxt.toUpperCase(),
         forma_pago: String(row[headerMap['forma'] !== undefined ? headerMap['forma'] : 2] || '').trim(),
         instrumento_monetario: String(row[headerMap['instrumento'] !== undefined ? headerMap['instrumento'] : 3] || '').trim(),
         moneda: monedaOp,
