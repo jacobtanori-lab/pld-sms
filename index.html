@@ -5315,8 +5315,7 @@ function persistirEBR(msg) {
   var json = JSON.stringify(CFG_EBR);
   localStorage.setItem('ebr_config', json);
   spGet('PLD_Config', function(lista) {
-    var item = null;
-    (lista||[]).forEach(function(c){ if(c.Title==='CONFIG_SISTEMA'||c.uma_diaria) item=c; });
+    var item = itemConfigSistema(lista);
     var datos = { Title: 'CONFIG_SISTEMA', ebr_config: json, actualizado_por: App.cuenta.username };
     if (item && item.id) {
       spPatch('PLD_Config', item.id, datos, function() { toast(msg,'s'); pgConfig('ebr'); });
@@ -5480,8 +5479,7 @@ function persistirPerfil(msg, sec) {
   var json = JSON.stringify(CFG_PERFIL);
   localStorage.setItem('perfil_config', json);
   spGet('PLD_Config', function(lista) {
-    var item = null;
-    (lista||[]).forEach(function(c){ if(c.Title==='CONFIG_SISTEMA'||c.uma_diaria) item=c; });
+    var item = itemConfigSistema(lista);
     var datos = { Title: 'CONFIG_SISTEMA', perfil_config: json, actualizado_por: App.cuenta.username };
     if (item && item.id) {
       spPatch('PLD_Config', item.id, datos, function() { toast(msg,'s'); pgConfig(sec); });
@@ -5711,9 +5709,10 @@ function guardarUMA() {
       umbral_ari: CFG_UMA.UMBRAL_ARI,
       actualizado_por: App.cuenta.username
     };
-    if (lista && lista.length && lista[0].id) {
+    var item = itemConfigSistema(lista);
+    if (item && item.id) {
       // Actualizar registro existente (spPatch hace merge: no borra ebr_config ni perfil_config)
-      spPatch('PLD_Config', lista[0].id, datos, function() {
+      spPatch('PLD_Config', item.id, datos, function() {
         toast('UMA actualizada a $'+val.toFixed(2)+' — guardada en SharePoint','s');
         pgConfig();
       });
@@ -12228,8 +12227,7 @@ function guardarListasGafi() {
   var json = JSON.stringify(nuevo);
   pensador('Guardando las listas del GAFI...');
   spGet('PLD_Config', function(lista) {
-    var item = null;
-    (lista || []).forEach(function(c){ if (c.Title === 'CONFIG_SISTEMA' || c.uma_diaria) item = c; });
+    var item = itemConfigSistema(lista);
     var listo = function(ok) {
       if (!ok || ok.error) { pensadorOff(); toast('No se pudieron guardar las listas', 'e'); return; }
       CFG_GAFI = nuevo;
@@ -12326,6 +12324,15 @@ function montoAMXN(monto, monedaCod, fecha) {
   return { mxn: m * tc.valor, tc: tc.valor, fecha_tc: tc.fecha_tc, estimado: tc.estimado };
 }
 
+// PLD_Config guarda varios registros (sistema, entidades, asesores, enlaces de
+// PEP Manager, screening). La UMA y la configuracion del modelo viven en el
+// registro CONFIG_SISTEMA; los demas se distinguen por su campo "clave".
+function itemConfigSistema(lista) {
+  var l = (lista || []).filter(function(c){ return c && !c.clave; });
+  return l.filter(function(c){ return c.Title === 'CONFIG_SISTEMA'; })[0]
+      || l.filter(function(c){ return c.uma_diaria; })[0] || null;
+}
+
 // Al iniciar, cargar UMA desde localStorage primero (rápido)
 (function() {
   var cached = parseFloat(localStorage.getItem('uma_diaria'));
@@ -12349,8 +12356,8 @@ function cargarConfigUMA() {
   // preferentes. Si falla, el pais se puntua solo con los tramos base.
   cargarPaisesRiesgo(function(){});
   spGet('PLD_Config', function(lista) {
-    if (!lista || !lista.length) return;
-    var cfg = lista[0];
+    var cfg = itemConfigSistema(lista);
+    if (!cfg) { console.warn('[config] PLD_Config no tiene el registro CONFIG_SISTEMA; se usa la UMA en cache (' + CFG_UMA.DIARIA + ')'); return; }
     if (cfg.uma_diaria && parseFloat(cfg.uma_diaria) > 0) {
       CFG_UMA.DIARIA    = parseFloat(cfg.uma_diaria);
       CFG_UMA.FECHA_ACT = cfg.uma_fecha || CFG_UMA.FECHA_ACT;
