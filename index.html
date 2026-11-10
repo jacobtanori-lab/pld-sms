@@ -13569,7 +13569,11 @@ function cargarOpsRegistros(fraccion) {
           +'<td>$'+acc.toLocaleString('es-MX')+'</td>'
           +'<td style="font-weight:600">$'+tot.toLocaleString('es-MX')+'</td>'
           +'<td>'+badgeOp+'</td>'
-          +(App.rol==='admin'?'<td><button class="btn" style="padding:2px 8px;font-size:12px;color:var(--rj)" title="Eliminar operacion" onclick="eliminarOp(\''+op.id+'\')">&#128465;</button></td>':'')
+          +(App.rol==='admin'?'<td style="white-space:nowrap">'
+             +(op.reportada===true
+                 ? '<button class="btn" style="padding:2px 8px;font-size:12px" disabled title="Ya se reporto en un aviso: no se puede editar">Editar</button> '
+                 : '<button class="btn" style="padding:2px 8px;font-size:12px" title="Editar operacion" onclick="editarOp(\''+op.id+'\')">Editar</button> ')
+             +'<button class="btn" style="padding:2px 8px;font-size:12px;color:var(--rj)" title="Eliminar operacion" onclick="eliminarOp(\''+op.id+'\')">&#128465;</button></td>':'')
           +'</tr>';
       });
       html += '</tbody></table></div></div>';
@@ -13577,6 +13581,22 @@ function cargarOpsRegistros(fraccion) {
     el.innerHTML = html;
   });
 }
+
+// Edicion de una operacion (solo administrador). Una operacion ya incluida en
+// un aviso no se edita: el aviso presentado ya la declaro con esos datos.
+function editarOp(opId) {
+  if (App.rol !== 'admin') { toast('Solo un administrador puede editar operaciones','e'); return; }
+  spGetUno('PLD_Ops_Liq', opId, function(op){
+    if (!op) { toast('No se encontro la operacion','e'); return; }
+    if (op.reportada === true) { toast('La operacion ya se reporto en un aviso (' + (op.ref_aviso_reportado || op.ref_aviso || '') + '): no se puede editar','w'); return; }
+    App._fraccionOps = op.fraccion || App._fraccionOps || 'INM';
+    nuevaLiqForm(op);
+  });
+}
+// Campos que se comparan para dejar rastro de cada edicion.
+var CAMPOS_EDICION_OP = [['id_cliente_ref','cliente'],['pagador','quien paga'],['tercero_nombre','tercero'],['contrato_id','contrato'],
+  ['fecha_pago','fecha de pago'],['forma_pago','forma de pago'],['instrumento_monetario','instrumento'],['moneda','moneda'],
+  ['subtotal','subtotal'],['iva','IVA'],['accesorios','accesorios'],['ref_aviso','referencia de aviso'],['observaciones','observaciones']];
 
 function eliminarOp(opId) {
   if (App.rol !== 'admin') { toast('Solo un administrador puede eliminar operaciones','e'); return; }
@@ -14920,7 +14940,19 @@ function guardarLiq(idEx) {
   var guardar = function() {
     if (idEx) {
       spGetUno('PLD_Ops_Liq', idEx, function(prev){
-        prev = prev || {};
+        if (!prev) { toast('No se pudo leer la operacion; no se guardo el cambio','e'); return; }
+        if (prev.reportada === true) { toast('La operacion ya se reporto en un aviso: no se puede editar','w'); return; }
+        // Se conserva quien y cuando la registro; cada edicion deja rastro.
+        datos.Title = prev.Title || datos.Title;
+        datos.registrado_por = prev.registrado_por || datos.registrado_por;
+        datos.fecha_registro = prev.fecha_registro || datos.fecha_registro;
+        var cambios = [];
+        CAMPOS_EDICION_OP.forEach(function(x){
+          var a = prev[x[0]] === undefined || prev[x[0]] === null ? '' : String(prev[x[0]]);
+          var b = datos[x[0]] === undefined || datos[x[0]] === null ? '' : String(datos[x[0]]);
+          if (a !== b) cambios.push({ campo: x[1], antes: a, despues: b });
+        });
+        datos.ediciones = (prev.ediciones || []).concat(cambios.length ? [{ fecha: hoy(), usuario: App.cuenta ? App.cuenta.username : '', cambios: cambios }] : []);
         // La edicion reescribe el registro: se conserva lo que ya decidieron el
         // screening, el oficial de cumplimiento y los avisos.
         ['tercero_scr', 'scr_estado', 'scr_motivo', 'devolucion', 'decision_69b', 'reportada', 'ref_aviso_reportado'].forEach(function(k){
@@ -14941,7 +14973,14 @@ function guardarLiq(idEx) {
         spUpdate('PLD_Ops_Liq', idEx, datos, function(){
           datos.id = idEx;
           if (stTer) alertasTercero(cliOp, datos, stTer);
-          toast('Operacion actualizada','s'); pgOps();
+          // El monto o la fecha pudieron cambiar: se revisan de nuevo los
+          // umbrales (la alerta abierta se actualiza, no se duplica) y el perfil.
+          verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, opDevuelta(datos) ? 0 : subtotal, datos.fecha_pago, idEx, function(){
+            verificarPerfilTransaccional(idCli, nomCli, numCli, datos.fecha_pago, function(){
+              toast('Operacion actualizada' + (cambios.length ? ' (' + cambios.map(function(x){ return x.campo; }).join(', ') + ')' : ', sin cambios'),'s');
+              pgOps();
+            });
+          });
         });
       });
     } else {
