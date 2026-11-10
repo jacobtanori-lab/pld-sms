@@ -6536,11 +6536,15 @@ function pgRevaluacion(clave) {
 
   var entId = App.entidadActual ? App.entidadActual.id : null;
   var esTodas = !entId || entId === 'TODAS';
-  var D = {}, pend = 3;
+  var D = {}, pend = 4;
   var listo = function() {
     if (--pend > 0) return;
+    var nListas = listasScrActivas();
     var evals = clientesDelCiclo(cic, D.cli).map(function(c){
       var ev = evaluarReval(c, opsDelClienteReval(c, D.ops, cic.desde, cic.hasta));
+      // Screening del expediente (cliente y personas relacionadas) con las listas vigentes.
+      ev.scr = nListas ? (scrEvaluarClienteCompleto(c) || []) : [];
+      ev.scrListas = nListas;
       ev.operado = perfilOperado(c, ev.ob, cic.desde, cic.hasta);
       ev.registro = D.reg.filter(function(r){ return String(r.id_cliente_ref) === String(c.id); }).pop() || null;
       return ev;
@@ -6558,6 +6562,7 @@ function pgRevaluacion(clave) {
     listo();
   });
   spGet('PLD_Ops_Liq', function(l){ D.ops = l || []; listo(); });
+  conListasScr(listo);
   spGet(LISTA_REVAL, function(l){ D.reg = (l || []).filter(function(r){ return r.ciclo === cic.clave; }); listo(); });
 }
 
@@ -6567,7 +6572,8 @@ function renderReval() {
   var hayLista = !!App.listas[LISTA_REVAL];
   var pend = R.evals.filter(function(e){ return !e.registro; });
   var cuenta = function(fn){ return pend.filter(fn).length; };
-  var enBloque = cuenta(function(e){ return e.cambio === 'igual' && !e.desv.length; });
+  var enBloque = cuenta(function(e){ return e.cambio === 'igual' && !e.desv.length && !(e.scr || []).length; });
+  var sinListas = R.evals.length && !R.evals[0].scrListas;
 
   var aviso = hayLista ? '' :
     '<div class="alerta-banner" style="background:#fff4e5;border:1px solid #c98a12;color:#7a5200;margin-bottom:12px">'
@@ -6578,12 +6584,15 @@ function renderReval() {
     return '<div style="min-width:110px"><div style="font-size:22px;font-weight:700;color:' + (color || 'var(--tx)') + '">' + n + '</div>'
       + '<div style="font-size:11px;color:var(--tx3);text-transform:uppercase;letter-spacing:.04em">' + etq + '</div></div>';
   };
+  if (sinListas) aviso += '<div class="alerta-banner" style="margin-bottom:12px"><strong>Sin listas de screening cargadas.</strong> '
+    + 'La revaloracion no pudo revisar a los clientes contra las listas. Carga las listas en el modulo de Screening y vuelve a abrir la revaloracion.</div>';
   var resumen = '<div class="card"><div class="card-b" style="display:flex;gap:20px;flex-wrap:wrap;align-items:center">'
     + dato(R.evals.length, 'En el ciclo')
     + dato(pend.length, 'Por revalorar', pend.length ? 'var(--am)' : 'var(--vd)')
     + dato(cuenta(function(e){ return e.cambio === 'sube' || e.cambio === 'nuevo'; }), 'Suben', 'var(--rj)')
     + dato(cuenta(function(e){ return e.cambio === 'baja'; }), 'Bajan')
     + dato(cuenta(function(e){ return e.desv.length > 0; }), 'Con desviaciones', 'var(--am)')
+    + dato(cuenta(function(e){ return (e.scr || []).length > 0; }), 'Con coincidencias', 'var(--rj)')
     + dato(R.evals.filter(function(e){ return !e.ob.n; }).length, 'Sin operaciones')
     + '<div style="flex:1"></div>'
     + (enBloque && hayLista
@@ -6610,6 +6619,7 @@ function renderReval() {
             + '<td class="mono">' + r.puntaje_tx + (e.fuente === 'declarado' ? ' <span style="font-size:11px;color:var(--tx3)" title="Sin operaciones en la ventana: se usa el perfil declarado">declarado</span>' : '') + '</td>')
       + '<td class="mono">' + e.ob.n + '</td>'
       + '<td>' + (e.desv.length ? '<span class="pill p-am">' + e.desv.length + '</span>' : '-') + '</td>'
+      + '<td>' + ((e.scr || []).length ? '<span class="pill p-rj">' + e.scr.length + '</span>' : e.scrListas ? '<span style="color:var(--vd)">Sin coincidencias</span>' : '-') + '</td>'
       + '<td>' + estado + '</td>'
       + '<td><button class="btn btn-sm" onclick="verReval(' + i + ')">' + (e.registro ? 'Ver' : 'Revisar') + '</button></td>'
       + '</tr>';
@@ -6618,7 +6628,7 @@ function renderReval() {
     ? '<div class="card"><div style="overflow-x:auto"><table><thead><tr>'
       + '<th>Cliente</th><th>Nivel anterior</th><th>Nivel nuevo</th>'
       + (modeloEBRActivo() === 'reglas' ? '<th>Reglas</th><th>Agravantes</th>' : '<th>Cliente pts</th><th>Operacion pts</th>')
-      + '<th>Operaciones</th><th>Desviaciones</th><th>Estado</th><th></th>'
+      + '<th>Operaciones</th><th>Desviaciones</th><th>Screening</th><th>Estado</th><th></th>'
       + '</tr></thead><tbody>' + filas + '</tbody></table></div></div>'
     : '<div class="card"><div class="empty">No hay clientes en este ciclo (' + alcanceTextoReval(R.ciclo) + ', estatus activo o inactivo).</div></div>';
 
@@ -6673,6 +6683,15 @@ function verReval(i) {
         ? '<div style="margin:10px 0"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Desviaciones del perfil declarado</div>'
           + '<ul style="margin:0;padding-left:18px;font-size:13px;color:var(--tx2);line-height:1.6">' + e.desv.map(function(x){ return '<li>' + capEsc(x) + '</li>'; }).join('') + '</ul></div>'
         : '')
+    + '<div style="margin:10px 0"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Screening de listas</div>'
+    + (!e.scrListas
+        ? '<div style="font-size:13px;color:var(--tx3)">No se pudo hacer: no hay listas cargadas.</div>'
+        : !(e.scr || []).length
+          ? '<div style="font-size:13px;color:var(--vd)">Sin coincidencias por resolver en el cliente ni en sus personas relacionadas (' + e.scrListas + ' listas).</div>'
+          : '<ul style="margin:0;padding-left:18px;font-size:13px;color:var(--tx2);line-height:1.6">' + e.scr.map(function(m){
+              return '<li>' + capEsc(m.parte) + ': ' + capEsc(m.nombre_evaluado) + ' coincide con ' + capEsc(m.nombre) + ' en ' + capEsc(m.lista) + ' (' + m.score + '%)</li>';
+            }).join('') + '</ul><div style="font-size:11px;color:var(--tx3);margin-top:4px">Al guardar la revaloracion se levanta la alerta de resolucion, si el cliente no tiene una abierta.</div>')
+    + '</div>'
     + (e.operado
         ? '<div style="margin:10px 0"><div style="font-size:12px;font-weight:600;color:var(--tx1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Perfil declarado y operado en la ventana</div>'
           + tablaPerfilTx(e.c, e.operado) + '</div>'
@@ -6729,7 +6748,7 @@ function decidirReval(i) {
 
 function confirmarRevalEnBloque() {
   var R = App._reval; if (!R) return;
-  var lista = R.evals.filter(function(e){ return !e.registro && e.cambio === 'igual' && !e.desv.length; });
+  var lista = R.evals.filter(function(e){ return !e.registro && e.cambio === 'igual' && !e.desv.length && !(e.scr || []).length; });
   if (!lista.length) return;
   if (!confirm('Se confirmara el nivel actual de ' + lista.length + ' clientes que no cambian de nivel ni tienen desviaciones.\n\n¿Continuar?')) return;
   var i = 0, ok = 0;
@@ -6760,6 +6779,7 @@ function guardarReval(e, texto, cb) {
     efectivo_operaciones: ob.efectivoN, efectivo_mxn: r2(ob.efectivoMXN), total_mxn: r2(ob.totalMXN),
     moneda_observada: ob.n ? ob.moneda : '',
     desviaciones: e.desv,
+    screening: { fecha: hoy(), listas: e.scrListas || 0, coincidencias: (e.scr || []).map(function(m){ return m.parte + ': ' + m.nombre_evaluado + ' / ' + m.nombre + ' (' + m.lista + ', ' + m.score + '%)'; }) },
     perfil_declarado: perfilTxDe(c), perfil_operado: e.operado || null,
     estado: e.cambio === 'igual' ? 'Confirmada' : 'Aprobada',
     justificacion: texto || '',
@@ -6781,6 +6801,7 @@ function guardarReval(e, texto, cb) {
       Object.keys(c2).forEach(function(k){ c[k] = c2[k]; });
       e.registro = reg;
       if (e.desv.length) alertaDesviacionReval(e, reg);
+      if ((e.scr || []).length) scrAlertasResolucionMasivo([c]);
       cb(true);
     });
   });
@@ -10323,6 +10344,7 @@ function renderOpsCliente() {
         var badgeOp = o.reportada===true
           ? '<span class="pill p-vd" style="font-size:10px">Reportada: '+(o.ref_aviso_reportado||o.ref_aviso||'')+'</span>'
           : '<span class="pill p-gr" style="font-size:10px">Pendiente</span>';
+        badgeOp = pillScrOp(o) || badgeOp;
         return '<tr>'
           +'<td>'+String(o.fecha_pago||'-').substring(0,10)+'</td>'
           +'<td>'+(fp?fp.desc:o.forma_pago||'-')+'</td>'
@@ -10697,8 +10719,9 @@ function renderFichaAlerta(a) {
     +'</div></div></div>'
 
     + seccionResolucionScr(a)
+    + seccionTerceroAlerta(a)
     // Sección de atención — distinta para alertas de aprobación vs umbral/otras
-    + (a.requiere_aprobacion ? seccionAprobacionAlerta(a) : (a.resolucion_scr ? '' : seccionAtencionAlerta(a)));
+    + (a.requiere_aprobacion ? seccionAprobacionAlerta(a) : (a.resolucion_scr || a.scr_tercero_decision ? '' : seccionAtencionAlerta(a)));
 
   setMain(html);
 }
@@ -10712,7 +10735,7 @@ function seccionResolucionScr(a) {
   var esAdmin = App.rol === 'admin';
   var pend = lista.filter(function(c){ return !c.decision; }).length;
   var filas = lista.map(function(c, i){
-    var esPEP = c.categoria === 'PEP';
+    var esPEP = c.categoria === 'PEP', esTer = c.parte === PARTE_TERCERO;
     var cab = '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
       + '<span class="pill ' + (esPEP ? 'p-mo' : 'p-rj') + '">' + (esPEP ? 'PEP' : 'Sancion / fiscal') + '</span>'
       + '<strong>' + capEsc(c.parte || 'Cliente') + ':</strong> ' + capEsc(c.nombre_evaluado || '')
@@ -10731,7 +10754,7 @@ function seccionResolucionScr(a) {
               + ', desde el ' + capEsc(c.pep_datos.pep_fecha_inicio || '') + (c.pep_datos.pep_fecha_fin ? ' hasta el ' + capEsc(c.pep_datos.pep_fecha_fin) : '')
               + '; ingreso mensual ' + fmtMXN(parseFloat(c.pep_datos.pep_ingreso_mensual) || 0) + '. '
             : '')
-        + (c.decision === 'CONFIRMADA' && !esPEP ? 'Cliente bloqueado. ' : '')
+        + (c.decision === 'CONFIRMADA' && !esPEP ? (esTer ? 'Operacion rechazada. ' : 'Cliente bloqueado. ') : '')
         + capEsc(c.fundamento || '') + ' <span style="color:var(--tx3)">(' + capEsc(c.resuelto_por || '') + ', ' + capEsc(c.fecha || '') + ')</span></div>';
     } else if (esAdmin) {
       cuerpo = '<div class="fgrid" style="margin-top:6px">'
@@ -10746,7 +10769,7 @@ function seccionResolucionScr(a) {
         + '<div class="fg full" style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'
         + '<button class="btn" onclick="resolverCoincidencia(\'' + a.id + '\',' + i + ',\'FALSO_POSITIVO\')">Falso positivo</button>'
         + '<button class="btn btn-p" style="background:var(--rj);border-color:var(--rj)" onclick="resolverCoincidencia(\'' + a.id + '\',' + i + ',\'CONFIRMADA\')">'
-        + (esPEP ? 'Confirmar coincidencia' : 'Confirmar y bloquear al cliente') + '</button></div></div>';
+        + (esPEP ? 'Confirmar coincidencia' : esTer ? 'Confirmar y rechazar la operacion' : 'Confirmar y bloquear al cliente') + '</button></div></div>';
     } else {
       cuerpo = '<div style="font-size:12px;color:var(--tx3);margin-top:6px">Pendiente de resolucion por un administrador.</div>';
     }
@@ -10806,9 +10829,11 @@ function resolverCoincidencia(alertaId, i, decision) {
     if (!a) { toast('Alerta no encontrada', 'e'); return; }
     var lista = _coincidenciasAlerta(a), c = lista[i];
     if (!c || c.decision) { toast('Esa coincidencia ya fue resuelta', 'w'); verAlerta(alertaId); return; }
-    var esPEP = c.categoria === 'PEP';
+    var esPEP = c.categoria === 'PEP', esTer = c.parte === PARTE_TERCERO;
     if (decision === 'CONFIRMADA' && !esPEP &&
-        !confirm('Confirmar una coincidencia en ' + (c.lista || 'una lista de sanciones') + ' BLOQUEA al cliente.\n\n¿Continuar?')) return;
+        !confirm(esTer
+          ? 'Confirmar una coincidencia del tercero en ' + (c.lista || 'una lista de sanciones') + ' RECHAZA la operacion y pide al oficial decidir la devolucion.\n\n¿Continuar?'
+          : 'Confirmar una coincidencia en ' + (c.lista || 'una lista de sanciones') + ' BLOQUEA al cliente.\n\n¿Continuar?')) return;
     spGetUno('PLD_Clientes', a.id_cliente_ref, function(cli) {
       if (!cli) { toast('No se encontro el expediente del cliente', 'e'); return; }
       var quien = App.cuenta ? (App.cuenta.name || App.cuenta.username) : '';
@@ -10830,7 +10855,7 @@ function resolverCoincidencia(alertaId, i, decision) {
         cambios.pep_confirmado_por = quien;
         cambios.pep_confirmado_fecha = hoy();
         if (res.pep_datos) Object.assign(cambios, res.pep_datos);
-      } else if (decision === 'CONFIRMADA' && esPEP && res.pep_datos && ['PM_MEX', 'PM_SIMP', 'FIDEICOMISO'].indexOf(cli.tipo) >= 0) {
+      } else if (decision === 'CONFIRMADA' && esPEP && res.pep_datos && !esTer && ['PM_MEX', 'PM_SIMP', 'FIDEICOMISO'].indexOf(cli.tipo) >= 0) {
         // Persona moral o fideicomiso: la persona confirmada pasa a ser el PEP
         // del expediente, salvo que ya tenga registrada a otra.
         if (!cli.pep_persona || scrNorm(cli.pep_persona) === scrNorm(res.nombre_evaluado)) {
@@ -10847,7 +10872,7 @@ function resolverCoincidencia(alertaId, i, decision) {
       } else if (decision === 'CONFIRMADA' && esPEP && res.pep_datos) {
         avisoPep = '. El cargo de esta persona queda en la resolucion';
       }
-      if (decision === 'CONFIRMADA' && !esPEP) {
+      if (decision === 'CONFIRMADA' && !esPEP && !esTer) {
         cambios.estatus = 'Bloqueado';
         cambios.aprobacion = 'Bloqueado';
         cambios.bloqueo_scr = { parte: res.parte, nombre: res.nombre_evaluado, lista: res.lista, uid: res.uid, por: quien, fecha: hoy(), fundamento: fundamento };
@@ -10866,17 +10891,33 @@ function resolverCoincidencia(alertaId, i, decision) {
         if (res.pep_datos) c.pep_datos = res.pep_datos;
         var camposA = { coincidencias_scr: JSON.stringify(lista) };
         var pend = lista.filter(function(x){ return !x.decision; }).length;
-        if (decision === 'CONFIRMADA' && !esPEP) {
+        if (decision === 'CONFIRMADA' && !esPEP && !esTer) {
           Object.assign(camposA, { aprobacion_estado: 'Bloqueado', estatus: 'Cerrada', estatus_atencion: 'Cerrada',
             comentario_aprobacion: 'Cliente bloqueado por coincidencia confirmada en ' + res.lista + ': ' + fundamento,
             resuelto_por: quien, fecha_resolucion: hoy() });
         } else if (!pend && a.resolucion_scr) {
           Object.assign(camposA, { estatus: 'Cerrada', estatus_atencion: 'Cerrada', resuelto_por: quien, fecha_resolucion: hoy() });
         }
+        // Tercero: confirmar una sancion rechaza la operacion; con todo resuelto
+        // y sin sanciones confirmadas, la operacion queda aceptada.
+        var opRef = c.op_ref || a.op_ref;
+        if (esTer && opRef) {
+          var sancion = decision === 'CONFIRMADA' && !esPEP;
+          var algunaSancion = lista.some(function(x){ return x.decision === 'CONFIRMADA' && x.categoria !== 'PEP'; });
+          if (sancion && !a.op_rechazada) {
+            camposA.op_rechazada = true;
+            spPatch('PLD_Ops_Liq', opRef, { scr_estado: 'RECHAZADA', scr_motivo: 'Tercero que paga confirmado en ' + res.lista }, function(){
+              alertaRechazoTercero(cli, { id: opRef, fecha_pago: a.op_fecha, tercero_nombre: a.tercero_nombre, fraccion: a.fraccion, entidad_id: a.entidad_id, entidad_nombre: a.entidad_nombre },
+                [{ lista: res.lista, nombre: res.nombre_lista, score: res.score, uid: res.uid }], null);
+            });
+          } else if (!pend && !algunaSancion) {
+            spPatch('PLD_Ops_Liq', opRef, { scr_estado: 'ACEPTADA', scr_motivo: 'Coincidencias del tercero resueltas' }, null);
+          }
+        }
         spPatch('PLD_Alertas', a.id, camposA, function() {
           (App.clientes || []).forEach(function(x){ if (String(x.id) === String(cli.id)) Object.assign(x, cambios); });
           toast((decision === 'FALSO_POSITIVO' ? 'Falso positivo registrado'
-                 : esPEP ? 'Coincidencia PEP confirmada' : 'Coincidencia confirmada: cliente BLOQUEADO')
+                 : esPEP ? 'Coincidencia PEP confirmada' : esTer ? 'Coincidencia confirmada: operacion RECHAZADA' : 'Coincidencia confirmada: cliente BLOQUEADO')
                 + avisoPep + '. Riesgo: ' + r.nivel + (r.motivo ? ' (' + r.motivo + ')' : ''), decision === 'FALSO_POSITIVO' ? 's' : 'w');
           verAlerta(a.id);
         });
@@ -13512,6 +13553,7 @@ function cargarOpsRegistros(fraccion) {
         var badgeOp = op.reportada===true
           ? '<span class="pill p-vd" style="font-size:10px">Reportada: '+(op.ref_aviso_reportado||op.ref_aviso||'')+'</span>'
           : '<span class="pill p-gr" style="font-size:10px">Pendiente</span>';
+        badgeOp = pillScrOp(op) || badgeOp;
         var sub = parseFloat(op.subtotal||op.monto||0);
         var iva = parseFloat(op.iva||0);
         var acc = parseFloat(op.accesorios||0);
@@ -13931,8 +13973,170 @@ function pepPartesConfirmadas(d) {
   var todas = (d.tipo === 'PM_MEX' || d.tipo === 'FIDEICOMISO');
   return (d.scr_resoluciones || []).filter(function(r){
     return r.decision === 'CONFIRMADA' && r.categoria === 'PEP' && r.parte !== 'Cliente' && r.estatus_pep
-      && (todas || PARTES_DDR.test(r.parte || ''));
+      && (todas || PARTES_DDR.test(r.parte || '') || r.parte === PARTE_TERCERO);
   }).map(function(r){ return { parte: r.parte, nombre: r.nombre_evaluado, estatus: r.estatus_pep }; });
+}
+
+// ── Screening del tercero que paga ──
+// Cada operacion pagada por un tercero pasa su nombre por las listas:
+//   - Coincidencia exacta (100 %) en una lista de sanciones, o una ya
+//     confirmada antes: la operacion queda RECHAZADA y el oficial de
+//     cumplimiento decide la devolucion de los recursos.
+//   - Lista 69-B del SAT: la operacion queda en revision y el oficial decide
+//     si la acepta o la rechaza.
+//   - Coincidencia parecida o en la lista PEP: la resuelve el administrador
+//     como cualquier coincidencia; si confirma una sancion, la operacion se
+//     rechaza, y un PEP confirmado cuenta como PEP relacionado del cliente.
+var PARTE_TERCERO = 'Tercero que paga';
+function es69B(m) { return /69/.test(String(m.listaId || m.lista || '')); }
+function listasScrActivas() {
+  return (App._scrData || []).filter(function(l){ return l.activa && l._datos && l._datos.length > 0; }).length;
+}
+// Carga las listas y sigue aunque la carga falle (como mucho espera 20 s).
+function conListasScr(cb) {
+  var hecho = false, fin = function(){ if (!hecho) { hecho = true; cb(); } };
+  if (typeof cargarListasScreening !== 'function') { fin(); return; }
+  setTimeout(fin, 20000);
+  try { cargarListasScreening(fin); } catch (e) { fin(); }
+}
+function screeningTercero(cli, op) {
+  if (!op || op.pagador !== 'TERCERO' || !op.tercero_nombre) return null;
+  var nombre = String(op.tercero_nombre).trim(), n = listasScrActivas();
+  var st = { exacta: [], fiscal: [], similares: [], campos: {} };
+  if (n) scrEvaluarCliente(nombre).forEach(function(m){
+    m.parte = PARTE_TERCERO; m.nombre_evaluado = nombre; m.op_fecha = op.fecha_pago || '';
+    var res = cli ? resolucionDe(cli, m) : null;
+    if (res && res.decision === 'FALSO_POSITIVO') return;
+    if (res && res.decision === 'CONFIRMADA') { if (m.categoria !== 'PEP') { m.ya_confirmada = true; st.exacta.push(m); } return; }
+    if (m.categoria === 'PEP') st.similares.push(m);
+    else if (es69B(m)) st.fiscal.push(m);
+    else if ((m.score || 0) >= 100) st.exacta.push(m);
+    else st.similares.push(m);
+  });
+  var total = st.exacta.length + st.fiscal.length + st.similares.length;
+  st.campos.tercero_scr = { fecha: hoy(), listas: n, resultado: !n ? 'SIN_LISTAS' : total ? 'COINCIDENCIAS' : 'SIN_COINCIDENCIAS', coincidencias: total };
+  if (st.exacta.length) {
+    st.campos.scr_estado = 'RECHAZADA';
+    st.campos.scr_motivo = 'Tercero que paga en ' + st.exacta[0].lista + (st.exacta[0].ya_confirmada ? ' (coincidencia ya confirmada)' : ' (coincidencia exacta)');
+  } else if (st.fiscal.length || st.similares.length) {
+    st.campos.scr_estado = 'EN_REVISION';
+    st.campos.scr_motivo = 'Coincidencias del tercero que paga por resolver';
+  }
+  return st;
+}
+function _descMatches(lista) {
+  return lista.map(function(m){ return '• ' + m.lista + ': ' + m.nombre + ' (' + m.score + '%' + (m.uid ? ', ID ' + m.uid : '') + ')'; }).join('\n');
+}
+function _baseAlertaTercero(cli, op) {
+  return {
+    nombre_cliente: cli ? nombreCliente(cli) : (op.nombre_cliente || ''), num_cliente: (cli && cli.num_cliente) || op.num_cliente || '',
+    id_cliente_ref: (cli && cli.id) || op.id_cliente_ref || '', fraccion: op.fraccion || '',
+    categoria: 'Screening', scr_tercero: true, op_ref: op.id || '', op_fecha: op.fecha_pago || '', tercero_nombre: op.tercero_nombre || '',
+    estatus: 'Abierta', estatus_atencion: 'Pendiente',
+    asesor_id: (cli && cli.asesor_id) || '', asesor_nombre: (cli && cli.asesor_nombre) || '',
+    registrado_por: App.cuenta ? App.cuenta.username : '', fecha_registro: hoy(),
+    entidad_id: op.entidad_id || (cli && cli.entidad_id) || '', entidad_nombre: op.entidad_nombre || (cli && cli.entidad_nombre) || ''
+  };
+}
+function _txtOp(op) {
+  return 'Operacion del ' + String(op.fecha_pago || '').substring(0, 10) + ' por ' + fmtMXN(parseFloat(op.monto_mxn || op.monto) || 0)
+    + ', pagada por ' + (op.tercero_nombre || 'un tercero') + '.';
+}
+// Operacion rechazada: el oficial de cumplimiento decide la devolucion.
+function alertaRechazoTercero(cli, op, matches, cb) {
+  spCreate('PLD_Alertas', Object.assign(_baseAlertaTercero(cli, op), {
+    Title: 'ALT-TER-' + Date.now(), tipo: 'Operacion rechazada: tercero en lista de sanciones', nivel: 'Alto',
+    scr_tercero_decision: 'DEVOLUCION',
+    descripcion: _txtOp(op) + ' El tercero coincide con una lista de sanciones, asi que la operacion queda rechazada.\n'
+      + _descMatches(matches) + '\nEl oficial de cumplimiento decide si se devuelven los recursos.'
+  }), function(){ if (cb) cb(); });
+}
+// Lista 69-B: el oficial decide si acepta o rechaza la operacion.
+function alerta69BTercero(cli, op, matches, cb) {
+  spCreate('PLD_Alertas', Object.assign(_baseAlertaTercero(cli, op), {
+    Title: 'ALT-TER-' + Date.now(), tipo: 'Tercero que paga en la lista 69-B del SAT', nivel: 'Alto',
+    scr_tercero_decision: 'ACEPTACION',
+    descripcion: _txtOp(op) + ' El tercero coincide con la lista 69-B del SAT.\n' + _descMatches(matches)
+      + '\nEl oficial de cumplimiento decide si acepta o rechaza la operacion.'
+  }), function(){ if (cb) cb(); });
+}
+// Coincidencias parecidas o PEP: resolucion del administrador.
+function alertaResolucionTercero(cli, op, matches, cb) {
+  matches.forEach(function(m){ m.op_ref = op.id || ''; });
+  spCreate('PLD_Alertas', Object.assign(_baseAlertaTercero(cli, op), {
+    Title: 'ALT-TER-' + Date.now(), tipo: 'Resolucion de coincidencias del tercero que paga', resolucion_scr: true,
+    nivel: matches.some(function(m){ return m.categoria !== 'PEP'; }) ? 'Alto' : 'Medio',
+    descripcion: _txtOp(op) + ' ' + matches.length + ' coincidencia(s) del tercero por resolver.',
+    coincidencias_scr: JSON.stringify(matches.slice(0, 20))
+  }), function(){ if (cb) cb(); });
+}
+// Crea, de una en una, las alertas que tocan a la operacion recien guardada.
+function alertasTercero(cli, op, st) {
+  if (!st) return;
+  var pasos = [];
+  if (st.exacta.length) pasos.push(function(cb){ alertaRechazoTercero(cli, op, st.exacta, cb); });
+  if (st.fiscal.length) pasos.push(function(cb){ alerta69BTercero(cli, op, st.fiscal, cb); });
+  if (st.similares.length) pasos.push(function(cb){ alertaResolucionTercero(cli, op, st.similares, cb); });
+  (function sig(){ var p = pasos.shift(); if (p) p(sig); })();
+  if (st.exacta.length) toast('Operacion RECHAZADA: el tercero que paga coincide con ' + st.exacta[0].lista + '. Se aviso al oficial de cumplimiento', 'e');
+  else if (st.fiscal.length || st.similares.length) toast('El tercero que paga tiene coincidencias en listas: la operacion queda en revision', 'w');
+}
+function pillScrOp(o) {
+  if (o.scr_estado === 'RECHAZADA') return '<span class="pill p-rj" style="font-size:10px" title="' + capEsc(o.scr_motivo || '') + '">Rechazada (screening)</span>';
+  if (o.scr_estado === 'EN_REVISION') return '<span class="pill p-am" style="font-size:10px" title="' + capEsc(o.scr_motivo || '') + '">En revision (screening)</span>';
+  return '';
+}
+// Decision del oficial sobre una alerta del tercero: devolucion de recursos
+// (operacion rechazada) o aceptacion de la operacion (lista 69-B).
+function seccionTerceroAlerta(a) {
+  if (!a.scr_tercero_decision) return '';
+  var esDev = a.scr_tercero_decision === 'DEVOLUCION';
+  var tit = esDev ? 'Devolucion de los recursos' : 'Aceptacion de la operacion';
+  var d = a.decision_tercero;
+  var cuerpo;
+  if (d) {
+    var etq = { DEVOLVER: 'Se devuelven los recursos', NO_DEVOLVER: 'No se devuelven los recursos', ACEPTAR: 'Operacion aceptada', RECHAZAR: 'Operacion rechazada' }[d.decision] || d.decision;
+    cuerpo = '<div style="font-size:13px"><span class="pill ' + (d.decision === 'ACEPTAR' ? 'p-vd' : 'p-rj') + '">' + etq + '</span> '
+      + capEsc(d.fundamento || '') + ' <span style="color:var(--tx3)">(' + capEsc(d.por || '') + ', ' + capEsc(d.fecha || '') + ')</span></div>';
+  } else if (App.rol === 'admin') {
+    var b = esDev ? [['DEVOLVER', 'Devolver los recursos'], ['NO_DEVOLVER', 'No devolver']] : [['ACEPTAR', 'Aceptar la operacion'], ['RECHAZAR', 'Rechazar la operacion']];
+    cuerpo = '<div class="fg full"><label class="lbl">Fundamento de la decision <span class="req">*</span></label>'
+      + '<textarea class="txa" id="ter-fund" rows="2" style="width:100%"></textarea></div>'
+      + '<div style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:8px">'
+      + '<button class="btn" onclick="decidirTercero(\'' + a.id + '\',\'' + b[1][0] + '\')">' + b[1][1] + '</button>'
+      + '<button class="btn btn-p" onclick="decidirTercero(\'' + a.id + '\',\'' + b[0][0] + '\')">' + b[0][1] + '</button></div>';
+  } else {
+    cuerpo = '<div style="font-size:12px;color:var(--tx3)">Pendiente de decision del oficial de cumplimiento.</div>';
+  }
+  return '<div class="card"><div class="card-h"><span class="card-t">' + tit + '</span>'
+    + '<span class="pill ' + (d ? 'p-vd' : 'p-am') + '">' + (d ? 'Decidida' : 'Pendiente') + '</span></div>'
+    + '<div class="card-b">' + cuerpo + '</div></div>';
+}
+function decidirTercero(alertaId, decision) {
+  if (App.rol !== 'admin') { toast('Solo el oficial de cumplimiento puede decidir', 'e'); return; }
+  var fund = ((document.getElementById('ter-fund') || {}).value || '').trim();
+  if (fund.length < 10) { toast('Escribe el fundamento de la decision', 'w'); return; }
+  spGetUno('PLD_Alertas', alertaId, function(a){
+    if (!a) { toast('Alerta no encontrada', 'e'); return; }
+    if (a.decision_tercero) { toast('Esta alerta ya tiene decision', 'w'); verAlerta(alertaId); return; }
+    var quien = App.cuenta ? (App.cuenta.name || App.cuenta.username) : '';
+    var dec = { decision: decision, fundamento: fund, por: quien, fecha: hoy() };
+    spPatch('PLD_Alertas', a.id, { decision_tercero: dec, estatus: 'Cerrada', estatus_atencion: 'Cerrada', resuelto_por: quien, fecha_resolucion: hoy() }, function(){
+      var cambiosOp = a.scr_tercero_decision === 'DEVOLUCION'
+        ? { devolucion: dec }
+        : { scr_estado: decision === 'ACEPTAR' ? 'ACEPTADA' : 'RECHAZADA', scr_motivo: (decision === 'ACEPTAR' ? 'Aceptada' : 'Rechazada') + ' por el oficial de cumplimiento (lista 69-B)', decision_69b: dec };
+      var seguir = function(){ toast('Decision registrada', 's'); verAlerta(a.id); };
+      if (!a.op_ref) { seguir(); return; }
+      spPatch('PLD_Ops_Liq', a.op_ref, cambiosOp, function(){
+        // Rechazada por el 69-B: el oficial decide tambien la devolucion.
+        if (decision === 'RECHAZAR') {
+          var op = { id: a.op_ref, fecha_pago: a.op_fecha, tercero_nombre: a.tercero_nombre, fraccion: a.fraccion,
+                     nombre_cliente: a.nombre_cliente, num_cliente: a.num_cliente, id_cliente_ref: a.id_cliente_ref, entidad_id: a.entidad_id, entidad_nombre: a.entidad_nombre };
+          alertaRechazoTercero(null, op, [{ lista: 'Lista 69-B del SAT', nombre: a.tercero_nombre, score: 100 }], seguir);
+        } else seguir();
+      });
+    });
+  });
 }
 
 function scrEvaluarClienteCompleto(datos) {
@@ -14711,8 +14915,11 @@ function guardarLiq(idEx) {
     if (idEx) {
       spUpdate('PLD_Ops_Liq', idEx, datos, function(){ toast('Operacion actualizada','s'); pgOps(); });
     } else {
+      var stTer = screeningTercero(cliOp, datos);
+      if (stTer) Object.assign(datos, stTer.campos);
       spCreate('PLD_Ops_Liq', datos, function(item){
         if (item) {
+          alertasTercero(cliOp, item, stTer);
           // Pasar el id del item recién creado para excluirlo del acumulado
           verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, subtotal, datos.fecha_pago, item.id, function(){
             alertaDDROperacion(idCli, datos);
@@ -14725,7 +14932,8 @@ function guardarLiq(idEx) {
       });
     }
   };
-  guardar();
+  if (pagador === 'TERCERO') { pensador('Revisando al tercero en las listas...'); conListasScr(function(){ pensadorOff(); guardar(); }); }
+  else guardar();
 }
 
 // ── CARGA EXCEL ──────────────────────────────────────────────
@@ -14799,11 +15007,11 @@ function cargarLayoutExcel(input) {
         // Cargar SheetJS dinámicamente
         var script = document.createElement('script');
         script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-        script.onload = function() { procesarExcel(data, fraccion); };
+        script.onload = function() { conListasScr(function(){ procesarExcel(data, fraccion); }); };
         script.onerror = function() { pensadorOff(); toast('No se pudo cargar el procesador de Excel. Usa formato CSV.', 'e'); };
         document.head.appendChild(script);
       } else {
-        procesarExcel(data, fraccion);
+        conListasScr(function(){ procesarExcel(data, fraccion); });
       }
     } catch(err) {
       console.error(err);
@@ -14974,8 +15182,12 @@ function procesarExcel(data, fraccion) {
     var guardados = 0;
     registros.forEach(function(datos, idx) {
       datos.Title = 'LIQ-EXCEL-' + Date.now() + '-' + idx;
+      var cliTer = null; App.clientes.forEach(function(c){ if (String(c.id) === String(datos.id_cliente_ref)) cliTer = c; });
+      var stTer = screeningTercero(cliTer, datos);
+      if (stTer) Object.assign(datos, stTer.campos);
 
       spCreate('PLD_Ops_Liq', datos, function() {
+        alertasTercero(cliTer, datos, stTer);
         guardados++;
         pensadorPaso('Guardando registro ' + guardados + ' de ' + registros.length + '...');
         // Verificar umbrales por cada registro usando el motor central
@@ -17367,7 +17579,7 @@ function scrAlertasResolucionMasivo(clientes) {
     }
     var x = pendientes[i++], c = x.c;
     spAlertasDeCliente(c, function(alts){
-      var abierta = (alts || []).some(function(a){ return a.resolucion_scr && a.estatus !== 'Cerrada'; });
+      var abierta = (alts || []).some(function(a){ return a.resolucion_scr && !a.scr_tercero && a.estatus !== 'Cerrada'; });
       if (abierta) { sig(); return; }
       spCreate('PLD_Alertas', {
         Title: 'ALT-RES-' + Date.now(),
