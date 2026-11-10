@@ -4457,7 +4457,7 @@ function pgConfigEBRReglas() {
     + '<div class="card"><div class="card-h"><span class="card-t">Exclusion</span><span style="font-size:12px;color:var(--tx3)">No son reglas: bloquean</span></div><div class="card-b">'
     + fijo('Contramedidas del GAFI en el cliente o en sus personas relacionadas', 'Bloquea el alta')
     + fijo('Coincidencia confirmada en una lista de sanciones o en el 69-B del SAT', 'Bloquea al cliente')
-    + fijo('Compraventa: efectivo declarado por encima de 8,025 UMA (art. 32 LFPIORPI)', 'Bloquea el alta')
+    + fijo('Compraventa: efectivo declarado de 8,025 UMA o mas (art. 32 LFPIORPI)', 'Bloquea el alta')
     + fijo('Arrendamiento: efectivo de 3,210 UMA o mas al mes por contrato (art. 32 LFPIORPI)', 'Alerta en cada operacion; Alto en la revaloracion')
     + '</div></div>'
 
@@ -7554,7 +7554,7 @@ function perfilRiesgo(d) {
   } else {
     var ef = parseFloat(d.ptx_cv_efectivo_mxn) || 0;
     var lim = (Number(CFG_UMA.DIARIA) || 0) * (Number(CFG_UMA.UMBRAL_INM) || 8025);
-    p.ef = ef <= 0 ? 'nunca' : (lim && ef > lim) ? 'excede' : (lim && ef >= lim / 2) ? 'mitad' : 'menor';
+    p.ef = ef <= 0 ? 'nunca' : (lim && ef >= lim) ? 'excede' : (lim && ef >= lim / 2) ? 'mitad' : 'menor';
     p.origen = d.ptx_cv_origen || '';
     p.moneda = d.ptx_cv_moneda || 'MXN';
     p.terceros = d.ptx_cv_contrapartes === 'TERCEROS';
@@ -7579,7 +7579,7 @@ function calcEBRReglas(d) {
   // El efectivo por encima del limite del articulo 32 es una operacion
   // prohibida: el alta se bloquea en la validacion, y si aparece en lo
   // observado de una revaloracion, el nivel es Alto.
-  if (p.ef === 'excede') { anota({ id: 'excl_ef', t: 'Efectivo por encima del límite legal del art. 32 LFPIORPI (operación prohibida)', nv: 'Alto' }); base = 2; }
+  if (p.ef === 'excede') { anota({ id: 'excl_ef', t: 'Efectivo igual o superior al límite legal del art. 32 LFPIORPI (operación prohibida)', nv: 'Alto' }); base = 2; }
   REGLAS_EBR.forEach(function(r){
     if (!reglaAplica(r, p.op, p.tipo) || !r.c(p)) return;
     var nv = tabla[r.id] || r.def;
@@ -9422,14 +9422,14 @@ function validarCliente(frm, datos, tipo) {
     if (fIniPep && fFinPep && fFinPep < fIniPep) bloq.push('La fecha de fin del cargo no puede ser anterior a la de inicio');
   }
 
-  // El efectivo de una compraventa de inmueble no puede pasar de 8,025 UMA
-  // (articulo 32 de la LFPIORPI): un perfil que lo declara describe una
-  // operacion prohibida y no se acepta.
+  // El efectivo de una compraventa de inmueble no puede llegar a 8,025 UMA
+  // (articulo 32 fr. I de la LFPIORPI: "igual o superior"): un perfil que lo
+  // declara describe una operacion prohibida y no se acepta.
   if (datos.es_arrendamiento !== 'SI') {
     var efDecl = parseFloat(datos.ptx_cv_efectivo_mxn) || 0;
     var limEf = (Number(CFG_UMA.DIARIA) || 0) * (Number(CFG_UMA.UMBRAL_INM) || 8025);
-    if (limEf && efDecl > limEf)
-      bloq.push('El efectivo declarado ($' + Math.round(efDecl).toLocaleString('es-MX') + ') rebasa el limite legal de 8,025 UMA ($'
+    if (limEf && efDecl >= limEf)
+      bloq.push('El efectivo declarado ($' + Math.round(efDecl).toLocaleString('es-MX') + ') alcanza o rebasa el limite legal de 8,025 UMA ($'
         + Math.round(limEf).toLocaleString('es-MX') + ') del articulo 32 de la LFPIORPI: esa operacion esta prohibida. Corrige el perfil transaccional.');
   }
 
