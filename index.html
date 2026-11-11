@@ -5340,9 +5340,15 @@ function bannerTipoCambio() {
     var h = new Date(hoy() + 'T12:00:00');
     dias = Math.round((h - u) / 86400000);
   }
+  var otras = ['3', '72', '51', '34'].map(function(k){
+    var b = MONEDAS_BANXICO[k], fs = Object.keys(TC_OTRAS[k] || {}).sort();
+    return b.iso + ' (' + b.serie + '): ' + (fs.length ? fs.length.toLocaleString('es-MX') + (fs.length === 1 ? ' fecha' : ' fechas') + ', ultima ' + fs[fs.length - 1] : 'sin datos aun');
+  }).join(' · ');
   var comun = '<strong>'+TC_META.total.toLocaleString('es-MX')+'</strong> tipos de cambio cargados. '
     +'Banxico, serie <strong>SF60653</strong> — Tipo de Cambio para solventar obligaciones denominadas en Dólares. '
-    +'Ultima fecha disponible: <strong>'+TC_META.ultima+'</strong>';
+    +'Ultima fecha disponible: <strong>'+TC_META.ultima+'</strong>'
+    +'<br>Otras monedas: '+otras+'.'
+    +'<br><span style="font-size:12px">'+NOTA_TC_CRUZADOS+' Las demas monedas piden el tipo de cambio al capturar la operacion.</span>';
   if (dias !== null && dias > 5) {
     return '<div class="alerta-banner" style="background:#fff4e5;border:1px solid #c98a12;color:#7a5200">'
       + comun + '.<br><strong>&#9888; Los tipos de cambio no se han actualizado en '+dias+' dias.</strong> '
@@ -5439,7 +5445,8 @@ function recalcularMontosMXN() {
       if (!ops.length) { toast('No hay operaciones que recalcular','w'); return; }
       var pend = ops.length, hechas = 0, estimadas = 0;
       ops.forEach(function(o){
-        var cv = montoAMXN(o.total_operacion || o.monto || 0, o.moneda, o.fecha_pago);
+        // El tipo de cambio capturado por el usuario se respeta.
+        var cv = montoAMXN(o.total_operacion || o.monto || 0, o.moneda, o.fecha_pago, o.tc_manual ? o.tipo_cambio_aplicado : 0);
         if (cv.estimado) estimadas++;
         var subO = parseFloat(o.subtotal !== undefined && o.subtotal !== null && o.subtotal !== '' ? o.subtotal : o.monto) || 0;
         spPatch('PLD_Ops_Liq', o.id, {
@@ -11886,13 +11893,25 @@ var CFG_PERFIL = {
 // ── TIPO DE CAMBIO (Banxico FIX / DOF) ────────────────────────
 // La lista PLD_TipoCambio la alimenta un flujo diario de Power Automate.
 // Cada item: { fecha:'AAAA-MM-DD', valor: 17.05, fuente:'BANXICO_FIX' }
-var TC_MAP  = {};                      // { 'AAAA-MM-DD': valor }
+var TC_MAP  = {};                      // { 'AAAA-MM-DD': valor }  (dolar, FIX)
 var TC_META = { total: 0, ultima: '' };
+// Monedas con cotizacion diaria de Banxico, por codigo del catalogo MONEDAS.
+// El dolar es el FIX (SF60653); las demas son tipos de cambio cruzados.
+var MONEDAS_BANXICO = {
+  '2':  { iso: 'USD', serie: 'SF60653',  nombre: 'Dolar estadounidense' },
+  '3':  { iso: 'EUR', serie: 'SF46410',  nombre: 'Euro' },
+  '72': { iso: 'JPY', serie: 'SF46406',  nombre: 'Yen japones' },
+  '51': { iso: 'GBP', serie: 'SF46407',  nombre: 'Libra esterlina' },
+  '34': { iso: 'CNY', serie: 'SF290383', nombre: 'Yuan chino' }
+};
+var NOTA_TC_CRUZADOS = 'Tipos de cambio cruzados con base en el tipo de cambio FIX publicado por el Banco de México y en los tipos de cambio promedio de mercado para el euro, yen japonés, libra esterlina y yuan chino frente al dólar que da a conocer diariamente el Fondo Monetario Internacional (FMI).';
+var TC_OTRAS = {};                     // { '3': { 'AAAA-MM-DD': valor }, ... }
 (function(){
   try {
     var m = localStorage.getItem('tc_map');   if (m) TC_MAP  = JSON.parse(m) || {};
     var t = localStorage.getItem('tc_meta');  if (t) TC_META = JSON.parse(t) || TC_META;
-  } catch(e) { TC_MAP = {}; }
+    var o = localStorage.getItem('tc_otras'); if (o) TC_OTRAS = JSON.parse(o) || {};
+  } catch(e) { TC_MAP = {}; TC_OTRAS = {}; }
 })();
 
 function _tcGuardar(map, fuente, cb) {
@@ -12311,6 +12330,17 @@ function cargarTipoCambio(cb) {
         if (/^\d{4}-\d{2}-\d{2}$/.test(f) && v > 0) map[f] = v;
       }
       if (!Object.keys(map).length) throw new Error('archivo vacio');
+      // Euro, yen, libra y yuan: seccion "monedas" del mismo archivo.
+      var otras = {};
+      Object.keys(MONEDAS_BANXICO).forEach(function(cod){
+        if (cod === '2') return;
+        var sec = j.monedas && j.monedas[MONEDAS_BANXICO[cod].iso];
+        var t = (sec && sec.tasas) || {}, m2 = {};
+        for (var f2 in t) { var v2 = parseFloat(t[f2]); if (/^\d{4}-\d{2}-\d{2}$/.test(f2) && v2 > 0) m2[f2] = v2; }
+        otras[cod] = m2;
+      });
+      TC_OTRAS = otras;
+      try { localStorage.setItem('tc_otras', JSON.stringify(TC_OTRAS)); } catch(e){}
       _tcGuardar(map, j.fuente, cb);
     })
     .catch(function(){ _tcDesdeSharePoint(cb); });
@@ -12331,25 +12361,43 @@ function _tcDesdeSharePoint(cb) {
 
 // Tipo de cambio aplicable a una fecha. Si ese dia no hubo publicacion
 // (fin de semana o festivo), toma el ultimo dia habil anterior — regla del DOF.
-function tcParaFecha(fecha) {
+// moneda: codigo del catalogo MONEDAS (por omision, el dolar).
+function tcParaFecha(fecha, moneda) {
+  var cod = String(moneda || '2');
+  var mapa = cod === '2' ? TC_MAP : (TC_OTRAS[cod] || {});
   var f = String(fecha || hoy()).substring(0,10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(f)) f = hoy().substring(0,10);
   var d = new Date(f + 'T12:00:00');
   for (var i = 0; i < 15; i++) {
     var k = d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
-    if (TC_MAP[k] > 0) return { valor: TC_MAP[k], fecha_tc: k, estimado: false };
+    if (mapa[k] > 0) return { valor: mapa[k], fecha_tc: k, estimado: false };
     d.setDate(d.getDate() - 1);
   }
-  // Respaldo: el tipo de cambio manual de la configuracion
-  return { valor: parseFloat(CFG_PERFIL.tipo_cambio_usd) || 1, fecha_tc: '', estimado: true };
+  // Respaldo del dolar: el tipo de cambio manual de la configuracion. Las
+  // demas monedas no tienen respaldo: se pide el tipo de cambio al capturar.
+  if (cod === '2') return { valor: parseFloat(CFG_PERFIL.tipo_cambio_usd) || 1, fecha_tc: '', estimado: true };
+  return { valor: 0, fecha_tc: '', estimado: false, sinTC: true };
 }
 
-// Convierte un monto a MXN usando el tipo de cambio de la FECHA de la operacion
-function montoAMXN(monto, monedaCod, fecha) {
-  var m = parseFloat(monto) || 0;
-  if (String(monedaCod) !== '2') return { mxn: m, tc: 1, fecha_tc: '', estimado: false };  // 2 = USD
-  var tc = tcParaFecha(fecha);
-  return { mxn: m * tc.valor, tc: tc.valor, fecha_tc: tc.fecha_tc, estimado: tc.estimado };
+// Convierte un monto a MXN usando el tipo de cambio de la FECHA de la operacion.
+// tcManual: el tipo de cambio que capturo el usuario para una moneda sin
+// cotizacion de Banxico. Sin cotizacion ni tipo de cambio capturado, el monto
+// queda sin convertir y el resultado lo marca con sinTC.
+function montoAMXN(monto, monedaCod, fecha, tcManual) {
+  var m = parseFloat(monto) || 0, cod = String(monedaCod || '1');
+  if (cod === '1') return { mxn: m, tc: 1, fecha_tc: '', estimado: false };
+  var man = parseFloat(tcManual);
+  if (man > 0) return { mxn: m * man, tc: man, fecha_tc: '', estimado: false, manual: true };
+  if (MONEDAS_BANXICO[cod]) {
+    var tc = tcParaFecha(fecha, cod);
+    if (!tc.sinTC) return { mxn: m * tc.valor, tc: tc.valor, fecha_tc: tc.fecha_tc, estimado: tc.estimado };
+  }
+  return { mxn: m, tc: 1, fecha_tc: '', estimado: true, sinTC: true };
+}
+// La moneda necesita que el usuario capture el tipo de cambio: no es el peso y
+// Banxico no tiene cotizacion para esa fecha (o no la publica).
+function tcRequiereCaptura(monedaCod, fecha) {
+  return String(monedaCod || '1') !== '1' && !!montoAMXN(1, monedaCod, fecha).sinTC;
 }
 
 // PLD_Config guarda varios registros (sistema, entidades, asesores, enlaces de
@@ -13643,7 +13691,7 @@ function editarOp(opId) {
 // Campos que se comparan para dejar rastro de cada edicion.
 var CAMPOS_EDICION_OP = [['id_cliente_ref','cliente'],['pagador','quien paga'],['tercero_nombre','tercero'],['contrato_id','contrato'],
   ['fecha_pago','fecha de pago'],['forma_pago','forma de pago'],['instrumento_monetario','instrumento'],['moneda','moneda'],
-  ['subtotal','subtotal'],['iva','IVA'],['accesorios','accesorios'],['ref_aviso','referencia de aviso'],['observaciones','observaciones']];
+  ['subtotal','subtotal'],['iva','IVA'],['accesorios','accesorios'],['tipo_cambio_aplicado','tipo de cambio'],['ref_aviso','referencia de aviso'],['observaciones','observaciones']];
 
 // Texto legible de un valor del rastro de ediciones.
 function fmtValorEdicionOp(campo, v) {
@@ -13666,7 +13714,7 @@ function verLiq(id, origen) {
     var desc = function(arr, v){ var x = arr.find(function(y){ return String(y.codigo) === String(v); }); return x ? x.desc : (v || ''); };
     var volver = origen && origen !== 'ops' ? 'abrirFicha(\'' + origen + '\')' : 'pgOps()';
     var puedeEditar = App.rol === 'admin' && o.reportada !== true;
-    var tc = o.tipo_cambio_aplicado && String(o.moneda) !== '1' ? ' (tipo de cambio ' + o.tipo_cambio_aplicado + (o.tc_fecha ? ' del ' + o.tc_fecha : '') + (o.tc_estimado ? ', estimado' : '') + ')' : '';
+    var tc = o.tipo_cambio_aplicado && String(o.moneda) !== '1' ? ' (tipo de cambio ' + o.tipo_cambio_aplicado + (o.tc_fecha ? ' del ' + o.tc_fecha : '') + (o.tc_manual ? ', capturado por el usuario' : (MONEDAS_BANXICO[String(o.moneda)] && o.tc_fecha ? ', Banxico serie ' + MONEDAS_BANXICO[String(o.moneda)].serie : '')) + (o.tc_estimado ? ', estimado' : '') + ')' : '';
     var estado = pillScrOp(o) || (o.reportada === true
       ? '<span class="pill p-vd">Reportada: ' + capEsc(o.ref_aviso_reportado || o.ref_aviso || '') + '</span>'
       : '<span class="pill p-gr">Pendiente</span>');
@@ -13784,7 +13832,7 @@ function nuevaLiqForm(datos) {
     +fg('Fecha de pago',null,true)+fi('fecha_pago_op',d.fecha_pago||hoy(),'AAAA-MM-DD')
     +fg('Forma de pago',null,true)+'<select class="sel" name="forma_pago_op">'+optsC2(FORMAS_PAGO,d.forma_pago||'')+'</select></div>'
     +fg('Instrumento monetario',null,true)+'<select class="sel" name="instrumento_op">'+optsC2(INSTRUMENTOS_MON,d.instrumento_monetario||'')+'</select></div>'
-    +fg('Moneda',null,true)+'<select class="sel" name="moneda_op">'+optsC2(MONEDAS,d.moneda||'1')+'</select></div>'
+    +fg('Moneda',null,true)+'<select class="sel" name="moneda_op" onchange="calcTotalOp()">'+optsC2(MONEDAS,d.moneda||'1')+'</select></div>'
     +'<div class="fg"><label class="lbl">Subtotal (en la moneda de la operacion) <span class="req">*</span></label><input class="inp" name="subtotal_op" value="'+(d.subtotal||'')+'" placeholder="0.00" oninput="calcTotalOp()"></div>'
     +'<div class="fg"><label class="lbl">IVA</label><input class="inp" name="iva_op" value="'+(d.iva||'')+'" placeholder="0.00" oninput="calcTotalOp()"></div>'
     +'<div class="fg"><label class="lbl">Accesorios</label><input class="inp" name="accesorios_op" value="'+(d.accesorios||'')+'" placeholder="0.00" oninput="calcTotalOp()"></div>'
@@ -13792,6 +13840,14 @@ function nuevaLiqForm(datos) {
     +'<div class="inp" id="total_op_display" style="background:var(--bg2);color:var(--tx2);font-weight:600">'
     +(d.total_operacion ? '$'+parseFloat(d.total_operacion).toLocaleString('es-MX') : '$0.00')
     +'</div></div>'
+    // Tipo de cambio: el de Banxico si la moneda lo tiene; si no, se pide.
+    +'<div class="fg full" id="tc_op_box" style="display:none">'
+    +'<div id="tc_op_info" style="font-size:12px;color:var(--tx2)"></div>'
+    +'<div id="tc_op_manual" style="display:none;margin-top:6px"><label class="lbl">Tipo de cambio: pesos por 1 <span id="tc_op_iso"></span> <span class="req">*</span></label>'
+    +'<input class="inp" name="tc_manual_op" value="'+(d.tc_manual ? capEsc(d.tipo_cambio_aplicado || '') : '')+'" placeholder="0.0000" oninput="calcTotalOp()" style="max-width:220px"></div>'
+    +'<div id="tc_op_mxn" style="font-size:13px;margin-top:6px;font-weight:500"></div>'
+    +'</div>'
+    +'<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" style="display:none" onload="iniciarTCOp()">'
     +fg('Referencia de aviso relacionado',null,false)+fi('ref_aviso_op',d.ref_aviso||'','Opcional')
     +ftxt('Observaciones','obs_op',d.observaciones||'')
     +'</div>'
@@ -15091,6 +15147,43 @@ function calcTotalOp() {
   var total = sub + iva + acc;
   var el = document.getElementById('total_op_display');
   if (el) el.textContent = '$' + total.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2});
+  refrescarTCOp(sub, total);
+}
+// El campo de fecha tambien cambia el tipo de cambio aplicable.
+function iniciarTCOp() {
+  var f = document.querySelector('#main [name="fecha_pago_op"]');
+  if (f && !f._tcOp) { f._tcOp = true; f.addEventListener('change', calcTotalOp); f.addEventListener('input', calcTotalOp); }
+  calcTotalOp();
+}
+// Muestra el tipo de cambio que se aplicara y el subtotal y total en pesos.
+// Una moneda sin cotizacion de Banxico pide el tipo de cambio.
+function refrescarTCOp(sub, total) {
+  var frm = document.getElementById('main'), box = document.getElementById('tc_op_box');
+  if (!frm || !box) return;
+  var val = function(n){ var e = frm.querySelector('[name="'+n+'"]'); return e ? e.value : ''; };
+  var mon = val('moneda_op') || '1', fecha = val('fecha_pago_op');
+  if (mon === '1') { box.style.display = 'none'; return; }
+  box.style.display = '';
+  var mo = MONEDAS.find(function(x){ return x.codigo === mon; }), iso = mo ? mo.desc : mon;
+  var info = document.getElementById('tc_op_info'), man = document.getElementById('tc_op_manual'), res = document.getElementById('tc_op_mxn');
+  var pide = tcRequiereCaptura(mon, fecha), tc;
+  document.getElementById('tc_op_iso').textContent = iso;
+  if (pide) {
+    man.style.display = '';
+    info.innerHTML = MONEDAS_BANXICO[mon]
+      ? 'Banxico no tiene cotizacion del ' + capEsc(iso) + ' para esa fecha: captura el tipo de cambio.'
+      : 'El ' + capEsc(iso) + ' no tiene cotizacion de Banxico en la app: captura el tipo de cambio para calcular el subtotal y el total en pesos.';
+    tc = parseFloat(val('tc_manual_op')) || 0;
+  } else {
+    man.style.display = 'none';
+    var r = montoAMXN(1, mon, fecha), b = MONEDAS_BANXICO[mon] || {};
+    tc = r.tc;
+    info.innerHTML = r.estimado
+      ? 'Tipo de cambio estimado (configuracion): ' + r.tc + ' pesos por ' + capEsc(iso) + '. No hay FIX cargado para esa fecha.'
+      : 'Tipo de cambio Banxico (serie ' + b.serie + ') del ' + r.fecha_tc + ': ' + r.tc + ' pesos por ' + capEsc(iso) + '.';
+  }
+  var f2 = function(n){ return '$' + n.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2}); };
+  res.innerHTML = tc > 0 ? 'Subtotal en pesos: ' + f2(sub * tc) + ' · Total en pesos: ' + f2(total * tc) : '';
 }
 
 // ── GUARDAR OPERACIÓN ────────────────────────────────────────
@@ -15152,7 +15245,17 @@ function guardarLiq(idEx) {
 
   // Congelar el tipo de cambio de la FECHA de la operacion: el equivalente en MXN
   // queda como evidencia y no cambia si el tipo de cambio se mueve despues.
-  var conv = montoAMXN(total_operacion, datos.moneda, datos.fecha_pago);
+  // Moneda sin cotizacion de Banxico: no se registra sin el tipo de cambio
+  // capturado, que es el que convierte el subtotal y el total a pesos.
+  var pideTC = tcRequiereCaptura(datos.moneda, datos.fecha_pago);
+  var tcMan = pideTC ? (parseFloat(v('tc_manual_op')) || 0) : 0;
+  if (pideTC && !(tcMan > 0)) {
+    var moTC = MONEDAS.find(function(x){ return x.codigo === String(datos.moneda); });
+    toast('Captura el tipo de cambio (pesos por 1 ' + (moTC ? moTC.desc : 'unidad') + '): esa moneda no tiene cotizacion de Banxico para la fecha', 'w');
+    return;
+  }
+  var conv = montoAMXN(total_operacion, datos.moneda, datos.fecha_pago, tcMan);
+  datos.tc_manual            = !!conv.manual;
   datos.monto_mxn            = Math.round(conv.mxn * 100) / 100;
   datos.subtotal_mxn         = Math.round(subtotal * conv.tc * 100) / 100;   // base de los umbrales
   datos.tipo_cambio_aplicado = conv.tc;
@@ -15250,10 +15353,11 @@ function descargarLayoutOps() {
     var cols = ['Num. Cliente','RFC','Nombre / Razon social','Fecha de pago (AAAA-MM-DD)',
       'Forma de pago (codigo)','Instrumento monetario (codigo)','Moneda (codigo)',
       'Subtotal','IVA','Accesorios','Referencia de aviso','Observaciones',
-      'Quien paga (CLIENTE o TERCERO)','Nombre del tercero','Contrato (solo arrendamiento)'];
-    var ejemplo = ['CIN-0001','','JUAN PEREZ LOPEZ','2026-07-01','1','1','1',100000,16000,0,'','Fila de ejemplo — borrar antes de cargar','CLIENTE','',''];
+      'Quien paga (CLIENTE o TERCERO)','Nombre del tercero','Contrato (solo arrendamiento)',
+      'Tipo de cambio (pesos por unidad; solo monedas sin cotizacion de Banxico)'];
+    var ejemplo = ['CIN-0001','','JUAN PEREZ LOPEZ','2026-07-01','1','1','1',100000,16000,0,'','Fila de ejemplo — borrar antes de cargar','CLIENTE','','',''];
     var wsDatos = XLSX.utils.aoa_to_sheet([cols, ejemplo]);
-    wsDatos['!cols'] = cols.map(function(c,i){ return {wch: (i===2?34:(i===11?30:16))}; });
+    wsDatos['!cols'] = cols.map(function(c,i){ return {wch: (i===2?34:(i===11||i===15?30:16))}; });
 
     // Hoja de catálogos (códigos válidos)
     var cat = [['CATALOGOS — usa el CODIGO (número) en las columnas correspondientes del layout'],[]];
@@ -15266,10 +15370,13 @@ function descargarLayoutOps() {
     INSTRUMENTOS_MON.forEach(function(f){ cat.push([f.codigo, f.desc]); });
     cat.push([]);
     cat.push(['MONEDA  → columna "Moneda (codigo)"  (1 = Peso mexicano)']);
-    cat.push(['Codigo','Abreviatura']);
-    MONEDAS.forEach(function(f){ cat.push([f.codigo, f.desc]); });
+    cat.push(['Codigo','Abreviatura','Tipo de cambio']);
+    MONEDAS.forEach(function(f){
+      var b = MONEDAS_BANXICO[f.codigo];
+      cat.push([f.codigo, f.desc, f.codigo === '1' ? 'No aplica' : b ? 'Banxico, serie ' + b.serie + ' (automatico)' : 'Capturar en la columna "Tipo de cambio"']);
+    });
     var wsCat = XLSX.utils.aoa_to_sheet(cat);
-    wsCat['!cols'] = [{wch:12},{wch:50}];
+    wsCat['!cols'] = [{wch:12},{wch:50},{wch:44}];
 
     // Hoja de instrucciones
     var inst = [
@@ -15278,8 +15385,9 @@ function descargarLayoutOps() {
       ['2. Identifica al cliente por Num. Cliente (ej. CIN-0001) O por RFC. Basta con llenar UNA de las dos; si dejas Num. Cliente vacío se buscará por el RFC. El Nombre/Razon social es solo de referencia.'],
       ['3. Fecha de pago: formato AAAA-MM-DD (ej. 2026-07-01).'],
       ['4. Forma de pago / Instrumento / Moneda: escribe el CODIGO numérico según la hoja "Catalogos".'],
-      ['5. Subtotal, IVA y Accesorios: montos en pesos. El Total de operación se calcula solo (Subtotal + IVA + Accesorios).'],
-      ['6. Los umbrales de identificación y aviso (Fr. V y Fr. XV) se calculan sobre el SUBTOTAL.'],
+      ['5. Subtotal, IVA y Accesorios: montos en la moneda de la operación. El Total de operación se calcula solo (Subtotal + IVA + Accesorios).'],
+      ['6. Los umbrales de identificación y aviso (Fr. V y Fr. XV) se calculan sobre el SUBTOTAL convertido a pesos.'],
+      ['6 bis. Tipo de cambio: el peso no lo necesita. Dólar, euro, yen japonés, libra esterlina y yuan chino toman el de Banxico de la fecha de pago. Cualquier otra moneda requiere la columna "Tipo de cambio" (pesos por 1 unidad); sin ella, la fila no se importa.'],
       ['7. La fracción (V Compraventa o XV Arrendamiento) se toma de la pestaña activa al momento de cargar el archivo.'],
       ['8. Quien paga: escribe CLIENTE o TERCERO; si es TERCERO, llena su nombre. En arrendamiento, Contrato es el identificador del contrato del cliente (ej. CONTRATO PRINCIPAL). Si se dejan vacias, la operacion queda sin ese dato.'],
       ['9. Borra la fila de ejemplo antes de cargar.']
@@ -15363,7 +15471,8 @@ function procesarExcel(data, fraccion) {
         var val = String(row[c]||'').toLowerCase().replace(/\n/g,' ').trim();
         if (!val) continue;
         noVacias++;
-        if (val.indexOf('num') >= 0 && val.indexOf('cliente') >= 0) map['num_cliente'] = c;
+        if (val.indexOf('cambio') >= 0) map['tc'] = c;   // "Tipo de cambio": antes que "moneda"
+        else if (val.indexOf('num') >= 0 && val.indexOf('cliente') >= 0) map['num_cliente'] = c;
         else if (val === 'rfc' || val.indexOf('rfc') >= 0) map['rfc'] = c;
         else if (/qui[eé]n/.test(val) && val.indexOf('paga') >= 0) map['pagador'] = c;
         else if (val.indexOf('tercero') >= 0) map['tercero'] = c;
@@ -15389,7 +15498,7 @@ function procesarExcel(data, fraccion) {
     }
 
     // Leer datos desde la fila siguiente al encabezado
-    var registros = [];
+    var registros = [], sinTCImp = [];
     for (var ri = headerRow + 1; ri < allRows.length; ri++) {
       var row = allRows[ri];
       var nombre = String(row[headerMap['nombre'] !== undefined ? headerMap['nombre'] : 0] || '').trim();
@@ -15446,8 +15555,12 @@ function procesarExcel(data, fraccion) {
       var cliImp = null; App.clientes.forEach(function(c){ if (String(c.id) === String(idCli)) cliImp = c; });
       var ctrTxt = celda('contrato'), ctrImp = (fraccion === 'ARI' && cliImp) ? contratoPorTexto(cliImp, ctrTxt) : null;
       var monedaOp = String(row[headerMap['moneda'] !== undefined ? headerMap['moneda'] : 4] || '1').trim() || '1';
-      // Congelar el tipo de cambio de la fecha de cada operacion importada
-      var convOp = montoAMXN(total_operacion, monedaOp, fechaStr);
+      // Congelar el tipo de cambio de la fecha de cada operacion importada. Una
+      // moneda sin cotizacion de Banxico necesita la columna "Tipo de cambio";
+      // sin ella, la fila no se importa.
+      var pideTCImp = tcRequiereCaptura(monedaOp, fechaStr), tcImp = pideTCImp ? _num('tc') : 0;
+      if (pideTCImp && !(tcImp > 0)) { sinTCImp.push(ri + 1); continue; }
+      var convOp = montoAMXN(total_operacion, monedaOp, fechaStr, tcImp);
 
       registros.push({
         nombre_cliente: nombre,
@@ -15465,6 +15578,7 @@ function procesarExcel(data, fraccion) {
         monto: subtotal, // compat; los umbrales usan subtotal_mxn
         monto_mxn: Math.round(convOp.mxn * 100) / 100,
         subtotal_mxn: Math.round(subtotal * convOp.tc * 100) / 100,
+        tc_manual: !!convOp.manual,
         tipo_cambio_aplicado: convOp.tc,
         tc_fecha: convOp.fecha_tc,
         tc_estimado: convOp.estimado,
@@ -15477,7 +15591,12 @@ function procesarExcel(data, fraccion) {
       });
     }
 
-    if (!registros.length) { pensadorOff(); toast('No se encontraron registros con datos en el archivo', 'e'); return; }
+    var msgSinTC = sinTCImp.length
+      ? (sinTCImp.length === 1 ? 'La fila ' : 'Las filas ') + sinTCImp.join(', ') + (sinTCImp.length === 1 ? ' no se importo' : ' no se importaron')
+        + ': su moneda no tiene cotizacion de Banxico y falta el tipo de cambio. Capturalo en la columna "Tipo de cambio" y vuelve a cargarlas.'
+      : '';
+    if (!registros.length) { pensadorOff(); toast(msgSinTC || 'No se encontraron registros con datos en el archivo', 'e'); return; }
+    if (msgSinTC) toast(msgSinTC, 'w');
 
     // Detectar y alertar pagos en efectivo sobre umbral
     var umbral = CFG_UMA.DIARIA * CFG_UMA.UMBRAL_UMAS;
