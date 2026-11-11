@@ -5441,8 +5441,10 @@ function recalcularMontosMXN() {
       ops.forEach(function(o){
         var cv = montoAMXN(o.total_operacion || o.monto || 0, o.moneda, o.fecha_pago);
         if (cv.estimado) estimadas++;
+        var subO = parseFloat(o.subtotal !== undefined && o.subtotal !== null && o.subtotal !== '' ? o.subtotal : o.monto) || 0;
         spPatch('PLD_Ops_Liq', o.id, {
           monto_mxn: Math.round(cv.mxn * 100) / 100,
+          subtotal_mxn: Math.round(subO * cv.tc * 100) / 100,
           tipo_cambio_aplicado: cv.tc,
           tc_fecha: cv.fecha_tc,
           tc_estimado: cv.estimado
@@ -7700,7 +7702,7 @@ function alertaDDROperacion(idCli, op) {
   if (instOp) motivos.push('pago con ' + ptxEtiqueta(INST_ALTO, instOp).toLowerCase());
   if (!motivos.length) return;
   var vencida = est.aplica && est.estado !== 'completa' && est.plazoVencido;
-  var monto = fmtMXN(op.total_operacion || op.monto || 0);
+  var monto = fmtMXN(montoOpMXN(op)) + (esMonedaExtranjera(op) ? ' (' + fmtMonedaOrig(op.total_operacion || op.monto || 0, op.moneda) + ')' : '');
   spCreate('PLD_Alertas', {
     Title: (vencida ? 'ALT-DDR-' : 'ALT-V41-') + Date.now(), nombre_cliente: nombreCliente(c), num_cliente: c.num_cliente || '', id_cliente_ref: c.id,
     categoria: 'Riesgo', tipo: vencida ? 'Debida diligencia reforzada vencida' : 'Operacion sujeta a vigilancia (art. 41 fr. V)',
@@ -10337,7 +10339,8 @@ function renderOpsCliente() {
     var opsINM = ops.filter(function(o){ return (o.fraccion||'INM')==='INM'; });
     var opsARI = ops.filter(function(o){ return (o.fraccion||'INM')==='ARI'; });
 
-    function totalOps(arr){ return arr.reduce(function(s,o){ return s+(opDevuelta(o) ? 0 : parseFloat(o.monto||0)); },0); }
+    // Subtotales en pesos: es la base con la que se comparan los umbrales.
+    function totalOps(arr){ return arr.reduce(function(s,o){ return s+(opDevuelta(o) ? 0 : subtotalOpMXN(o)); },0); }
     function umbralLabel(frac){
       var umas = frac==='ARI' ? CFG_UMA.UMBRAL_ARI : CFG_UMA.UMBRAL_INM;
       var pesos = CFG_UMA.DIARIA * umas;
@@ -10365,7 +10368,8 @@ function renderOpsCliente() {
           +'<td>'+(mo?mo.desc:o.moneda||'-')+'</td>'
           +'<td style="font-size:12px">'+(o.pagador==='TERCERO' ? 'Tercero: '+capEsc(o.tercero_nombre||'') : o.pagador==='CLIENTE' ? 'Cliente' : '<span style="color:var(--tx3)">Sin dato</span>')
           +(o.contrato_desc ? '<div style="font-size:11px;color:var(--tx3)">'+capEsc(o.contrato_desc)+'</div>' : '')+'</td>'
-          +'<td style="font-weight:500;text-align:right">$'+(parseFloat(o.monto||0)).toLocaleString('es-MX')+'</td>'
+          +'<td style="font-weight:500;text-align:right">$'+subtotalOpMXN(o).toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2})
+          +(esMonedaExtranjera(o) ? '<div style="font-size:11px;font-weight:400;color:var(--tx3)">'+fmtMonedaOrig(o.subtotal!==undefined&&o.subtotal!==''?o.subtotal:o.monto, o.moneda)+'</div>' : '')+'</td>'
           +'<td>'+badgeOp+'</td>'
           +'</tr>';
       }).join('');
@@ -10380,7 +10384,7 @@ function renderOpsCliente() {
         +'</div>'
         +'</div>'
         +'<div class="twrap"><table>'
-        +'<thead><tr><th>Fecha pago</th><th>Forma pago</th><th>Moneda</th><th>Pago</th><th style="text-align:right">Monto</th><th>Estado</th></tr></thead>'
+        +'<thead><tr><th>Fecha pago</th><th>Forma pago</th><th>Moneda</th><th>Pago</th><th style="text-align:right">Subtotal (MXN)</th><th>Estado</th></tr></thead>'
         +'<tbody>'+rows+'</tbody>'
         +'<tfoot><tr><td colspan="4" style="font-weight:600;font-size:12px;padding:8px 12px">Total</td>'
         +'<td style="font-weight:600;text-align:right;padding:8px 12px">$'+total.toLocaleString('es-MX')+'</td><td></td></tr></tfoot>'
@@ -13561,10 +13565,10 @@ function cargarOpsRegistros(fraccion) {
     var html = '';
     Object.keys(porCliente).forEach(function(key) {
       var grupo = porCliente[key];
-      var totalMonto = grupo.ops.reduce(function(s,o){ return s+(opDevuelta(o) ? 0 : parseFloat(o.total_operacion||o.monto||0)); }, 0);
+      var totalMonto = grupo.ops.reduce(function(s,o){ return s+(opDevuelta(o) ? 0 : montoOpMXN(o)); }, 0);
       html += '<div class="card" style="margin-bottom:12px">'
         +'<div class="card-h"><span class="card-t">'+grupo.nombre+'</span>'
-        +'<span style="font-size:12px;color:var(--tx3)">'+grupo.ops.length+' ops | Total: $'+totalMonto.toLocaleString('es-MX')+'</span>'
+        +'<span style="font-size:12px;color:var(--tx3)">'+grupo.ops.length+' ops | Total: $'+totalMonto.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2})+' MXN</span>'
         +'</div><div class="twrap"><table>'
         +'<thead><tr><th>Fecha pago</th><th>Forma pago</th><th>Instrumento</th><th>Moneda</th><th>Subtotal</th><th>IVA</th><th>Accesorios</th><th>Total</th><th>Estado</th>'
         +(App.rol==='admin'?'<th></th>':'')+'</tr></thead>'
@@ -13590,7 +13594,8 @@ function cargarOpsRegistros(fraccion) {
           +'<td>$'+sub.toLocaleString('es-MX')+'</td>'
           +'<td>$'+iva.toLocaleString('es-MX')+'</td>'
           +'<td>$'+acc.toLocaleString('es-MX')+'</td>'
-          +'<td style="font-weight:600">$'+tot.toLocaleString('es-MX')+'</td>'
+          +'<td style="font-weight:600">$'+tot.toLocaleString('es-MX')
+          +(esMonedaExtranjera(op) ? '<div style="font-size:11px;font-weight:400;color:var(--tx3)">'+fmtMXN(montoOpMXN(op))+' MXN</div>' : '')+'</td>'
           +'<td>'+badgeOp+'</td>'
           +(App.rol==='admin'?'<td style="white-space:nowrap">'
              +(op.reportada===true
@@ -13761,9 +13766,9 @@ function nuevaLiqForm(datos) {
     +fg('Forma de pago',null,true)+'<select class="sel" name="forma_pago_op">'+optsC2(FORMAS_PAGO,d.forma_pago||'')+'</select></div>'
     +fg('Instrumento monetario',null,true)+'<select class="sel" name="instrumento_op">'+optsC2(INSTRUMENTOS_MON,d.instrumento_monetario||'')+'</select></div>'
     +fg('Moneda',null,true)+'<select class="sel" name="moneda_op">'+optsC2(MONEDAS,d.moneda||'1')+'</select></div>'
-    +'<div class="fg"><label class="lbl">Subtotal (MXN) <span class="req">*</span></label><input class="inp" name="subtotal_op" value="'+(d.subtotal||'')+'" placeholder="0.00" oninput="calcTotalOp()"></div>'
-    +'<div class="fg"><label class="lbl">IVA (MXN)</label><input class="inp" name="iva_op" value="'+(d.iva||'')+'" placeholder="0.00" oninput="calcTotalOp()"></div>'
-    +'<div class="fg"><label class="lbl">Accesorios (MXN)</label><input class="inp" name="accesorios_op" value="'+(d.accesorios||'')+'" placeholder="0.00" oninput="calcTotalOp()"></div>'
+    +'<div class="fg"><label class="lbl">Subtotal (en la moneda de la operacion) <span class="req">*</span></label><input class="inp" name="subtotal_op" value="'+(d.subtotal||'')+'" placeholder="0.00" oninput="calcTotalOp()"></div>'
+    +'<div class="fg"><label class="lbl">IVA</label><input class="inp" name="iva_op" value="'+(d.iva||'')+'" placeholder="0.00" oninput="calcTotalOp()"></div>'
+    +'<div class="fg"><label class="lbl">Accesorios</label><input class="inp" name="accesorios_op" value="'+(d.accesorios||'')+'" placeholder="0.00" oninput="calcTotalOp()"></div>'
     +'<div class="fg"><label class="lbl">Total de operacion</label>'
     +'<div class="inp" id="total_op_display" style="background:var(--bg2);color:var(--tx2);font-weight:600">'
     +(d.total_operacion ? '$'+parseFloat(d.total_operacion).toLocaleString('es-MX') : '$0.00')
@@ -13779,9 +13784,18 @@ function nuevaLiqForm(datos) {
 }
 
 // ── MOTOR DE DETECCIÓN DE UMBRALES ───────────────────────────
-function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, nuevaFecha, idNuevoItem, cb) {
+// nuevaMonto es el subtotal EN PESOS de la operacion nueva (subtotal_mxn);
+// opNueva, si se pasa, es la operacion, para citar su moneda original.
+function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, nuevaFecha, idNuevoItem, cb, opNueva) {
   var uma = CFG_UMA.DIARIA;
   var esARI = fraccion === 'ARI';
+  nuevaMonto = parseFloat(nuevaMonto) || 0;
+  var nuevaExt = esMonedaExtranjera(opNueva);
+  var origNueva = nuevaExt
+    ? ' (' + fmtMonedaOrig(opNueva.subtotal !== undefined ? opNueva.subtotal : opNueva.monto, opNueva.moneda)
+      + (parseFloat(opNueva.tipo_cambio_aplicado) > 0 ? ' al tipo de cambio ' + opNueva.tipo_cambio_aplicado + (opNueva.tc_fecha ? ' del ' + opNueva.tc_fecha : '') : '') + ')'
+    : '';
+  var NOTA_MXN = ' Montos en pesos: el subtotal de cada operacion en moneda extranjera se convierte con el tipo de cambio de su fecha.';
 
   // Umbrales
   var UMBRAL_MENSUAL_ARI  = uma * 1605;   // Fr. XV — filtro mensual
@@ -13808,7 +13822,7 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
       nombre_cliente: nomCli||'Sin nombre', num_cliente: numCli,
       id_cliente_ref: idCli, fraccion: fraccion,
       tipo: 'Umbral individual', nivel: 'Alto',
-      descripcion: 'Operacion individual de $' + nuevaMonto.toLocaleString('es-MX')
+      descripcion: 'Operacion individual de $' + nuevaMonto.toLocaleString('es-MX') + ' MXN' + origNueva
         + ' supera umbral de $' + umbralAplicable.toLocaleString('es-MX')
         + ' (' + CFG_UMA.UMBRAL_INM.toLocaleString() + ' UMAs Fr.V)',
       monto_acumulado: nuevaMonto, monto_umbral: umbralAplicable,
@@ -13853,9 +13867,13 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
     var todasConNueva = opsCliente.concat([{
       fecha_pago: nuevaFecha || hoy(),
       monto: nuevaMonto,
+      subtotal_mxn: nuevaMonto,
       fraccion: fraccion,
       id: idNuevoItem || 'nueva'
     }]);
+    // Si alguna operacion de la ventana esta en moneda extranjera, la alerta
+    // aclara que los montos se convirtieron a pesos.
+    var notaMXN = (nuevaExt || opsCliente.some(esMonedaExtranjera)) ? NOTA_MXN : '';
 
     if (esARI) {
       // ── LÓGICA Fr. XV (CORREGIDA): DOS NIVELES ─────────────────────────
@@ -13875,7 +13893,7 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
       var porMes = {};
       todasConNueva.forEach(function(o) {
         var key   = mesDe(o.fecha_pago || o.fecha_registro || hoy());
-        var monto = parseFloat(o.monto || 0);
+        var monto = subtotalOpMXN(o);
         if (!porMes[key]) porMes[key] = { total: 0, ops: 0, calif: 0, opsCalif: 0 };
         porMes[key].total += monto;
         porMes[key].ops++;
@@ -13909,7 +13927,7 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
           tipo: 'Umbral mensual directo Fr.XV', nivel: 'Alto',
           descripcion: 'Pagos que alcanzan 1,605 UMA en ' + mesActual + ' suman $' + califMesActual.toLocaleString('es-MX')
             + ' y superan el umbral mensual de $' + UMA_DIRECTO_ARI.toLocaleString('es-MX')
-            + ' (3,210 UMAs Fr.XV); ' + mesOp.opsCalif + ' de ' + mesOp.ops + ' pagos del mes',
+            + ' (3,210 UMAs Fr.XV); ' + mesOp.opsCalif + ' de ' + mesOp.ops + ' pagos del mes.' + notaMXN,
           monto_acumulado: califMesActual, monto_umbral: UMA_DIRECTO_ARI,
           num_operaciones: mesOp.opsCalif, estatus_atencion: 'Pendiente'
         });
@@ -13963,7 +13981,7 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
           tipo: 'Umbral acumulado semestral Fr.XV', nivel: 'Alto',
           descripcion: 'Acumulado semestral de $' + acumSemestral.toLocaleString('es-MX')
             + ' supera umbral de $' + UMA_SEMESTRAL_ARI.toLocaleString('es-MX')
-            + ' (3,210 UMAs). Solo pagos que alcanzan 1,605 UMA, por mes: ' + descMeses,
+            + ' (3,210 UMAs). Solo pagos que alcanzan 1,605 UMA, por mes: ' + descMeses + '.' + notaMXN,
           monto_acumulado: acumSemestral, monto_umbral: UMA_SEMESTRAL_ARI,
           num_operaciones: opsCalificadas,
           meses_califican: mesesQueCalifican.length,
@@ -13976,7 +13994,7 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
     } else {
       // ── LÓGICA Fr. V: ACUMULADO DIRECTO 6 MESES ──────────
 
-      var acumuladoPrev = opsCliente.reduce(function(s,o){ return s + parseFloat(o.monto||0); }, 0);
+      var acumuladoPrev = opsCliente.reduce(function(s,o){ return s + subtotalOpMXN(o); }, 0);
       var acumConNueva  = acumuladoPrev + nuevaMonto;
 
       console.log('[UMBRAL INM] Acum prev:', acumuladoPrev,
@@ -13994,7 +14012,7 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
           tipo: 'Umbral acumulado 6 meses Fr.V', nivel: 'Alto',
           descripcion: 'Acumulado 6 meses de $' + acumConNueva.toLocaleString('es-MX')
             + ' supera umbral de $' + UMBRAL_INM.toLocaleString('es-MX')
-            + ' (8,025 UMAs Fr.V)',
+            + ' (8,025 UMAs Fr.V).' + notaMXN,
           monto_acumulado: acumConNueva, monto_umbral: UMBRAL_INM,
           num_operaciones: opsCliente.length + 1, estatus_atencion: 'Pendiente'
         });
@@ -14218,6 +14236,25 @@ function montoOpMXN(o) {
   return (o.monto_mxn !== undefined && o.monto_mxn !== null && o.monto_mxn !== '')
     ? (parseFloat(o.monto_mxn) || 0)
     : montoAMXN(o.total_operacion || o.monto || 0, o.moneda, o.fecha_pago).mxn;
+}
+// Subtotal de la operacion en pesos: la base de los umbrales de aviso de las
+// fracciones V y XV (art. 41 fr. II). Los umbrales estan en UMA, es decir en
+// pesos, y una operacion en otra moneda se compara ya convertida: con el
+// equivalente guardado al registrarla, con el tipo de cambio que quedo
+// congelado, o, si no tiene ninguno, con el tipo de cambio de su fecha.
+function subtotalOpMXN(o) {
+  if (!o) return 0;
+  if (o.subtotal_mxn !== undefined && o.subtotal_mxn !== null && o.subtotal_mxn !== '') return parseFloat(o.subtotal_mxn) || 0;
+  var sub = parseFloat(o.subtotal !== undefined && o.subtotal !== null && o.subtotal !== '' ? o.subtotal : o.monto) || 0;
+  var tc = parseFloat(o.tipo_cambio_aplicado);
+  if (tc > 0) return sub * tc;
+  return montoAMXN(sub, o.moneda, o.fecha_pago).mxn;
+}
+function esMonedaExtranjera(o) { return !!o && !!o.moneda && String(o.moneda) !== '1'; }
+// Monto en su moneda original, para mostrarlo junto al equivalente en pesos.
+function fmtMonedaOrig(monto, monedaCod) {
+  var mo = MONEDAS.find(function(x){ return x.codigo === String(monedaCod); });
+  return (mo ? mo.desc : 'Moneda ' + monedaCod) + ' ' + (parseFloat(monto) || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 // Efectivo del mismo cliente, contrato y mes que la operacion op (incluida).
 function efectivoArrMes(ops, op) {
@@ -15084,7 +15121,7 @@ function guardarLiq(idEx) {
     moneda: v('moneda_op'),
     subtotal: subtotal, iva: iva, accesorios: accesorios,
     total_operacion: total_operacion,
-    monto: subtotal, // compatibilidad hacia atrás — umbrales usan subtotal
+    monto: subtotal, // compatibilidad hacia atras; los umbrales usan subtotal_mxn
     ref_aviso: v('ref_aviso_op'),
     observaciones: v('obs_op'),
     entidad_id: App.entidadActual?App.entidadActual.id:'',
@@ -15098,6 +15135,7 @@ function guardarLiq(idEx) {
   // queda como evidencia y no cambia si el tipo de cambio se mueve despues.
   var conv = montoAMXN(total_operacion, datos.moneda, datos.fecha_pago);
   datos.monto_mxn            = Math.round(conv.mxn * 100) / 100;
+  datos.subtotal_mxn         = Math.round(subtotal * conv.tc * 100) / 100;   // base de los umbrales
   datos.tipo_cambio_aplicado = conv.tc;
   datos.tc_fecha             = conv.fecha_tc;
   datos.tc_estimado          = conv.estimado;
@@ -15141,12 +15179,12 @@ function guardarLiq(idEx) {
           if (rEf) alertaEfectivoArt32(cliOp, datos, rEf);
           // El monto o la fecha pudieron cambiar: se revisan de nuevo los
           // umbrales (la alerta abierta se actualiza, no se duplica) y el perfil.
-          verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, opDevuelta(datos) ? 0 : subtotal, datos.fecha_pago, idEx, function(){
+          verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, opDevuelta(datos) ? 0 : datos.subtotal_mxn, datos.fecha_pago, idEx, function(){
             verificarPerfilTransaccional(idCli, nomCli, numCli, datos.fecha_pago, function(){
               toast('Operacion actualizada' + (cambios.length ? ' (' + cambios.map(function(x){ return x.campo; }).join(', ') + ')' : ', sin cambios'),'s');
               pgOps();
             });
-          });
+          }, datos);
         });
       });
     } else {
@@ -15157,13 +15195,13 @@ function guardarLiq(idEx) {
           alertasTercero(cliOp, item, stTer);
           if (rEf) alertaEfectivoArt32(cliOp, item, rEf);
           // Pasar el id del item recién creado para excluirlo del acumulado
-          verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, subtotal, datos.fecha_pago, item.id, function(){
+          verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, datos.subtotal_mxn, datos.fecha_pago, item.id, function(){
             alertaDDROperacion(idCli, datos);
             verificarPerfilTransaccional(idCli, nomCli, numCli, datos.fecha_pago, function(){
               toast('Operacion guardada','s');
               pgOps();
             });
-          });
+          }, datos);
         }
       });
     }
@@ -15405,8 +15443,9 @@ function procesarExcel(data, fraccion) {
         moneda: monedaOp,
         subtotal: subtotal, iva: iva, accesorios: accesorios,
         total_operacion: total_operacion,
-        monto: subtotal, // compat: umbrales usan el subtotal
+        monto: subtotal, // compat; los umbrales usan subtotal_mxn
         monto_mxn: Math.round(convOp.mxn * 100) / 100,
+        subtotal_mxn: Math.round(subtotal * convOp.tc * 100) / 100,
         tipo_cambio_aplicado: convOp.tc,
         tc_fecha: convOp.fecha_tc,
         tc_estimado: convOp.estimado,
@@ -15443,16 +15482,18 @@ function procesarExcel(data, fraccion) {
       var stTer = screeningTercero(cliTer, datos);
       if (stTer) Object.assign(datos, stTer.campos);
 
-      spCreate('PLD_Ops_Liq', datos, function() {
+      spCreate('PLD_Ops_Liq', datos, function(item) {
         alertasTercero(cliTer, datos, stTer);
         var rE = rArt32[idx];
         if (rE && rE.excede && ultimoArt32[[datos.id_cliente_ref || datos.num_cliente || '', rE.contrato_id, rE.mes].join('|')] === idx) alertaEfectivoArt32(cliTer, datos, rE);
         guardados++;
         pensadorPaso('Guardando registro ' + guardados + ' de ' + registros.length + '...');
         // Verificar umbrales por cada registro usando el motor central
+        // El subtotal en pesos, y el id del registro recien creado para no
+        // contarlo dos veces (ya viene en la lista y se agrega como nueva).
         verificarUmbralesCliente(
           datos.id_cliente_ref, datos.nombre_cliente, datos.num_cliente,
-          datos.fraccion, datos.monto, datos.fecha_pago, null
+          datos.fraccion, datos.subtotal_mxn, datos.fecha_pago, item && item.id ? item.id : null, null, datos
         );
         // Verificar perfil transaccional (operaciones fuera de lo esperado)
         verificarPerfilTransaccional(
@@ -15940,7 +15981,7 @@ function _generarXLSX() {
     // ── Agregados de operaciones / avisos por num_cliente ──
     var sumaOps={}, cntOps={}, sumaLiq={}, cntLiq={}, cntAvi={};
     (datos.ops||[]).forEach(function(o){ var k=o.num_cliente; if(!k) return; sumaOps[k]=(sumaOps[k]||0)+parseFloat(o.monto||0); cntOps[k]=(cntOps[k]||0)+1; });
-    (datos.liq||[]).forEach(function(o){ var k=o.num_cliente; if(!k) return; sumaLiq[k]=(sumaLiq[k]||0)+parseFloat(o.total_operacion||o.monto||0); cntLiq[k]=(cntLiq[k]||0)+1; });
+    (datos.liq||[]).forEach(function(o){ var k=o.num_cliente; if(!k) return; sumaLiq[k]=(sumaLiq[k]||0)+(opDevuelta(o) ? 0 : montoOpMXN(o)); cntLiq[k]=(cntLiq[k]||0)+1; });
     (datos.avisos||[]).forEach(function(r){ var k=r.num_cliente; if(k) cntAvi[k]=(cntAvi[k]||0)+1; });
 
     var entNombre = esConsolidada ? 'Todas las entidades' : (App.entidadActual.nombre || entId);
@@ -16116,7 +16157,8 @@ function _generarOpsLiqXLSX() {
 
     var cols = ['Folio interno','Num. Cliente','Nombre / Razon social','RFC','CURP','Entidad',
       'Fraccion LFPIORPI','Fecha de pago','Forma de pago','Instrumento monetario','Moneda',
-      'Subtotal (MXN)','IVA (MXN)','Accesorios (MXN)','Total operacion (MXN)',
+      'Subtotal','IVA','Accesorios','Total operacion',
+      'Tipo de cambio','Subtotal (MXN)','Total operacion (MXN)',
       'Reportada','Ref. aviso reportado','Ref. aviso relacionado','Observaciones',
       'Registrado por','Fecha registro'];
 
@@ -16138,6 +16180,9 @@ function _generarOpsLiqXLSX() {
         decod(INSTRUMENTOS_MON, o.instrumento_monetario),
         decod(MONEDAS, o.moneda),
         sub, iva, acc, tot,
+        parseFloat(o.tipo_cambio_aplicado) || 1,
+        Math.round(subtotalOpMXN(o) * 100) / 100,
+        Math.round(montoOpMXN(o) * 100) / 100,
         o.reportada===true ? 'Si' : 'No',
         o.ref_aviso_reportado||'',
         o.ref_aviso||'',
@@ -16150,7 +16195,7 @@ function _generarOpsLiqXLSX() {
     var aoa = [cols].concat(filas);
     var ws = XLSX.utils.aoa_to_sheet(aoa);
     ws['!cols'] = cols.map(function(c, i){
-      var w = i===2 ? 40 : (i===18 ? 30 : (i===5 ? 28 : 16));
+      var w = i===2 ? 40 : (i===21 ? 30 : (i===5 ? 28 : 16));
       return {wch: w};
     });
 
@@ -16166,7 +16211,7 @@ function _generarOpsLiqXLSX() {
       }
     }
 
-    var totalGeneral = filas.reduce(function(s,f){ return s + (parseFloat(f[14])||0); }, 0);
+    var totalGeneral = filas.reduce(function(s,f){ return s + (parseFloat(f[17])||0); }, 0);   // Total operacion (MXN)
 
     var wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Operaciones');
