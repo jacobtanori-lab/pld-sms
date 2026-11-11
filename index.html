@@ -7624,9 +7624,11 @@ function aplicarRiesgo(obj, r) {
 // ── Debida diligencia reforzada (arts. 23 Ter 3, 4 y 5) ──
 // Se abre cuando el cliente queda en riesgo Alto, por alta, edicion,
 // revaloracion o resolucion de screening. Un cliente nuevo no se aprueba hasta
-// completarla; uno que ya operaba tiene 45 dias naturales, y despues cada
-// operacion nueva genera una alerta. Vale un anio, o hasta que cambie el perfil
-// transaccional. Vive en el expediente, en el campo ddr.
+// completarla; uno que ya operaba tiene 45 dias naturales. Mientras no este
+// completa, cada operacion nueva genera una alerta (al vencer el plazo, la
+// alerta lo dice); completa, el riesgo Alto deja de alertar. Vale un anio, o
+// hasta que cambie el perfil transaccional. Vive en el expediente, en el campo
+// ddr.
 var DDR_PLAZO_DIAS = 45, DDR_VIGENCIA_DIAS = 365;
 var DDR_ROLES = ['admin', 'supervisor'];
 var DDR_DESTINOS = [['HABITACION','Casa habitacion'],['RENTA','Renta a terceros'],['REVENTA','Reventa'],['OFICINAS','Oficinas o negocio propio'],['OTRO','Otro']];
@@ -7671,19 +7673,22 @@ function activarDDR(obj, anterior) {
   if (r.completada && r.perfil && cambiosPerfilTx(r.perfil, obj).length) { abrir('Cambio el perfil transaccional.'); return obj; }
   return obj;
 }
-// Articulo 41, fraccion V: cada operacion con un cliente de riesgo Alto, un
-// PEP (propio o de una persona relacionada confirmada) o un vinculo con paises
-// de la lista gris del GAFI, con regimen fiscal preferente o con sanciones del
-// Consejo de Seguridad genera una alerta, una sola con todos los motivos. Si
-// el cliente es de riesgo Alto y su debida diligencia reforzada tiene el plazo
-// vencido, la alerta lo dice (arts. 23 Ter 3 y 4). La usan la captura manual
-// y la importacion desde Excel.
+// Articulo 41, fraccion V: cada operacion con un cliente de riesgo Alto que no
+// ha completado su debida diligencia reforzada (pendiente o vencida), un PEP
+// (propio o de una persona relacionada confirmada) o un vinculo con paises de
+// la lista gris del GAFI, con regimen fiscal preferente o con sanciones del
+// Consejo de Seguridad genera una alerta, una sola con todos los motivos. Con
+// la debida diligencia completa y vigente, el riesgo Alto deja de ser motivo;
+// los demas motivos siguen alertando. Si el plazo de la debida diligencia
+// vencio, la alerta lo dice (arts. 23 Ter 3 y 4). La usan la captura manual y
+// la importacion desde Excel.
 function alertaDDROperacion(idCli, op) {
   var c = null;
   (App.clientes || []).forEach(function(x){ if (String(x.id) === String(idCli)) c = x; });
   if (!c) return;
-  var p = perfilRiesgo(c), motivos = [];
-  if (c.riesgo === 'Alto') motivos.push('cliente de riesgo Alto');
+  var p = perfilRiesgo(c), motivos = [], est = estadoDDR(c);
+  if (est.aplica && est.estado !== 'completa')
+    motivos.push('cliente de riesgo Alto con debida diligencia reforzada ' + (est.estado === 'vencida' ? 'vencida' : 'pendiente de completar'));
   if (p.pepAFR || p.pepExt)
     motivos.push('PEP' + (p.pepAFR && p.det.pep ? ' (' + p.det.pep + ')' : '') + (p.pepExt ? ', extranjero' : ''));
   var paises = [];
@@ -7694,7 +7699,7 @@ function alertaDDROperacion(idCli, op) {
   var instOp = INST_ALTO_COD[String(op.instrumento_monetario || '')];
   if (instOp) motivos.push('pago con ' + ptxEtiqueta(INST_ALTO, instOp).toLowerCase());
   if (!motivos.length) return;
-  var est = estadoDDR(c), vencida = est.aplica && est.estado !== 'completa' && est.plazoVencido;
+  var vencida = est.aplica && est.estado !== 'completa' && est.plazoVencido;
   var monto = fmtMXN(op.total_operacion || op.monto || 0);
   spCreate('PLD_Alertas', {
     Title: (vencida ? 'ALT-DDR-' : 'ALT-V41-') + Date.now(), nombre_cliente: nombreCliente(c), num_cliente: c.num_cliente || '', id_cliente_ref: c.id,
@@ -7747,7 +7752,7 @@ function renderDDR(conservar) {
   else banner = '<div class="alerta-banner"' + (est.plazoVencido ? ' style="background:var(--rj3);color:var(--rj);border-color:var(--rj)"' : '') + '><span><strong>'
     + (est.estado === 'vencida' ? 'Vencida.' : 'Pendiente.') + '</strong> ' + capEsc(est.motivo || '')
     + (est.plazoVencido ? ' El plazo de ' + DDR_PLAZO_DIAS + ' dias vencio el ' + est.limite + ': cada operacion nueva genera una alerta.'
-                        : ' Plazo para completarla: ' + est.limite + '.')
+                        : ' Plazo para completarla: ' + est.limite + '. Mientras no se complete, cada operacion nueva genera una alerta.')
     + (r.alta ? ' Es un cliente nuevo: no se puede aprobar hasta completarla.' : '') + '</span></div>';
   var dis = editable ? '' : ' disabled';
   var sec = function(t){ return '<div class="sec-hdr" style="margin-top:16px">' + t + '</div>'; };
