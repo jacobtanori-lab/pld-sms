@@ -10341,6 +10341,22 @@ function renderOpsCliente() {
 
     // Subtotales en pesos: es la base con la que se comparan los umbrales.
     function totalOps(arr){ return arr.reduce(function(s,o){ return s+(opDevuelta(o) ? 0 : subtotalOpMXN(o)); },0); }
+    // Lo mismo que cuentan los umbrales (verificarUmbralesCliente): operaciones
+    // de los ultimos seis meses, sin las ya reportadas en un aviso ni las
+    // devueltas. En arrendamiento, solo los pagos que alcanzan 1,605 UMA entran
+    // al acumulado semestral.
+    function acumUmbral(arr, frac){
+      var ahora = new Date(), hace6m = new Date(ahora.getFullYear(), ahora.getMonth() - 6, ahora.getDate());
+      var califARI = CFG_UMA.DIARIA * 1605, r = { total: 0, n: 0 };
+      arr.forEach(function(o){
+        if (o.reportada === true || opDevuelta(o)) return;
+        if (new Date(o.fecha_pago || o.fecha_registro || '2000-01-01') < hace6m) return;
+        var m = subtotalOpMXN(o);
+        if (frac === 'ARI' && m < califARI) return;
+        r.total += m; r.n++;
+      });
+      return r;
+    }
     function umbralLabel(frac){
       var umas = frac==='ARI' ? CFG_UMA.UMBRAL_ARI : CFG_UMA.UMBRAL_INM;
       var pesos = CFG_UMA.DIARIA * umas;
@@ -10349,9 +10365,10 @@ function renderOpsCliente() {
 
     function tablaOps(arr, frac) {
       if (!arr.length) return '<p style="font-size:12px;color:var(--tx3);padding:8px 0">Sin operaciones de esta fraccion.</p>';
-      var total = totalOps(arr);
+      var total = totalOps(arr), acum = acumUmbral(arr, frac);
       var umbral = CFG_UMA.DIARIA * (frac==='ARI'?CFG_UMA.UMBRAL_ARI:CFG_UMA.UMBRAL_INM);
-      var pct = Math.min(100, Math.round(total/umbral*100));
+      var pct = Math.min(100, Math.round(acum.total/umbral*100));
+      var fmt2 = function(n){ return n.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2}); };
       var barCol = pct >= 100 ? 'var(--rj)' : pct >= 80 ? 'var(--am)' : 'var(--vd)';
 
       var rows = arr.map(function(o) {
@@ -10376,18 +10393,20 @@ function renderOpsCliente() {
 
       return '<div style="margin-bottom:6px">'
         +'<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">'
-        +'<span style="color:var(--tx2)">Acumulado 6 meses: <strong>$'+total.toLocaleString('es-MX')+'</strong></span>'
+        +'<span style="color:var(--tx2)">Acumulado 6 meses: <strong>$'+fmt2(acum.total)+'</strong> ('+acum.n+(acum.n===1?' operacion':' operaciones')+')</span>'
         +'<span style="color:var(--tx3)">Umbral: '+umbralLabel(frac)+'</span>'
         +'</div>'
-        +'<div style="height:8px;background:var(--brd);border-radius:4px;overflow:hidden;margin-bottom:10px">'
+        +'<div style="height:8px;background:var(--brd);border-radius:4px;overflow:hidden;margin-bottom:4px">'
         +'<div style="height:100%;width:'+pct+'%;background:'+barCol+';border-radius:4px;transition:width .4s"></div>'
         +'</div>'
+        +'<div style="font-size:11px;color:var(--tx3);margin-bottom:10px">Lo que cuentan los umbrales: subtotales en pesos de los ultimos seis meses, sin operaciones ya reportadas en un aviso ni devueltas'
+        +(frac==='ARI' ? '; en arrendamiento, solo los pagos de 1,605 UMA o mas.' : '.')+'</div>'
         +'</div>'
         +'<div class="twrap"><table>'
         +'<thead><tr><th>Fecha pago</th><th>Forma pago</th><th>Moneda</th><th>Pago</th><th style="text-align:right">Subtotal (MXN)</th><th>Estado</th></tr></thead>'
         +'<tbody>'+rows+'</tbody>'
-        +'<tfoot><tr><td colspan="4" style="font-weight:600;font-size:12px;padding:8px 12px">Total</td>'
-        +'<td style="font-weight:600;text-align:right;padding:8px 12px">$'+total.toLocaleString('es-MX')+'</td><td></td></tr></tfoot>'
+        +'<tfoot><tr><td colspan="4" style="font-weight:600;font-size:12px;padding:8px 12px">Total registrado (sin devueltas)</td>'
+        +'<td style="font-weight:600;text-align:right;padding:8px 12px">$'+fmt2(total)+'</td><td></td></tr></tfoot>'
         +'</table></div>';
     }
 
