@@ -15852,7 +15852,7 @@ function guardarLiq(idEx) {
 var LAYOUT_OPS_COLS = ['Num. Cliente','RFC','Nombre / Razon social','Fecha de pago (AAAA-MM-DD)',
   'Forma de pago','Instrumento monetario','Moneda',
   'Subtotal','IVA','Accesorios','Referencia de aviso','Observaciones',
-  'Quien paga','Nombre del tercero','Contrato (solo arrendamiento)',
+  'Quien paga','Nombre del tercero (obligatorio si paga un tercero)','Contrato (solo arrendamiento)',
   'Tipo de cambio (pesos por unidad; solo monedas sin cotizacion de Banxico)',
   'Inmueble (solo compraventa: fraccionamiento y lote)',
   'Pais de procedencia de los recursos (obligatorio con 10 - Transferencia Internacional)'];
@@ -15881,8 +15881,11 @@ function paisesOrdenados() {
 
 // SheetJS (edicion comunitaria) no escribe listas desplegables ni estilos: se
 // agregan al XML del archivo ya generado. hoja = numero de hoja (1 = primera);
-// listas = [{ rango: 'E2:E1000', formula: 'Listas!$A$2:$A$6', titulo, mensaje }].
-function xlsxConFormato(wb, hoja, listas) {
+// listas = [{ rango: 'E2:E1000', formula: 'Listas!$A$2:$A$6', titulo, mensaje }];
+// condicionales = [{ rango: 'N2:N1000', formula: '$M2="TERCERO"' }]: fondo amarillo
+// cuando la formula se cumple (campos que se vuelven obligatorios).
+function xlsxConFormato(wb, hoja, listas, condicionales) {
+  condicionales = condicionales || [];
   var buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
   var cfb = XLSX.CFB.read(new Uint8Array(buf), { type: 'array' });
   var ent = function(p){ return cfb.FileIndex[cfb.FullPaths.indexOf('Root Entry/' + p)]; };
@@ -15898,6 +15901,13 @@ function xlsxConFormato(wb, hoja, listas) {
     idxXf = +n;
     return '<cellXfs count="' + (+n + 1) + '">' + f + '<xf numFmtId="0" fontId="' + (nFonts - 1) + '" fillId="' + (nFills - 1) + '" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment wrapText="1" vertical="center"/></xf></cellXfs>';
   });
+  // Formato diferencial (amarillo) para los formatos condicionales.
+  if (condicionales.length) {
+    var dxf = '<dxf><font><color rgb="FF7A5200"/></font><fill><patternFill patternType="solid"><fgColor rgb="FFFFF2A8"/><bgColor rgb="FFFFF2A8"/></patternFill></fill></dxf>';
+    sx = /<dxfs count="0"\/>/.test(sx) ? sx.replace('<dxfs count="0"/>', '<dxfs count="1">' + dxf + '</dxfs>')
+       : sx.replace(/<dxfs count="(\d+)">([\s\S]*?)<\/dxfs>/, function(m, n, d){ return '<dxfs count="' + (+n + 1) + '">' + d + dxf + '</dxfs>'; });
+  }
+  var idxDxf = condicionales.length ? (+(sx.match(/<dxfs count="(\d+)"/) || [0, 1])[1] - 1) : 0;
   poner(st, sx);
   var sh = ent('xl/worksheets/sheet' + hoja + '.xml'), x = leer(sh);
   // Encabezado con estilo, fila mas alta y fija al desplazarse.
@@ -15911,7 +15921,11 @@ function xlsxConFormato(wb, hoja, listas) {
       + (l.titulo ? ' promptTitle="' + esc(l.titulo) + '"' : '') + (l.mensaje ? ' prompt="' + esc(l.mensaje) + '"' : '')
       + ' sqref="' + l.rango + '"><formula1>' + esc(l.formula) + '</formula1></dataValidation>';
   }).join('') + '</dataValidations>';
-  x = /<\/mergeCells>/.test(x) ? x.replace('</mergeCells>', '</mergeCells>' + dv) : x.replace('</sheetData>', '</sheetData>' + dv);
+  // El orden del XML importa: formatos condicionales antes que las listas.
+  var cf = condicionales.map(function(c, i){
+    return '<conditionalFormatting sqref="' + c.rango + '"><cfRule type="expression" dxfId="' + idxDxf + '" priority="' + (i + 1) + '"><formula>' + esc(c.formula) + '</formula></cfRule></conditionalFormatting>';
+  }).join('');
+  x = /<\/mergeCells>/.test(x) ? x.replace('</mergeCells>', '</mergeCells>' + cf + dv) : x.replace('</sheetData>', '</sheetData>' + cf + dv);
   poner(sh, x);
   return XLSX.CFB.write(cfb, { fileType: 'zip', type: 'array' });
 }
@@ -15969,9 +15983,9 @@ function descargarLayoutOps() {
       ['6. Los umbrales de identificación y aviso (Fr. V y Fr. XV) se calculan sobre el SUBTOTAL convertido a pesos.'],
       ['6 bis. Tipo de cambio: el peso no lo necesita. Dólar, euro, yen japonés, libra esterlina y yuan chino toman el de Banxico de la fecha de pago. Cualquier otra moneda requiere la columna "Tipo de cambio" (pesos por 1 unidad); sin ella, la fila no se importa.'],
       ['7. La fracción (V Compraventa o XV Arrendamiento) se toma de la pestaña activa al momento de cargar el archivo.'],
-      ['8. Quien paga: CLIENTE o TERCERO; si es TERCERO, llena su nombre. En arrendamiento, Contrato es el identificador del contrato del cliente (ej. CONTRATO PRINCIPAL). Si se dejan vacias, la operacion queda sin ese dato.'],
+      ['8. Quien paga: CLIENTE o TERCERO. Si es TERCERO, la columna N (nombre del tercero) se pinta de amarillo y es obligatoria; sin ella, la fila no se importa. En arrendamiento, Contrato es el identificador del contrato del cliente (ej. CONTRATO PRINCIPAL). Si se dejan vacias, la operacion queda sin ese dato.'],
       ['8 bis. Inmueble (solo compraventa): escribelo como aparece en la pestaña Inmuebles del cliente, por ejemplo FRACCIONAMIENTO LAS PALMAS, LOTE 12. Si el cliente tiene un solo inmueble puede quedar vacio. Si el efectivo y los metales preciosos recibidos para ese inmueble llegan a 8,025 UMA con la fila, la fila no se importa (art. 32 fr. I LFPIORPI).'],
-      ['8 ter. Pais de procedencia de los recursos: obligatorio cuando el instrumento es 10 - Transferencia Internacional (un pais distinto de Mexico); sin el, la fila no se importa. Si el pais esta en las listas del GAFI, del Consejo de Seguridad o de regimenes fiscales preferentes, la operacion genera alerta (art. 41 fr. V).'],
+      ['8 ter. Pais de procedencia de los recursos: obligatorio cuando el instrumento es 10 - Transferencia Internacional (un pais distinto de Mexico); la columna R se pinta de amarillo y, sin el pais, la fila no se importa. Si el pais esta en las listas del GAFI, del Consejo de Seguridad o de regimenes fiscales preferentes, la operacion genera alerta (art. 41 fr. V).'],
       ['9. Borra la fila de ejemplo antes de cargar.']
     ];
     var wsInst = XLSX.utils.aoa_to_sheet(inst);
@@ -15989,8 +16003,12 @@ function descargarLayoutOps() {
         { rango: 'E2:E1000', formula: rango('A', columnas[0].length) },
         { rango: 'F2:F1000', formula: rango('B', columnas[1].length) },
         { rango: 'G2:G1000', formula: rango('C', columnas[2].length) },
-        { rango: 'M2:M1000', formula: rango('E', 2) },
+        { rango: 'M2:M1000', formula: rango('E', 2), titulo: 'Quien paga', mensaje: 'Obligatorio si paga un tercero: con TERCERO, el nombre del tercero (columna N) es obligatorio.' },
         { rango: 'R2:R1000', formula: rango('D', paises.length), titulo: 'Pais de procedencia', mensaje: 'Obligatorio con 10 - Transferencia Internacional.' }
+      ], [
+        // Se pintan en amarillo cuando se vuelven obligatorios.
+        { rango: 'N2:N1000', formula: 'UPPER(TRIM($M2))="TERCERO"' },
+        { rango: 'R2:R1000', formula: 'LEFT(TRIM($F2),2)="10"' }
       ]);
     } catch (e) {
       console.warn('[layout] sin listas desplegables', e);
@@ -16097,7 +16115,7 @@ function procesarExcel(data, fraccion) {
     }
 
     // Leer datos desde la fila siguiente al encabezado
-    var registros = [], sinTCImp = [], sinInmImp = [], efCvImp = [], sinPaisImp = [];
+    var registros = [], sinTCImp = [], sinInmImp = [], efCvImp = [], sinPaisImp = [], sinTerImp = [];
     var sinTxt = function(a){ return a.join(', '); };
     for (var ri = headerRow + 1; ri < allRows.length; ri++) {
       var row = allRows[ri];
@@ -16152,6 +16170,7 @@ function procesarExcel(data, fraccion) {
       // Quien pago y contrato: columnas opcionales; vacias quedan sin dato.
       var celda = function(k){ return headerMap[k] !== undefined ? String(row[headerMap[k]] || '').trim() : ''; };
       var pagImp = pagadorDeTexto(celda('pagador'));
+      if (pagImp === 'TERCERO' && !celda('tercero')) { sinTerImp.push(ri + 1); continue; }
       var cliImp = null; App.clientes.forEach(function(c){ if (String(c.id) === String(idCli)) cliImp = c; });
       var ctrTxt = celda('contrato'), ctrImp = (fraccion === 'ARI' && cliImp) ? contratoPorTexto(cliImp, ctrTxt) : null;
       // Compraventa: el inmueble de la fila (o el unico del cliente); sin el, la fila no se importa.
@@ -16212,6 +16231,7 @@ function procesarExcel(data, fraccion) {
         + ': su moneda no tiene cotizacion de Banxico y falta el tipo de cambio. Capturalo en la columna "Tipo de cambio" y vuelve a cargarlas. '
       : '')
       + (sinInmImp.length ? (sinInmImp.length === 1 ? 'La fila ' : 'Las filas ') + sinInmImp.join(', ') + ': falta el inmueble o no coincide con los del cliente (columna "Inmueble"). ' : '')
+      + (sinTerImp.length ? (sinTerImp.length === 1 ? 'La fila ' : 'Las filas ') + sinTerImp.join(', ') + ': paga un tercero y falta su nombre (columna N); no se importaron. ' : '')
       + (sinPaisImp.length ? (sinPaisImp.length === 1 ? 'La fila ' : 'Las filas ') + sinPaisImp.join(', ') + ': transferencia internacional sin pais de procedencia (o con Mexico); no se importaron. ' : '')
       + (efCvImp.length ? (efCvImp.length === 1 ? 'La fila ' : 'Las filas ') + sinTxt(efCvImp) + ': con ese pago, el efectivo y metales preciosos del inmueble llegarian a 8,025 UMA o mas (art. 32 fr. I LFPIORPI); no se importaron. ' : '');
     msgSinTC = msgSinTC.trim();
