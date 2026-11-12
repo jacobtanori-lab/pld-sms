@@ -1811,6 +1811,8 @@ function iniciarApp() {
         rutear(false);
         // Sincroniza listas de screening desde PEP Manager (en segundo plano)
         try { autoSyncPEPManager(); } catch(e){ console.warn('[PEPM] auto-sync', e); }
+        // Screening diario de los clientes de arrendamiento, en segundo plano.
+        try { iniciarScrMasivoDiario(); } catch(e){ console.warn('[SCR] diario', e); }
       });
       }); // cargarRolUsuario
     });
@@ -6394,7 +6396,7 @@ function opsDelClienteReval(c, ops, desde, hasta) {
     var mismo = (o.id_cliente_ref && String(o.id_cliente_ref) === String(c.id))
       || (!o.id_cliente_ref && c.num_cliente && String(o.num_cliente) === String(c.num_cliente));
     var f = fechaXML(o.fecha_pago);
-    return mismo && f && f >= d && f <= h && !opDevuelta(o);
+    return mismo && f && f >= d && f <= h && !opExcluida(o);
   });
 }
 
@@ -6817,7 +6819,7 @@ function guardarReval(e, texto, cb) {
       Object.keys(c2).forEach(function(k){ c[k] = c2[k]; });
       e.registro = reg;
       if (e.desv.length) alertaDesviacionReval(e, reg);
-      if ((e.scr || []).length) scrAlertasResolucionMasivo([c]);
+      if ((e.scr || []).length) scrAlertasResolucionMasivo([c], 'Revaloracion');
       cb(true);
     });
   });
@@ -7927,7 +7929,7 @@ function faltantesDDR(c, r) {
 // coincidencias sin resolver se crea la alerta de resolucion de siempre.
 function screeningDDR(c) {
   if (typeof cargarListasScreening !== 'function') return;
-  cargarListasScreening(function(){ scrAlertasResolucionMasivo([c]); });
+  cargarListasScreening(function(){ scrAlertasResolucionMasivo([c], 'Debida diligencia reforzada'); });
 }
 function patchDDR(c, r, msg, cb) {
   spPatch('PLD_Clientes', c.id, { ddr: r }, function(ok){
@@ -10347,7 +10349,7 @@ function renderOpsCliente() {
     var opsARI = ops.filter(function(o){ return (o.fraccion||'INM')==='ARI'; });
 
     // Subtotales en pesos: es la base con la que se comparan los umbrales.
-    function totalOps(arr){ return arr.reduce(function(s,o){ return s+(opDevuelta(o) ? 0 : subtotalOpMXN(o)); },0); }
+    function totalOps(arr){ return arr.reduce(function(s,o){ return s+(opExcluida(o) ? 0 : subtotalOpMXN(o)); },0); }
     // Lo mismo que cuentan los umbrales (verificarUmbralesCliente): operaciones
     // de los ultimos seis meses, sin las ya reportadas en un aviso ni las
     // devueltas. En arrendamiento, solo los pagos que alcanzan 1,605 UMA entran
@@ -10356,7 +10358,7 @@ function renderOpsCliente() {
       var ahora = new Date(), hace6m = new Date(ahora.getFullYear(), ahora.getMonth() - 6, ahora.getDate());
       var califARI = CFG_UMA.DIARIA * 1605, r = { total: 0, n: 0 };
       arr.forEach(function(o){
-        if (o.reportada === true || opDevuelta(o)) return;
+        if (o.reportada === true || opExcluida(o)) return;
         if (new Date(o.fecha_pago || o.fecha_registro || '2000-01-01') < hace6m) return;
         var m = subtotalOpMXN(o);
         if (frac === 'ARI' && m < califARI) return;
@@ -10877,7 +10879,8 @@ function resolverCoincidencia(alertaId, i, decision) {
     if (decision === 'CONFIRMADA' && !esPEP &&
         !confirm(esTer
           ? 'Confirmar una coincidencia del tercero en ' + (c.lista || 'una lista de sanciones') + ' RECHAZA la operacion y pide al oficial decidir la devolucion.\n\n¿Continuar?'
-          : 'Confirmar una coincidencia en ' + (c.lista || 'una lista de sanciones') + ' BLOQUEA al cliente.\n\n¿Continuar?')) return;
+          : 'Confirmar una coincidencia en ' + (c.lista || 'una lista de sanciones') + ' BLOQUEA al cliente'
+            + ((a.ops_revision || []).length ? ' y RECHAZA ' + a.ops_revision.length + ' operacion(es) en revision' : '') + '.\n\n¿Continuar?')) return;
     spGetUno('PLD_Clientes', a.id_cliente_ref, function(cli) {
       if (!cli) { toast('No se encontro el expediente del cliente', 'e'); return; }
       var quien = App.cuenta ? (App.cuenta.name || App.cuenta.username) : '';
@@ -10950,12 +10953,25 @@ function resolverCoincidencia(alertaId, i, decision) {
           var algunaSancion = lista.some(function(x){ return x.decision === 'CONFIRMADA' && x.categoria !== 'PEP'; });
           if (sancion && !a.op_rechazada) {
             camposA.op_rechazada = true;
-            spPatch('PLD_Ops_Liq', opRef, { scr_estado: 'RECHAZADA', scr_motivo: 'Tercero que paga confirmado en ' + res.lista }, function(){
+            actualizarScrOp(opRef, 'tercero', 'RECHAZADA', 'Tercero que paga confirmado en ' + res.lista, function(){
               alertaRechazoTercero(cli, { id: opRef, fecha_pago: a.op_fecha, tercero_nombre: a.tercero_nombre, fraccion: a.fraccion, entidad_id: a.entidad_id, entidad_nombre: a.entidad_nombre },
                 [{ lista: res.lista, nombre: res.nombre_lista, score: res.score, uid: res.uid }], null);
             });
           } else if (!pend && !algunaSancion) {
-            spPatch('PLD_Ops_Liq', opRef, { scr_estado: 'ACEPTADA', scr_motivo: 'Coincidencias del tercero resueltas' }, null);
+            actualizarScrOp(opRef, 'tercero', 'ACEPTADA', 'Coincidencias del tercero resueltas', null);
+          }
+        }
+        // Operaciones de compraventa en revision por coincidencias del cliente:
+        // una sancion confirmada (el cliente queda bloqueado) las rechaza; con
+        // todo resuelto y sin sanciones confirmadas, quedan aceptadas.
+        var opsRev = a.ops_revision || [];
+        if (!esTer && opsRev.length) {
+          var sancionCli = lista.some(function(x){ return x.decision === 'CONFIRMADA' && x.categoria !== 'PEP' && x.parte !== PARTE_TERCERO; });
+          if (sancionCli && !a.ops_rechazadas) {
+            camposA.ops_rechazadas = true;
+            opsRev.forEach(function(id){ actualizarScrOp(id, 'cliente', 'RECHAZADA', 'Cliente con coincidencia confirmada en ' + res.lista, null); });
+          } else if (!pend && !sancionCli) {
+            opsRev.forEach(function(id){ actualizarScrOp(id, 'cliente', 'ACEPTADA', 'Coincidencias del cliente resueltas', null); });
           }
         }
         spPatch('PLD_Alertas', a.id, camposA, function() {
@@ -11092,7 +11108,7 @@ function marcarOpsReportadasDeAlerta(alerta, folio) {
 
     var opsAMarcar = todasOps.filter(function(o) {
       if (o.reportada === true) return false; // ya reportada, no tocar
-      if (opDevuelta(o)) return false;          // devuelta: no va en el aviso
+      if (opExcluida(o)) return false;          // devuelta: no va en el aviso
 
       var mismoCliente = false;
       if (alerta.id_cliente_ref && o.id_cliente_ref === alerta.id_cliente_ref) mismoCliente = true;
@@ -11347,7 +11363,7 @@ function crearAvisoDesdeAlerta(alertaId) {
                            (a.num_cliente && String(o.num_cliente)===String(a.num_cliente));
         var mismafrac = (o.fraccion||'INM')===fraccion;
         var fechaOp = new Date(o.fecha_pago || '2000-01-01');
-        return mismoCliente && mismafrac && fechaOp >= hace6m && !opDevuelta(o);
+        return mismoCliente && mismafrac && fechaOp >= hace6m && !opExcluida(o);
       });
 
       // Guardar IDs de las ops que se incluirán en este aviso para marcarlas al guardar
@@ -13632,7 +13648,7 @@ function cargarOpsRegistros(fraccion) {
     var html = '';
     Object.keys(porCliente).forEach(function(key) {
       var grupo = porCliente[key];
-      var totalMonto = grupo.ops.reduce(function(s,o){ return s+(opDevuelta(o) ? 0 : montoOpMXN(o)); }, 0);
+      var totalMonto = grupo.ops.reduce(function(s,o){ return s+(opExcluida(o) ? 0 : montoOpMXN(o)); }, 0);
       html += '<div class="card" style="margin-bottom:12px">'
         +'<div class="card-h"><span class="card-t">'+grupo.nombre+'</span>'
         +'<span style="font-size:12px;color:var(--tx3)">'+grupo.ops.length+' ops | Total: $'+totalMonto.toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2})+' MXN</span>'
@@ -13744,9 +13760,17 @@ function verLiq(id, origen) {
       var dec = function(d, etq){ return d ? fcHtml(etq, capEsc(({ DEVOLVER: 'Se devuelven los recursos', NO_DEVOLVER: 'No se devuelven los recursos', ACEPTAR: 'Aceptada', RECHAZAR: 'Rechazada' })[d.decision] || d.decision) + '. ' + capEsc(d.fundamento || '') + ' <span style="color:var(--tx3)">(' + capEsc(d.por || '') + ', ' + capEsc(d.fecha || '') + ')</span>') : ''; };
       scr = '<div class="card"><div class="card-h"><span class="card-t">Screening del tercero que paga</span></div><div class="card-b">' + fgHtml(
           fcHtml('Resultado', capEsc(res) + (ts.fecha ? ' <span style="color:var(--tx3)">(' + capEsc(ts.fecha) + (ts.listas ? ', ' + ts.listas + ' listas' : '') + ')</span>' : ''))
-        + (o.scr_estado ? fcHtml('Estado', capEsc({ RECHAZADA: 'Rechazada', EN_REVISION: 'En revision', ACEPTADA: 'Aceptada' }[o.scr_estado] || o.scr_estado) + (o.scr_motivo ? '. ' + capEsc(o.scr_motivo) : '')) : '')
+        + (partesScrOp(o).tercero ? (function(pt){ return fcHtml('Estado', capEsc({ RECHAZADA: 'Rechazada', EN_REVISION: 'En revision', ACEPTADA: 'Aceptada' }[pt.estado] || pt.estado) + (pt.motivo ? '. ' + capEsc(pt.motivo) : '')); })(partesScrOp(o).tercero) : '')
         + dec(o.decision_69b, 'Decision sobre el 69-B')
         + dec(o.devolucion, 'Devolucion de los recursos')) + '</div></div>';
+    }
+    // Compraventa: screening del cliente en la operacion.
+    if (o.cliente_scr) {
+      var cs = o.cliente_scr, pc = (o.scr_partes || {}).cliente;
+      var resC = { SIN_COINCIDENCIAS: 'Sin coincidencias', COINCIDENCIAS: cs.coincidencias + ' coincidencia(s)', SIN_LISTAS: 'No se hizo: no habia listas cargadas' }[cs.resultado] || '';
+      scr += '<div class="card"><div class="card-h"><span class="card-t">Screening del cliente</span></div><div class="card-b">' + fgHtml(
+          fcHtml('Resultado', capEsc(resC) + (cs.fecha ? ' <span style="color:var(--tx3)">(' + capEsc(cs.fecha) + (cs.listas ? ', ' + cs.listas + ' listas' : '') + ')</span>' : ''))
+        + (pc ? fcHtml('Estado', capEsc({ RECHAZADA: 'Rechazada', EN_REVISION: 'En revision', ACEPTADA: 'Aceptada' }[pc.estado] || pc.estado) + (pc.motivo ? '. ' + capEsc(pc.motivo) : '')) : '')) + '</div></div>';
     }
     // Rastro de ediciones.
     var ed = o.ediciones || [];
@@ -13924,7 +13948,7 @@ function verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, nuevaMonto, n
     var opsCliente = todas.filter(function(o) {
       if (idNuevoItem && String(o.id) === String(idNuevoItem)) return false; // excluir la nueva
       if (o.reportada === true) return false; // excluir ops ya reportadas en un aviso
-      if (opDevuelta(o)) return false;          // recursos devueltos: no acumula
+      if (opExcluida(o)) return false;          // recursos devueltos: no acumula
 
       var mismoCliente = false;
       if (idCli  && o.id_cliente_ref === idCli)   mismoCliente = true;
@@ -14299,6 +14323,152 @@ function alertasTercero(cli, op, st) {
   if (st.exacta.length) toast('Operacion RECHAZADA: el tercero que paga coincide con ' + st.exacta[0].lista + '. Se aviso al oficial de cumplimiento', 'e');
   else if (st.fiscal.length || st.similares.length) toast('El tercero que paga tiene coincidencias en listas: la operacion queda en revision', 'w');
 }
+
+// ── Screening del cliente en cada operacion de compraventa ──
+// (En arrendamiento el cliente se revisa en el screening masivo.) Cualquier
+// coincidencia por resolver deja la operacion en revision hasta que el
+// administrador resuelva; una sancion ya confirmada la rechaza.
+function screeningClienteOp(cli, op) {
+  if (!cli || !op || (op.fraccion || 'INM') === 'ARI') return null;
+  var nombre = nombreClienteDatos(cli), n = listasScrActivas();
+  var st = { confirmada: [], pendientes: [], campos: {}, parte: null };
+  if (n) scrEvaluarCliente(nombre).forEach(function(m){
+    m.parte = 'Cliente'; m.nombre_evaluado = nombre;
+    var res = resolucionDe(cli, m);
+    if (res && res.decision === 'FALSO_POSITIVO') return;
+    if (res && res.decision === 'CONFIRMADA') { if (m.categoria !== 'PEP') st.confirmada.push(m); return; }
+    st.pendientes.push(m);
+  });
+  var total = st.confirmada.length + st.pendientes.length;
+  st.campos.cliente_scr = { fecha: hoy(), listas: n, resultado: !n ? 'SIN_LISTAS' : total ? 'COINCIDENCIAS' : 'SIN_COINCIDENCIAS', coincidencias: total };
+  if (st.confirmada.length) st.parte = { estado: 'RECHAZADA', motivo: 'Cliente con coincidencia confirmada en ' + st.confirmada[0].lista };
+  else if (st.pendientes.length) st.parte = { estado: 'EN_REVISION', motivo: 'Coincidencias del cliente por resolver' };
+  return st;
+}
+// Lleva a la operacion el resultado de cada parte; una parte ya rechazada
+// sigue rechazada.
+function aplicarScrPartesOp(datos, prev, stTer, stCli) {
+  var p = partesScrOp(prev || {});
+  var poner = function(k, nuevo){
+    if (p[k] && p[k].estado === 'RECHAZADA') return;
+    if (nuevo) p[k] = nuevo; else delete p[k];
+  };
+  if (stTer) {
+    datos.tercero_scr = stTer.campos.tercero_scr;
+    poner('tercero', stTer.campos.scr_estado ? { estado: stTer.campos.scr_estado, motivo: stTer.campos.scr_motivo || '' } : null);
+  }
+  if (stCli) {
+    datos.cliente_scr = stCli.campos.cliente_scr;
+    poner('cliente', stCli.parte);
+  }
+  datos.scr_partes = p;
+  Object.assign(datos, combinarScrOp(p));
+}
+// Cola de la importacion desde Excel: las alertas del cliente van de una en una.
+var _colaScrImp = [], _colaScrImpOcupada = false;
+function encolarScrImp(paso) {
+  _colaScrImp.push(paso);
+  if (_colaScrImpOcupada) return;
+  _colaScrImpOcupada = true;
+  (function sig(){ var p = _colaScrImp.shift(); if (p) p(sig); else _colaScrImpOcupada = false; })();
+}
+function alertasClienteOp(cli, op, st, cb) {
+  var listo = function(){ if (cb) cb(); };
+  if (!st || !cli || !op || !op.id) { listo(); return; }
+  if (st.confirmada.length) {
+    spCreate('PLD_Alertas', {
+      Title: 'ALT-SCR-OP-' + Date.now(), nombre_cliente: nombreCliente(cli), num_cliente: cli.num_cliente || '', id_cliente_ref: cli.id,
+      fraccion: op.fraccion || 'INM', categoria: 'Screening', tipo: 'Operacion rechazada: cliente con coincidencia confirmada en lista de sanciones', nivel: 'Alto',
+      op_ref: op.id, op_fecha: op.fecha_pago || '',
+      descripcion: 'Operacion del ' + String(op.fecha_pago || '').substring(0, 10) + ' por ' + fmtMXN(montoOpMXN(op)) + '. El cliente tiene una coincidencia confirmada en una lista de sanciones, asi que la operacion queda rechazada y no cuenta en umbrales ni avisos.\n' + _descMatches(st.confirmada),
+      estatus: 'Abierta', estatus_atencion: 'Pendiente', asesor_id: cli.asesor_id || '', asesor_nombre: cli.asesor_nombre || '',
+      registrado_por: App.cuenta ? App.cuenta.username : '', fecha_registro: hoy(),
+      entidad_id: op.entidad_id || cli.entidad_id || '', entidad_nombre: op.entidad_nombre || cli.entidad_nombre || ''
+    }, listo);
+    toast('Operacion RECHAZADA: el cliente tiene una coincidencia confirmada en ' + st.confirmada[0].lista, 'e');
+    return;
+  }
+  if (st.pendientes.length) {
+    alertarCoincidenciasCliente(cli, st.pendientes, 'Operacion del ' + String(op.fecha_pago || '').substring(0, 10), op.id, listo);
+    toast('El cliente tiene coincidencias en listas por resolver: la operacion queda en revision', 'w');
+    return;
+  }
+  listo();
+}
+
+// ── Alertas de coincidencias sin duplicar ──
+// Una coincidencia se identifica por lista, ID en la lista y persona revisada
+// (claveCoincidencia). La que ya esta en una alerta de resolucion abierta del
+// cliente no vuelve a alertar, y la que el administrador ya resolvio tampoco
+// (scrEvaluarClienteCompleto y screeningClienteOp la quitan); si la alerta se
+// cerro sin resolverla, vuelve a alertar. Las nuevas se agregan a la alerta
+// abierta del cliente o, si no hay, a una nueva. opRef: operacion que queda
+// en revision hasta que se resuelvan. cb recibe las coincidencias nuevas.
+function alertarCoincidenciasCliente(c, matches, origen, opRef, cb) {
+  if (!c || !matches || !matches.length) { if (cb) cb([]); return; }
+  spAlertasDeCliente(c, function(alts){
+    var abiertas = (alts || []).filter(function(a){ return a.resolucion_scr && !a.scr_tercero && a.estatus !== 'Cerrada'; })
+      .sort(function(x, y){ return String(x.fecha_registro || '').localeCompare(String(y.fecha_registro || '')) || (parseInt(x.id, 10) || 0) - (parseInt(y.id, 10) || 0); });
+    var dondeEsta = {};
+    abiertas.forEach(function(a){ _coincidenciasAlerta(a).forEach(function(x){ dondeEsta[claveCoincidencia(x)] = a; }); });
+    var vistas = {}, nuevas = [], ligadas = {};
+    matches.forEach(function(m){
+      var k = claveCoincidencia(m);
+      if (vistas[k]) return;
+      vistas[k] = true;
+      if (dondeEsta[k]) ligadas[dondeEsta[k].id] = dondeEsta[k]; else nuevas.push(m);
+    });
+    var destino = abiertas[abiertas.length - 1] || null, pasos = [];
+    var noPEP = function(x){ return x.categoria !== 'PEP'; };
+    // La operacion en revision se liga a las alertas que ya tienen sus coincidencias.
+    if (opRef) Object.keys(ligadas).forEach(function(id){
+      if (destino && nuevas.length && String(id) === String(destino.id)) return;   // se actualiza abajo
+      var a = ligadas[id], ops = (a.ops_revision || []).slice();
+      if (ops.indexOf(opRef) >= 0) return;
+      ops.push(opRef);
+      pasos.push(function(fn){ spPatch('PLD_Alertas', a.id, { ops_revision: ops }, function(){ fn(); }); });
+    });
+    if (nuevas.length && destino) {
+      var lista = _coincidenciasAlerta(destino).concat(nuevas), ops2 = (destino.ops_revision || []).slice();
+      if (opRef && ops2.indexOf(opRef) < 0) ops2.push(opRef);
+      pasos.push(function(fn){ spPatch('PLD_Alertas', destino.id, {
+        coincidencias_scr: JSON.stringify(lista), ops_revision: ops2,
+        nivel: (destino.nivel === 'Alto' || nuevas.some(noPEP)) ? 'Alto' : 'Medio',
+        descripcion: (destino.descripcion || '') + '\n' + hoy() + ' · ' + origen + ': ' + nuevas.length + ' coincidencia(s) nueva(s) por resolver.'
+      }, function(){ fn(); }); });
+    } else if (nuevas.length) {
+      pasos.push(function(fn){ spCreate('PLD_Alertas', {
+        Title: 'ALT-RES-' + Date.now(),
+        nombre_cliente: nombreCliente(c), num_cliente: c.num_cliente || '', id_cliente_ref: c.id,
+        categoria: 'Screening', tipo: 'Resolucion de coincidencias en listas', resolucion_scr: true,
+        nivel: nuevas.some(noPEP) ? 'Alto' : 'Medio',
+        descripcion: origen + ': ' + nuevas.length + ' coincidencia(s) por resolver en el cliente o sus personas relacionadas.',
+        coincidencias_scr: JSON.stringify(nuevas.slice(0, 40)), ops_revision: opRef ? [opRef] : [],
+        estatus: 'Abierta', estatus_atencion: 'Pendiente',
+        asesor_id: c.asesor_id || '', asesor_nombre: c.asesor_nombre || '',
+        registrado_por: App.cuenta ? App.cuenta.username : '', fecha_registro: hoy(),
+        entidad_id: c.entidad_id || '', entidad_nombre: c.entidad_nombre || ''
+      }, function(){ fn(); }); });
+    }
+    (function sig(){ var p = pasos.shift(); if (p) p(sig); else if (cb) cb(nuevas); })();
+  });
+}
+// Historial (PLD_Screening): solo las corridas con coincidencias nuevas, con
+// quien coincidio, en que lista y con que porcentaje.
+function registrarScreeningNuevas(c, nuevas, origen) {
+  if (!nuevas || !nuevas.length) return;
+  var activas = (App._scrData || []).filter(function(l){ return l.activa && l._datos && l._datos.length; });
+  spCreate('PLD_Screening', {
+    Title: 'SCR-' + Date.now(),
+    nombre_consultado: nombreCliente(c), id_cliente_ref: c.id || '', nombre_cliente: nombreCliente(c),
+    resultado: 'COINCIDENCIA', origen: origen,
+    resumen: origen + ': ' + nuevas.map(function(m){ return (m.parte || 'Cliente') + ' ' + (m.nombre_evaluado || '') + ' → ' + m.lista + ' (' + m.score + '%)'; }).join(' | '),
+    detalle: JSON.stringify(nuevas.map(function(m){ return { parte: m.parte, nombre_evaluado: m.nombre_evaluado, lista: m.lista, nombre: m.nombre, score: m.score, uid: m.uid, categoria: m.categoria }; })),
+    listas_consultadas: activas.map(function(l){ return scrNombreLista(l); }).join(', '),
+    consultado_por: App.cuenta ? App.cuenta.username : '', fecha_consulta: hoy(),
+    entidad_id: c.entidad_id || '', entidad_nombre: c.entidad_nombre || ''
+  }, null);
+}
 // ── Limite de efectivo en arrendamiento (art. 32 fr. VII LFPIORPI) ──
 // Queda prohibido pagar en efectivo (monedas y billetes, nacionales o
 // extranjeros, y metales preciosos) el uso o goce de inmuebles por un valor
@@ -14341,9 +14511,9 @@ function efectivoArrMes(ops, op) {
   var lista = (ops || []).filter(function(o){
     return (!op.id || String(o.id) !== String(op.id)) && mismo(o) && (o.fraccion || 'INM') === 'ARI'
       && String(o.fecha_pago || '').substring(0, 7) === mes && String(o.contrato_id || '') === ctr
-      && esEfectivoArt32(o) && !opDevuelta(o);
+      && esEfectivoArt32(o) && !opExcluida(o);
   });
-  if (esEfectivoArt32(op) && !opDevuelta(op)) lista = lista.concat([op]);
+  if (esEfectivoArt32(op) && !opExcluida(op)) lista = lista.concat([op]);
   var total = lista.reduce(function(s, o){ return s + montoOpMXN(o); }, 0), lim = limiteEfectivoArr();
   return { mes: mes, contrato_id: ctr, contrato_desc: op.contrato_desc || '', efectivo: Math.round(total * 100) / 100,
            pagos: lista.length, limite: Math.round(lim * 100) / 100, uma: CFG_UMA.DIARIA, excede: lim > 0 && total >= lim, fecha: hoy() };
@@ -14380,9 +14550,37 @@ function pillEfArt32(o) {
   return (o && o.ef_art32 && o.ef_art32.excede)
     ? ' <span class="pill p-rj" style="font-size:10px" title="' + capEsc(textoEfArt32(o.ef_art32)) + '">Efectivo art. 32</span>' : '';
 }
-// Operacion cuyos recursos se devolvieron: no cuenta en acumulados, umbrales,
-// perfil ni avisos. Rechazada sin devolucion sigue contando.
+// Operacion cuyos recursos se devolvieron.
 function opDevuelta(o) { return !!(o && o.devolucion && o.devolucion.decision === 'DEVOLVER'); }
+// Operacion que no cuenta en acumulados, umbrales, perfil, efectivo ni avisos
+// de ningun tipo: la devuelta y la rechazada por screening (decision del
+// oficial de cumplimiento, 11 nov 2026). La que esta en revision si cuenta
+// mientras se resuelve; la rechazada conserva su estatus.
+function opExcluida(o) { return opDevuelta(o) || !!(o && o.scr_estado === 'RECHAZADA'); }
+
+// Estado de screening de una operacion por parte: el tercero que paga y, en
+// compraventa, el cliente. scr_estado es el combinado: RECHAZADA si alguna
+// parte lo esta, EN_REVISION si alguna espera resolucion, ACEPTADA si alguna
+// se acepto. Las operaciones anteriores solo traen el estado del tercero.
+var ORDEN_SCR_OP = ['RECHAZADA', 'EN_REVISION', 'ACEPTADA'];
+function partesScrOp(o) {
+  if (o && o.scr_partes) return JSON.parse(JSON.stringify(o.scr_partes));
+  return (o && o.scr_estado) ? { tercero: { estado: o.scr_estado, motivo: o.scr_motivo || '' } } : {};
+}
+function combinarScrOp(partes) {
+  for (var i = 0; i < ORDEN_SCR_OP.length; i++)
+    for (var k in partes) if (partes[k] && partes[k].estado === ORDEN_SCR_OP[i]) return { scr_estado: partes[k].estado, scr_motivo: partes[k].motivo || '' };
+  return { scr_estado: '', scr_motivo: '' };
+}
+// Cambia el estado de una parte y recalcula el combinado.
+function actualizarScrOp(opId, parte, estado, motivo, cb, extra) {
+  spGetUno('PLD_Ops_Liq', opId, function(o){
+    if (!o) { if (cb) cb(); return; }
+    var p = partesScrOp(o);
+    p[parte] = { estado: estado, motivo: motivo || '' };
+    spPatch('PLD_Ops_Liq', opId, Object.assign({ scr_partes: p }, combinarScrOp(p), extra || {}), function(){ if (cb) cb(); });
+  });
+}
 function pillScrOp(o) {
   if (opDevuelta(o)) return '<span class="pill p-gr" style="font-size:10px" title="Rechazada por screening; recursos devueltos. No cuenta en acumulados ni umbrales">Devuelta</span>';
   if (o.scr_estado === 'RECHAZADA') return '<span class="pill p-rj" style="font-size:10px" title="' + capEsc(o.scr_motivo || '') + '">Rechazada (screening)</span>';
@@ -14430,7 +14628,10 @@ function decidirTercero(alertaId, decision) {
         : { scr_estado: decision === 'ACEPTAR' ? 'ACEPTADA' : 'RECHAZADA', scr_motivo: (decision === 'ACEPTAR' ? 'Aceptada' : 'Rechazada') + ' por el oficial de cumplimiento (lista 69-B)', decision_69b: dec };
       var seguir = function(){ toast('Decision registrada', 's'); verAlerta(a.id); };
       if (!a.op_ref) { seguir(); return; }
-      spPatch('PLD_Ops_Liq', a.op_ref, cambiosOp, function(){
+      var aplicar = a.scr_tercero_decision === 'DEVOLUCION'
+        ? function(fn){ spPatch('PLD_Ops_Liq', a.op_ref, cambiosOp, fn); }
+        : function(fn){ actualizarScrOp(a.op_ref, 'tercero', cambiosOp.scr_estado, cambiosOp.scr_motivo, fn, { decision_69b: dec }); };
+      aplicar(function(){
         // Rechazada por el 69-B: el oficial decide tambien la devolucion.
         if (decision === 'RECHAZAR') {
           var op = { id: a.op_ref, fecha_pago: a.op_fecha, tercero_nombre: a.tercero_nombre, fraccion: a.fraccion,
@@ -14963,7 +15164,7 @@ function verificarPerfilTransaccional(idCli, nomCli, numCli, fechaOp, cb) {
     var ops = (todas||[]).filter(function(o){
       var mismo = (idCli && o.id_cliente_ref === idCli) ||
                   (numCli && String(o.num_cliente) === String(numCli));
-      return mismo && String(o.fecha_pago||'').substring(0,7) === mes && !opDevuelta(o);
+      return mismo && String(o.fecha_pago||'').substring(0,7) === mes && !opExcluida(o);
     });
     if (!ops.length) { if (cb) cb(); return; }
 
@@ -15280,28 +15481,26 @@ function guardarLiq(idEx) {
         datos.ediciones = (prev.ediciones || []).concat(cambios.length ? [{ fecha: hoy(), usuario: App.cuenta ? App.cuenta.username : '', cambios: cambios }] : []);
         // La edicion reescribe el registro: se conserva lo que ya decidieron el
         // screening, el oficial de cumplimiento y los avisos.
-        ['tercero_scr', 'scr_estado', 'scr_motivo', 'devolucion', 'decision_69b', 'reportada', 'ref_aviso_reportado'].forEach(function(k){
+        ['tercero_scr', 'cliente_scr', 'scr_partes', 'scr_estado', 'scr_motivo', 'devolucion', 'decision_69b', 'reportada', 'ref_aviso_reportado'].forEach(function(k){
           if (prev[k] !== undefined && datos[k] === undefined) datos[k] = prev[k];
         });
         // Si ahora paga un tercero, o cambia el tercero, se repite el screening.
+        // En compraventa, si cambia el cliente, tambien el del cliente. Una
+        // parte ya rechazada sigue rechazada.
         var cambioTer = datos.pagador === 'TERCERO'
           && (prev.pagador !== 'TERCERO' || scrNorm(prev.tercero_nombre || '') !== scrNorm(datos.tercero_nombre || ''));
         var stTer = cambioTer ? screeningTercero(cliOp, datos) : null;
-        if (stTer) {
-          datos.tercero_scr = stTer.campos.tercero_scr;
-          // Una operacion ya rechazada sigue rechazada aunque cambie el tercero.
-          if (prev.scr_estado !== 'RECHAZADA') {
-            datos.scr_estado = stTer.campos.scr_estado || '';
-            datos.scr_motivo = stTer.campos.scr_motivo || '';
-          }
-        }
+        var cambioCli = fraccion !== 'ARI' && String(prev.id_cliente_ref || '') !== String(datos.id_cliente_ref || '');
+        var stCli = cambioCli ? screeningClienteOp(cliOp, Object.assign({}, datos, { id: idEx })) : null;
+        if (stTer || stCli) aplicarScrPartesOp(datos, prev, stTer, stCli);
         spUpdate('PLD_Ops_Liq', idEx, datos, function(){
           datos.id = idEx;
           if (stTer) alertasTercero(cliOp, datos, stTer);
+          if (stCli) alertasClienteOp(cliOp, datos, stCli);
           if (rEf) alertaEfectivoArt32(cliOp, datos, rEf);
           // El monto o la fecha pudieron cambiar: se revisan de nuevo los
           // umbrales (la alerta abierta se actualiza, no se duplica) y el perfil.
-          verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, opDevuelta(datos) ? 0 : datos.subtotal_mxn, datos.fecha_pago, idEx, function(){
+          verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, opExcluida(datos) ? 0 : datos.subtotal_mxn, datos.fecha_pago, idEx, function(){
             verificarPerfilTransaccional(idCli, nomCli, numCli, datos.fecha_pago, function(){
               toast('Operacion actualizada' + (cambios.length ? ' (' + cambios.map(function(x){ return x.campo; }).join(', ') + ')' : ', sin cambios'),'s');
               pgOps();
@@ -15311,13 +15510,15 @@ function guardarLiq(idEx) {
       });
     } else {
       var stTer = screeningTercero(cliOp, datos);
-      if (stTer) Object.assign(datos, stTer.campos);
+      var stCli = screeningClienteOp(cliOp, datos);
+      aplicarScrPartesOp(datos, null, stTer, stCli);
       spCreate('PLD_Ops_Liq', datos, function(item){
         if (item) {
           alertasTercero(cliOp, item, stTer);
+          alertasClienteOp(cliOp, item, stCli);
           if (rEf) alertaEfectivoArt32(cliOp, item, rEf);
           // Pasar el id del item recién creado para excluirlo del acumulado
-          verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, datos.subtotal_mxn, datos.fecha_pago, item.id, function(){
+          verificarUmbralesCliente(idCli, nomCli, numCli, fraccion, opExcluida(datos) ? 0 : datos.subtotal_mxn, datos.fecha_pago, item.id, function(){
             alertaDDROperacion(idCli, datos);
             verificarPerfilTransaccional(idCli, nomCli, numCli, datos.fecha_pago, function(){
               toast('Operacion guardada','s');
@@ -15339,7 +15540,13 @@ function guardarLiq(idEx) {
       guardarFinal(r.excede ? r : null);
     });
   };
-  if (pagador === 'TERCERO') { pensador('Revisando al tercero en las listas...'); conListasScr(function(){ pensadorOff(); guardar(); }); }
+  // Screening en la operacion: el tercero que paga, si lo hay, y en
+  // compraventa tambien el cliente (en arrendamiento el cliente se revisa en
+  // el screening masivo).
+  if (pagador === 'TERCERO' || fraccion !== 'ARI') {
+    pensador(pagador === 'TERCERO' ? 'Revisando al tercero en las listas...' : 'Revisando al cliente en las listas...');
+    conListasScr(function(){ pensadorOff(); guardar(); });
+  }
   else guardar();
 }
 
@@ -15618,10 +15825,13 @@ function procesarExcel(data, fraccion) {
       datos.Title = 'LIQ-EXCEL-' + Date.now() + '-' + idx;
       var cliTer = null; App.clientes.forEach(function(c){ if (String(c.id) === String(datos.id_cliente_ref)) cliTer = c; });
       var stTer = screeningTercero(cliTer, datos);
-      if (stTer) Object.assign(datos, stTer.campos);
+      var stCli = screeningClienteOp(cliTer, datos);   // compraventa: tambien el cliente
+      aplicarScrPartesOp(datos, null, stTer, stCli);
 
       spCreate('PLD_Ops_Liq', datos, function(item) {
         alertasTercero(cliTer, datos, stTer);
+        // De una en una, para no duplicar la alerta del mismo cliente.
+        if (stCli && item) encolarScrImp(function(fn){ alertasClienteOp(cliTer, item, stCli, fn); });
         var rE = rArt32[idx];
         if (rE && rE.excede && ultimoArt32[[datos.id_cliente_ref || datos.num_cliente || '', rE.contrato_id, rE.mes].join('|')] === idx) alertaEfectivoArt32(cliTer, datos, rE);
         guardados++;
@@ -15631,7 +15841,7 @@ function procesarExcel(data, fraccion) {
         // contarlo dos veces (ya viene en la lista y se agrega como nueva).
         verificarUmbralesCliente(
           datos.id_cliente_ref, datos.nombre_cliente, datos.num_cliente,
-          datos.fraccion, datos.subtotal_mxn, datos.fecha_pago, item && item.id ? item.id : null, null, datos
+          datos.fraccion, opExcluida(datos) ? 0 : datos.subtotal_mxn, datos.fecha_pago, item && item.id ? item.id : null, null, datos
         );
         // Verificar perfil transaccional (operaciones fuera de lo esperado)
         verificarPerfilTransaccional(
@@ -16119,7 +16329,7 @@ function _generarXLSX() {
     // ── Agregados de operaciones / avisos por num_cliente ──
     var sumaOps={}, cntOps={}, sumaLiq={}, cntLiq={}, cntAvi={};
     (datos.ops||[]).forEach(function(o){ var k=o.num_cliente; if(!k) return; sumaOps[k]=(sumaOps[k]||0)+parseFloat(o.monto||0); cntOps[k]=(cntOps[k]||0)+1; });
-    (datos.liq||[]).forEach(function(o){ var k=o.num_cliente; if(!k) return; sumaLiq[k]=(sumaLiq[k]||0)+(opDevuelta(o) ? 0 : montoOpMXN(o)); cntLiq[k]=(cntLiq[k]||0)+1; });
+    (datos.liq||[]).forEach(function(o){ var k=o.num_cliente; if(!k) return; sumaLiq[k]=(sumaLiq[k]||0)+(opExcluida(o) ? 0 : montoOpMXN(o)); cntLiq[k]=(cntLiq[k]||0)+1; });
     (datos.avisos||[]).forEach(function(r){ var k=r.num_cliente; if(k) cntAvi[k]=(cntAvi[k]||0)+1; });
 
     var entNombre = esConsolidada ? 'Todas las entidades' : (App.entidadActual.nombre || entId);
@@ -17922,17 +18132,27 @@ function scrLanzarBusquedaCliente() {
   });
 }
 
+// ── Screening masivo (art. 41 fr. V) ──
+// Solo clientes de arrendamiento (Fr. XV): cliente y personas relacionadas
+// contra las listas vigentes. En compraventa el cliente se revisa en cada
+// operacion, y los terceros que pagan, en su operacion. Corre solo una vez al
+// dia mientras la app esta abierta (scrMasivoDiario) y a pedido desde aqui.
+// No duplica alertas (alertarCoincidenciasCliente) y el historial guarda
+// solo las coincidencias nuevas.
+function clientesMasivo(lista) { return (lista || []).filter(function(c){ return c && c.es_arrendamiento === 'SI'; }); }
+
 function scrVistaMasivo() {
   document.querySelectorAll('#sb-ct .sb-item').forEach(function(e){ e.classList.remove('on'); });
   var els = document.querySelectorAll('#sb-ct .sb-item'); if(els[2]) els[2].classList.add('on');
 
-  var totalCli = (App.clientes||[]).length;
+  var totalCli = clientesMasivo(App.clientes).length;
   setMain('<div class="phdr"><div><div class="ptit">Screening masivo</div>'
-    + '<div class="psub">Todos los clientes contra todas las listas activas</div></div></div>'
+    + '<div class="psub">Clientes de arrendamiento y sus personas relacionadas contra las listas activas</div></div></div>'
     + '<div class="card"><div class="card-h"><span class="card-t">Configuración del screening masivo</span></div>'
     + '<div style="padding:16px">'
-    + '<div class="alerta-banner" style="margin-bottom:12px">Este proceso consulta <strong>' + totalCli + ' clientes</strong> contra todas las listas seleccionadas. '
-    + 'Puede tomar varios minutos dependiendo de la conexión. Los resultados se guardan en <strong>PLD_Screening</strong>.</div>'
+    + '<div class="alerta-banner" style="margin-bottom:12px">Revisa a <strong>' + totalCli + ' cliente(s) de arrendamiento</strong> y a sus personas relacionadas contra las listas seleccionadas. '
+    + 'Tambien corre solo una vez al dia, con todas las listas, mientras la app esta abierta. Una coincidencia que ya esta en una alerta abierta no vuelve a alertar; '
+    + 'el historial (PLD_Screening) guarda solo las coincidencias nuevas. En compraventa el cliente se revisa en cada operacion, igual que el tercero que paga.</div>'
     + '<div style="display:flex;gap:12px;flex-wrap:wrap">'
     + (function(){
         var data = App._scrData || [];
@@ -17955,9 +18175,29 @@ function scrVistaMasivo() {
     + '<div id="scr-masivo-resultados" style="margin-top:0"></div>');
 }
 
+// Recorre los clientes de uno en uno (en paralelo SharePoint responde 429).
+// o: { origen, listas: ids a considerar (null = todas), progreso(i, n, nombre) }.
+// cb recibe [{ c, nuevas }] de los clientes con coincidencias nuevas.
+function scrMasivoClientes(clientes, o, cb) {
+  var i = 0, hits = [];
+  (function sig(){
+    if (i >= clientes.length) { if (cb) cb(hits); return; }
+    var c = clientes[i++];
+    if (o.progreso) o.progreso(i, clientes.length, nombreCliente(c));
+    var m = scrEvaluarClienteCompleto(c) || [];
+    if (o.listas) m = m.filter(function(x){ return o.listas.indexOf(x.listaId) >= 0; });
+    if (!m.length) { setTimeout(sig, 0); return; }
+    alertarCoincidenciasCliente(c, m, o.origen, null, function(nuevas){
+      if (nuevas.length) { hits.push({ c: c, nuevas: nuevas }); registrarScreeningNuevas(c, nuevas, o.origen); }
+      setTimeout(sig, 150);
+    });
+  })();
+}
+
 function scrEjecutarMasivo() {
-  var clientes = App.clientes || [];
-  if (!clientes.length) { toast('No hay clientes cargados','w'); return; }
+  var clientes = clientesMasivo(App.clientes);
+  if (!clientes.length) { toast('No hay clientes de arrendamiento en la entidad actual','w'); return; }
+  if (!listasScrActivas()) { toast('No hay listas cargadas para consultar','w'); return; }
 
   var btn = document.querySelector('[onclick="scrEjecutarMasivo()"]');
   if (btn) { btn.disabled = true; btn.textContent = 'Ejecutando...'; }
@@ -17970,73 +18210,69 @@ function scrEjecutarMasivo() {
     + '<div id="scr-prog-texto" style="font-size:12px;color:var(--tx3)">Iniciando...</div>'
     + '</div></div>';
 
-  var resultadosMasivos = [];
-  var idx = 0;
-
-  function procesarSiguiente() {
-    if (idx >= clientes.length) {
-      // Finalizado
-      var barra = document.getElementById('scr-barra');
-      if (barra) barra.style.width = '100%';
-      var txt = document.getElementById('scr-prog-texto');
-      if (txt) txt.textContent = 'Completado: ' + clientes.length + ' clientes procesados.';
-      if (btn) { btn.disabled = false; btn.textContent = '▶ Iniciar screening masivo'; }
-      scrRenderResumenMasivo(resultadosMasivos);
-      scrAlertasResolucionMasivo(clientes);
-      return;
+  var data = App._scrData || [], ids = data.map(function(l){ return l.id; });
+  var sel = (SCR.listasSeleccionadas || []).filter(function(x){ return ids.indexOf(x) >= 0; });
+  scrMasivoClientes(clientes, {
+    origen: 'Screening masivo',
+    listas: sel.length && sel.length < ids.length ? sel : null,
+    progreso: function(i, n, nombre){
+      var barra = document.getElementById('scr-barra'); if (barra) barra.style.width = Math.round(i / n * 100) + '%';
+      var txt = document.getElementById('scr-prog-texto'); if (txt) txt.textContent = '(' + i + '/' + n + ') Revisando: ' + nombre;
     }
-
-    var cli = clientes[idx];
-    var nombre = nombreCliente(cli);
-    idx++;
-
-    var barra = document.getElementById('scr-barra');
-    if (barra) barra.style.width = Math.round(idx/clientes.length*100) + '%';
+  }, function(hits){
+    var barra = document.getElementById('scr-barra'); if (barra) barra.style.width = '100%';
     var txt = document.getElementById('scr-prog-texto');
-    if (txt) txt.textContent = '(' + idx + '/' + clientes.length + ') Consultando: ' + nombre;
-
-    scrEjecutar(nombre, cli.id, nombre, function(resultados) {
-      var hayMatch = resultados.some(function(r){ return r.matches.length > 0; });
-      if (hayMatch) resultadosMasivos.push({ cliente: nombre, clienteId: cli.id, resultados: resultados });
-      setTimeout(procesarSiguiente, 200); // pequeña pausa para no saturar
-    });
-  }
-
-  procesarSiguiente();
+    if (txt) txt.textContent = 'Completado: ' + clientes.length + ' cliente(s) de arrendamiento revisados.';
+    if (btn) { btn.disabled = false; btn.textContent = '▶ Iniciar screening masivo'; }
+    scrRenderResumenMasivo(hits);
+    if (hits.length) toast(hits.length + ' cliente(s) con coincidencias nuevas: se crearon o actualizaron sus alertas de resolucion', 'w');
+  });
 }
 
-// Despues del screening masivo, cada cliente con coincidencias sin resolver
-// (cliente y personas relacionadas, contra todas las listas activas) recibe
-// una alerta de resolucion, salvo que ya tenga una abierta. De uno en uno,
-// porque en paralelo SharePoint responde 429.
-function scrAlertasResolucionMasivo(clientes) {
-  var pendientes = (clientes || []).map(function(c){ return { c: c, m: scrEvaluarClienteCompleto(c) || [] }; })
-    .filter(function(x){ return x.m.length; });
-  if (!pendientes.length) return;
-  var i = 0, creadas = 0;
-  (function sig(){
-    if (i >= pendientes.length) {
-      if (creadas) toast(creadas + ' cliente(s) con coincidencias por resolver: se crearon alertas de resolucion', 'w');
-      return;
-    }
-    var x = pendientes[i++], c = x.c;
-    spAlertasDeCliente(c, function(alts){
-      var abierta = (alts || []).some(function(a){ return a.resolucion_scr && !a.scr_tercero && a.estatus !== 'Cerrada'; });
-      if (abierta) { sig(); return; }
-      spCreate('PLD_Alertas', {
-        Title: 'ALT-RES-' + Date.now(),
-        nombre_cliente: nombreCliente(c), num_cliente: c.num_cliente || '', id_cliente_ref: c.id,
-        categoria: 'Screening', tipo: 'Resolucion de coincidencias en listas', resolucion_scr: true,
-        nivel: x.m.some(function(m){ return m.categoria !== 'PEP'; }) ? 'Alto' : 'Medio',
-        descripcion: 'Screening masivo: ' + x.m.length + ' coincidencia(s) por resolver en el cliente o sus personas relacionadas.',
-        coincidencias_scr: JSON.stringify(x.m.slice(0, 40)),
-        estatus: 'Abierta', estatus_atencion: 'Pendiente',
-        asesor_id: c.asesor_id || '', asesor_nombre: c.asesor_nombre || '',
-        registrado_por: App.cuenta ? App.cuenta.username : '', fecha_registro: hoy(),
-        entidad_id: c.entidad_id || '', entidad_nombre: c.entidad_nombre || ''
-      }, function(){ creadas++; sig(); });
+// Corrida diaria automatica: la primera sesion del dia de cada entidad la
+// hace en segundo plano. La fecha se guarda por entidad en PLD_Config.
+var SCR_DIARIO_KEY = 'scr_masivo_diario', _scrDiarioCorriendo = false;
+function scrMasivoDiario() {
+  if (_scrDiarioCorriendo || !App.cuenta || !App.siteId) return;
+  _scrDiarioCorriendo = true;
+  var fin = function(){ _scrDiarioCorriendo = false; };
+  conListasScr(function(){
+    if (!listasScrActivas()) { fin(); return; }   // sin listas no se marca el dia
+    spGet('PLD_Config', function(cfg){
+      var item = (cfg || []).filter(function(c){ return c.clave === SCR_DIARIO_KEY; })[0] || null;
+      var fechas = JSON.parse(JSON.stringify((item && item.fechas) || {})), h = hoy();
+      spGet('PLD_Clientes', function(todos){
+        var cl = clientesMasivo(filtrarPermitidas(todos || []));
+        var ent = function(c){ return c.entidad_id || 'SIN_ENTIDAD'; };
+        var pend = [];
+        cl.forEach(function(c){ var e = ent(c); if (fechas[e] !== h && pend.indexOf(e) < 0) pend.push(e); });
+        if (!pend.length) { fin(); return; }
+        pend.forEach(function(e){ fechas[e] = h; });
+        var datos = { clave: SCR_DIARIO_KEY, Title: SCR_DIARIO_KEY, fechas: fechas };
+        var marcar = item ? function(fn){ spUpdate('PLD_Config', item.id, datos, fn); } : function(fn){ spCreate('PLD_Config', datos, fn); };
+        marcar(function(){
+          var hoyCl = cl.filter(function(c){ return pend.indexOf(ent(c)) >= 0; });
+          console.log('[SCR] screening diario:', hoyCl.length, 'cliente(s) de arrendamiento');
+          scrMasivoClientes(hoyCl, { origen: 'Screening diario automatico', listas: null }, function(hits){
+            fin();
+            if (hits.length) toast('Screening diario: ' + hits.length + ' cliente(s) de arrendamiento con coincidencias nuevas. Revisa las alertas', 'w');
+          });
+        });
+      });
     });
-  })();
+  });
+}
+function iniciarScrMasivoDiario() {
+  setTimeout(scrMasivoDiario, 60000);              // un minuto despues de entrar
+  setInterval(scrMasivoDiario, 30 * 60000);        // y cada media hora, por si cambia el dia
+}
+
+// Revaloracion y debida diligencia reforzada: las coincidencias por resolver
+// de esos clientes, con la misma regla sin duplicados.
+function scrAlertasResolucionMasivo(clientes, origen) {
+  scrMasivoClientes(clientes || [], { origen: origen || 'Screening', listas: null }, function(hits){
+    if (hits.length) toast(hits.length + ' cliente(s) con coincidencias por resolver: se crearon o actualizaron sus alertas de resolucion', 'w');
+  });
 }
 
 function scrRenderResumenMasivo(hits) {
@@ -18045,22 +18281,20 @@ function scrRenderResumenMasivo(hits) {
   if (!hits.length) {
     ct.innerHTML = '<div class="card"><div style="padding:16px;text-align:center;color:var(--vd)">'
       + '<div style="font-size:18px">✓</div>'
-      + '<div style="font-weight:600;margin-top:4px">Sin coincidencias en ningún cliente</div></div></div>';
+      + '<div style="font-weight:600;margin-top:4px">Sin coincidencias nuevas</div>'
+      + '<div style="font-size:12px;color:var(--tx3);margin-top:4px">Las coincidencias que ya estan en una alerta abierta o que el administrador resolvio no se repiten.</div></div></div>';
     return;
   }
-  var html = '<div class="card"><div class="card-h"><span class="card-t">⚠ Clientes con coincidencias (' + hits.length + ')</span></div>'
+  var html = '<div class="card"><div class="card-h"><span class="card-t">⚠ Clientes con coincidencias nuevas (' + hits.length + ')</span></div>'
     + '<div style="padding:12px 16px">';
   hits.forEach(function(h) {
     html += '<div style="border:1px solid var(--rj);border-radius:var(--r);padding:10px 12px;margin-bottom:8px;background:var(--rj3)">'
-      + '<div style="font-weight:600;color:var(--rj);margin-bottom:6px">⚠ ' + h.cliente + '</div>';
-    h.resultados.forEach(function(r) {
-      if (r.matches.length > 0) {
-        html += '<div style="font-size:12px;margin-bottom:4px"><strong>' + r.lista + ':</strong> '
-          + r.matches.slice(0,3).map(function(m){ return m.entrada.nombre + ' (' + m.score + '%)'; }).join(', ')
-          + '</div>';
-      }
-    });
-    html += '</div>';
+      + '<div style="font-weight:600;color:var(--rj);margin-bottom:6px">⚠ ' + capEsc(nombreCliente(h.c)) + '</div>'
+      + h.nuevas.map(function(m){
+          return '<div style="font-size:12px;margin-bottom:4px"><strong>' + capEsc(m.parte || 'Cliente') + ':</strong> ' + capEsc(m.nombre_evaluado || '')
+            + ' <span style="color:var(--tx3)">coincide con</span> ' + capEsc(m.nombre || '') + ' <span style="color:var(--tx3)">en ' + capEsc(m.lista || '') + ' (' + (m.score || 0) + '%)</span></div>';
+        }).join('')
+      + '</div>';
   });
   html += '</div></div>';
   ct.innerHTML = html;
