@@ -7705,20 +7705,52 @@ function activarDDR(obj, anterior) {
 // los demas motivos siguen alertando. Si el plazo de la debida diligencia
 // vencio, la alerta lo dice (arts. 23 Ter 3 y 4). La usan la captura manual y
 // la importacion desde Excel.
+var ETIQ_JURIS = { gafi_contramedidas: 'contramedidas del GAFI', gafi_vigilancia: 'lista gris del GAFI',
+                   csnu_sanciones: 'sanciones del Consejo de Seguridad', regimen_fiscal: 'regimen fiscal preferente' };
+function etiquetaJuris(k) { return ETIQ_JURIS[k] || k; }
 function alertaDDROperacion(idCli, op) {
   var c = null;
   (App.clientes || []).forEach(function(x){ if (String(x.id) === String(idCli)) c = x; });
   if (!c) return;
   var p = perfilRiesgo(c), motivos = [], est = estadoDDR(c);
+  // Cliente bloqueado (coincidencia confirmada en una lista de sanciones):
+  // en arrendamiento el cliente no se revisa en la operacion, asi que la
+  // alerta es la que lo avisa.
+  var bs = c.bloqueo_scr;
+  var bloq = bs ? 'cliente bloqueado por coincidencia confirmada en ' + (bs.lista || 'una lista de sanciones')
+                  + (bs.parte && bs.parte !== 'Cliente' ? ' (' + bs.parte + (bs.nombre ? ': ' + bs.nombre : '') + ')' : '')
+        : (c.estatus === 'Bloqueado' || c.aprobacion === 'Bloqueado') ? 'cliente bloqueado' : '';
+  if (bloq) motivos.push(bloq);
   if (est.aplica && est.estado !== 'completa')
     motivos.push('cliente de riesgo Alto con debida diligencia reforzada ' + (est.estado === 'vencida' ? 'vencida' : 'pendiente de completar'));
   if (p.pepAFR || p.pepExt)
     motivos.push('PEP' + (p.pepAFR && p.det.pep ? ' (' + p.det.pep + ')' : '') + (p.pepExt ? ', extranjero' : ''));
-  var paises = [];
+  // Vinculos del cliente y de sus personas relacionadas con paises de las
+  // listas. Ademas de lo que ya usa el modelo, las contramedidas del GAFI (el
+  // alta las bloquea, pero un pais puede entrar a esa lista despues) y, en las
+  // personas relacionadas, contramedidas y sanciones del Consejo de Seguridad.
+  // Cada vinculo sale una vez, con todas las listas de su pais.
+  var crudos = [];
   [p.det.vig, p.det.fiscal, p.det.csnu, p.det.rel].forEach(function(t){
-    String(t || '').split('; ').forEach(function(x){ if (x && paises.indexOf(x) < 0) paises.push(x); });
+    String(t || '').split('; ').forEach(function(x){ if (x) crudos.push(x); });
+  });
+  vinculosProhibidos(c).forEach(function(v){ crudos.push(v.campo + ', ' + v.pais); });
+  if (p.tipo !== 'SIMP') paisesDePartes(c).forEach(function(v){
+    if (jurisdiccionesDe(v.pais).some(function(k){ return k === 'gafi_contramedidas' || k === 'csnu_sanciones'; }))
+      crudos.push(v.parte + ', ' + v.campo + ', ' + v.pais);
+  });
+  var vistos = {}, paises = [];
+  crudos.forEach(function(x){
+    var k = scrNorm(x);
+    if (vistos[k]) return;
+    vistos[k] = true;
+    var cats = jurisdiccionesDe(x.split(', ').pop()).filter(function(j){ return ETIQ_JURIS[j]; });
+    paises.push(x + (cats.length ? ' (' + cats.map(etiquetaJuris).join(', ') + ')' : ''));
   });
   if (paises.length) motivos.push('vinculo con paises de las listas: ' + paises.join('; '));
+  // Pais de donde vienen los recursos de esta operacion.
+  var pp = op.pais_procedencia || '', ppCats = (pp && normPais(pp) !== 'MEXICO') ? jurisdiccionesDe(pp) : [];
+  if (ppCats.length) motivos.push('recursos procedentes de ' + pp + ' (' + ppCats.map(etiquetaJuris).join(', ') + ')');
   var instOp = INST_ALTO_COD[String(op.instrumento_monetario || '')];
   if (instOp) motivos.push('pago con ' + ptxEtiqueta(INST_ALTO, instOp).toLowerCase());
   if (!motivos.length) return;
@@ -7727,7 +7759,7 @@ function alertaDDROperacion(idCli, op) {
   spCreate('PLD_Alertas', {
     Title: (vencida ? 'ALT-DDR-' : 'ALT-V41-') + Date.now(), nombre_cliente: nombreCliente(c), num_cliente: c.num_cliente || '', id_cliente_ref: c.id,
     categoria: 'Riesgo', tipo: vencida ? 'Debida diligencia reforzada vencida' : 'Operacion sujeta a vigilancia (art. 41 fr. V)',
-    nivel: (c.riesgo === 'Alto' || vencida || paises.length) ? 'Alto' : 'Medio',
+    nivel: (c.riesgo === 'Alto' || vencida || paises.length || bloq || ppCats.length) ? 'Alto' : 'Medio',
     descripcion: 'Operacion del ' + (op.fecha_pago || '') + ' por ' + monto + '. Motivo: ' + motivos.join('; ') + '.'
       + (vencida ? ' La debida diligencia reforzada no esta completa y el plazo vencio el ' + est.limite + ' (arts. 23 Ter 3 y 4).' : '')
       + ' Revisar que la operacion corresponda con el perfil transaccional del cliente (art. 41 fr. V).',
@@ -13913,7 +13945,7 @@ function editarOp(opId) {
   });
 }
 // Campos que se comparan para dejar rastro de cada edicion.
-var CAMPOS_EDICION_OP = [['id_cliente_ref','cliente'],['pagador','quien paga'],['tercero_nombre','tercero'],['contrato_id','contrato'],['inmueble_desc','inmueble'],
+var CAMPOS_EDICION_OP = [['id_cliente_ref','cliente'],['pagador','quien paga'],['tercero_nombre','tercero'],['contrato_id','contrato'],['inmueble_desc','inmueble'],['pais_procedencia','pais de procedencia'],
   ['fecha_pago','fecha de pago'],['forma_pago','forma de pago'],['instrumento_monetario','instrumento'],['moneda','moneda'],
   ['subtotal','subtotal'],['iva','IVA'],['accesorios','accesorios'],['tipo_cambio_aplicado','tipo de cambio'],['ref_aviso','referencia de aviso'],['observaciones','observaciones']];
 
@@ -13948,6 +13980,7 @@ function verLiq(id, origen) {
       + fcHtml('Fecha de pago', capEsc(String(o.fecha_pago || '').substring(0, 10)))
       + fcHtml('Forma de pago', capEsc(desc(FORMAS_PAGO, o.forma_pago)))
       + fcHtml('Instrumento monetario', capEsc(desc(INSTRUMENTOS_MON, o.instrumento_monetario)))
+      + (o.pais_procedencia ? fcHtml('Pais de procedencia de los recursos', capEsc(o.pais_procedencia)) : '')
       + fcHtml('Moneda', capEsc(desc(MONEDAS, o.moneda)))
       + fcHtml('Subtotal', fmtMXN(parseFloat(o.subtotal || o.monto) || 0))
       + fcHtml('IVA', fmtMXN(parseFloat(o.iva) || 0))
@@ -14028,6 +14061,11 @@ function refrescarContratosOp() {
     : !lista.length ? '<option value="">El cliente no es de arrendamiento</option>'
     : '<option value="">-- Seleccionar --</option>' + lista.map(function(k){ return '<option value="' + capEsc(k.id) + '"' + (String(k.id) === String(previo) ? ' selected' : '') + '>' + capEsc(textoContrato(k)) + '</option>'; }).join('');
 }
+// Con 10 - Transferencia Internacional el pais de procedencia es obligatorio.
+function refrescarPaisOp() {
+  var i = document.querySelector('#main [name="instrumento_op"]'), r = document.getElementById('pais_op_req');
+  if (i && r) r.style.display = i.value === '10' ? '' : 'none';
+}
 // Compraventa: los inmuebles del cliente elegido. Si tiene uno solo, queda elegido.
 function refrescarInmueblesOp() {
   var sel = document.getElementById('inmueble_op');
@@ -14077,7 +14115,12 @@ function nuevaLiqForm(datos) {
         : fg('Inmueble (fraccionamiento y lote)',null,true)+'<select class="sel" name="inmueble_op" id="inmueble_op" data-sel="'+capEsc(d.inmueble_id||'')+'"><option value="">-- Selecciona primero el cliente --</option></select></div>')
     +fg('Fecha de pago',null,true)+fi('fecha_pago_op',d.fecha_pago||hoy(),'AAAA-MM-DD')
     +fg('Forma de pago',null,true)+'<select class="sel" name="forma_pago_op">'+optsC2(FORMAS_PAGO,d.forma_pago||'')+'</select></div>'
-    +fg('Instrumento monetario',null,true)+'<select class="sel" name="instrumento_op">'+optsC2(INSTRUMENTOS_MON,d.instrumento_monetario||'')+'</select></div>'
+    +fg('Instrumento monetario',null,true)+'<select class="sel" name="instrumento_op" onchange="refrescarPaisOp()">'+optsC2(INSTRUMENTOS_MON,d.instrumento_monetario||'')+'</select></div>'
+    // Pais de donde vienen los recursos: obligatorio con transferencia internacional.
+    +'<div class="fg"><label class="lbl">Pais de procedencia de los recursos <span class="req" id="pais_op_req" style="'+(String(d.instrumento_monetario||'')==='10'?'':'display:none')+'">*</span></label>'
+    +'<select class="sel" name="pais_procedencia_op"><option value="">-- Opcional; obligatorio con transferencia internacional --</option>'
+    +paisesOrdenados().map(function(p){ return '<option value="'+capEsc(p.n)+'"'+(d.pais_procedencia && normPais(d.pais_procedencia)===normPais(p.n)?' selected':'')+'>'+capEsc(p.n)+'</option>'; }).join('')
+    +'</select></div>'
     +fg('Moneda',null,true)+'<select class="sel" name="moneda_op" onchange="calcTotalOp()">'+optsC2(MONEDAS,d.moneda||'1')+'</select></div>'
     +'<div class="fg"><label class="lbl">Subtotal (en la moneda de la operacion) <span class="req">*</span></label><input class="inp" name="subtotal_op" value="'+(d.subtotal||'')+'" placeholder="0.00" oninput="calcTotalOp()"></div>'
     +'<div class="fg"><label class="lbl">IVA</label><input class="inp" name="iva_op" value="'+(d.iva||'')+'" placeholder="0.00" oninput="calcTotalOp()"></div>'
@@ -15667,6 +15710,7 @@ function guardarLiq(idEx) {
     contrato_id: ctrOp ? ctrOp.id : '', contrato_desc: ctrOp ? textoContrato(ctrOp) : '',
     inmueble_id: inmOp ? inmOp.id : '', inmueble_desc: inmOp ? textoInmueble(inmOp) : '',
     instrumento_monetario: v('instrumento_op'),
+    pais_procedencia: v('pais_procedencia_op'),
     moneda: v('moneda_op'),
     subtotal: subtotal, iva: iva, accesorios: accesorios,
     total_operacion: total_operacion,
@@ -15679,6 +15723,10 @@ function guardarLiq(idEx) {
     fecha_registro: hoy()
   };
   datos.Title = 'LIQ-'+Date.now();
+  if (datos.instrumento_monetario === '10' && (!datos.pais_procedencia || normPais(datos.pais_procedencia) === 'MEXICO')) {
+    toast('Con transferencia internacional, elige el pais de procedencia de los recursos (distinto de Mexico)', 'w');
+    return;
+  }
 
   // Congelar el tipo de cambio de la FECHA de la operacion: el equivalente en MXN
   // queda como evidencia y no cambia si el tipo de cambio se mueve despues.
@@ -15798,33 +15846,111 @@ function guardarLiq(idEx) {
 
 // ── CARGA EXCEL ──────────────────────────────────────────────
 // Genera y descarga la plantilla (layout) de carga masiva de operaciones
+// Columnas de la plantilla de carga de operaciones. Las de catalogo se llenan
+// con listas desplegables ("1 - Contado"); la importacion toma el codigo del
+// inicio, asi que tambien acepta solo el numero.
+var LAYOUT_OPS_COLS = ['Num. Cliente','RFC','Nombre / Razon social','Fecha de pago (AAAA-MM-DD)',
+  'Forma de pago','Instrumento monetario','Moneda',
+  'Subtotal','IVA','Accesorios','Referencia de aviso','Observaciones',
+  'Quien paga','Nombre del tercero','Contrato (solo arrendamiento)',
+  'Tipo de cambio (pesos por unidad; solo monedas sin cotizacion de Banxico)',
+  'Inmueble (solo compraventa: fraccionamiento y lote)',
+  'Pais de procedencia de los recursos (obligatorio con 10 - Transferencia Internacional)'];
+function opcionCatalogo(x) { return x.codigo + ' - ' + x.desc; }
+// Codigo de una celda de catalogo: "10 - Transferencia Internacional" o "10".
+function codigoDeCelda(v) {
+  var s = String(v === undefined || v === null ? '' : v).trim();
+  var m = s.match(/^(\d+)\s*(-|$)/);
+  return m ? m[1] : s;
+}
+// Nombre del catalogo de paises para un texto ("Estados Unidos", "ESTADOS UNIDOS
+// DE AMERICA", "US"); vacio si no se reconoce.
+function paisDeTexto(t) {
+  var n = normPais(t);
+  if (!n) return '';
+  var p = PAISES_CAT.filter(function(x){ return normPais(x.n) === n || x.c === n; })[0];
+  if (p) return p.n;
+  var iso = PAISES_ISO[n];
+  p = iso ? PAISES_CAT.filter(function(x){ return x.c === iso; })[0] : null;
+  return p ? p.n : '';
+}
+// Paises en el orden de la lista: Mexico primero.
+function paisesOrdenados() {
+  return PAISES_CAT.filter(function(p){ return p.c === 'MX'; }).concat(PAISES_CAT.filter(function(p){ return p.c !== 'MX'; }));
+}
+
+// SheetJS (edicion comunitaria) no escribe listas desplegables ni estilos: se
+// agregan al XML del archivo ya generado. hoja = numero de hoja (1 = primera);
+// listas = [{ rango: 'E2:E1000', formula: 'Listas!$A$2:$A$6', titulo, mensaje }].
+function xlsxConFormato(wb, hoja, listas) {
+  var buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+  var cfb = XLSX.CFB.read(new Uint8Array(buf), { type: 'array' });
+  var ent = function(p){ return cfb.FileIndex[cfb.FullPaths.indexOf('Root Entry/' + p)]; };
+  var leer = function(e){ return new TextDecoder().decode(e.content); };
+  var poner = function(e, txt){ e.content = new TextEncoder().encode(txt); e.size = e.content.length; };
+  var esc = function(s){ return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); };
+  // Estilo del encabezado: negritas blancas sobre azul, texto ajustado.
+  var st = ent('xl/styles.xml'), sx = leer(st);
+  sx = sx.replace(/<fonts count="(\d+)">([\s\S]*?)<\/fonts>/, function(m, n, f){ return '<fonts count="' + (+n + 1) + '">' + f + '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/><family val="2"/></font></fonts>'; });
+  sx = sx.replace(/<fills count="(\d+)">([\s\S]*?)<\/fills>/, function(m, n, f){ return '<fills count="' + (+n + 1) + '">' + f + '<fill><patternFill patternType="solid"><fgColor rgb="FF1E3A5F"/><bgColor indexed="64"/></patternFill></fill></fills>'; });
+  var nFonts = +(sx.match(/<fonts count="(\d+)"/) || [0, 1])[1], nFills = +(sx.match(/<fills count="(\d+)"/) || [0, 2])[1], idxXf = 0;
+  sx = sx.replace(/<cellXfs count="(\d+)">([\s\S]*?)<\/cellXfs>/, function(m, n, f){
+    idxXf = +n;
+    return '<cellXfs count="' + (+n + 1) + '">' + f + '<xf numFmtId="0" fontId="' + (nFonts - 1) + '" fillId="' + (nFills - 1) + '" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment wrapText="1" vertical="center"/></xf></cellXfs>';
+  });
+  poner(st, sx);
+  var sh = ent('xl/worksheets/sheet' + hoja + '.xml'), x = leer(sh);
+  // Encabezado con estilo, fila mas alta y fija al desplazarse.
+  x = x.replace(/<row r="1"([^>]*)>([\s\S]*?)<\/row>/, function(m, attrs, celdas){
+    return '<row r="1"' + attrs.replace(/\s(ht|customHeight)="[^"]*"/g, '') + ' ht="48" customHeight="1">' + celdas.replace(/<c r="([A-Z]+1)"(\s+s="\d+")?/g, '<c r="$1" s="' + idxXf + '"') + '</row>';
+  });
+  x = x.replace(/<sheetView([^>]*)\/>/, '<sheetView$1><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A2" sqref="A2"/></sheetView>');
+  var dv = '<dataValidations count="' + listas.length + '">' + listas.map(function(l){
+    return '<dataValidation type="list" allowBlank="1" showInputMessage="' + (l.mensaje ? 1 : 0) + '" showErrorMessage="1"'
+      + ' errorTitle="Valor no valido" error="Elige un valor de la lista."'
+      + (l.titulo ? ' promptTitle="' + esc(l.titulo) + '"' : '') + (l.mensaje ? ' prompt="' + esc(l.mensaje) + '"' : '')
+      + ' sqref="' + l.rango + '"><formula1>' + esc(l.formula) + '</formula1></dataValidation>';
+  }).join('') + '</dataValidations>';
+  x = /<\/mergeCells>/.test(x) ? x.replace('</mergeCells>', '</mergeCells>' + dv) : x.replace('</sheetData>', '</sheetData>' + dv);
+  poner(sh, x);
+  return XLSX.CFB.write(cfb, { fileType: 'zip', type: 'array' });
+}
+function descargarArchivo(datos, nombre, tipo) {
+  var blob = new Blob([datos], { type: tipo || 'application/octet-stream' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = nombre;
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
+
 function descargarLayoutOps() {
   toast('Generando layout...', 'i');
   cargarSheetJS(function(){
     if (typeof XLSX === 'undefined') { toast('No se pudo cargar el generador','e'); return; }
-    // Hoja de datos
-    var cols = ['Num. Cliente','RFC','Nombre / Razon social','Fecha de pago (AAAA-MM-DD)',
-      'Forma de pago (codigo)','Instrumento monetario (codigo)','Moneda (codigo)',
-      'Subtotal','IVA','Accesorios','Referencia de aviso','Observaciones',
-      'Quien paga (CLIENTE o TERCERO)','Nombre del tercero','Contrato (solo arrendamiento)',
-      'Tipo de cambio (pesos por unidad; solo monedas sin cotizacion de Banxico)',
-      'Inmueble (solo compraventa: fraccionamiento y lote)'];
-    var ejemplo = ['CIN-0001','','JUAN PEREZ LOPEZ','2026-07-01','1','1','1',100000,16000,0,'','Fila de ejemplo — borrar antes de cargar','CLIENTE','','','','FRACCIONAMIENTO LAS PALMAS, LOTE 12'];
+    var cols = LAYOUT_OPS_COLS;
+    var ejemplo = ['CIN-0001','','JUAN PEREZ LOPEZ','2026-07-01',opcionCatalogo(FORMAS_PAGO[0]),opcionCatalogo(INSTRUMENTOS_MON.filter(function(x){ return x.codigo === '8'; })[0]),opcionCatalogo(MONEDAS[0]),
+      100000,16000,0,'','Fila de ejemplo — borrar antes de cargar','CLIENTE','','','','FRACCIONAMIENTO LAS PALMAS, LOTE 12',''];
     var wsDatos = XLSX.utils.aoa_to_sheet([cols, ejemplo]);
-    wsDatos['!cols'] = cols.map(function(c,i){ return {wch: (i===2?34:(i===11||i===15||i===16?30:16))}; });
+    wsDatos['!cols'] = cols.map(function(c, i){ return { wch: [14,15,34,14,26,30,14,13,12,12,16,30,12,26,24,22,34,30][i] || 16 }; });
 
-    // Hoja de catálogos (códigos válidos)
-    var cat = [['CATALOGOS — usa el CODIGO (número) en las columnas correspondientes del layout'],[]];
-    cat.push(['FORMA DE PAGO  → columna "Forma de pago (codigo)"']);
-    cat.push(['Codigo','Descripcion']);
+    // Hoja oculta con las opciones de las listas desplegables.
+    var paises = paisesOrdenados().map(function(p){ return p.n; });
+    var columnas = [FORMAS_PAGO.map(opcionCatalogo), INSTRUMENTOS_MON.map(opcionCatalogo), MONEDAS.map(opcionCatalogo), paises, ['CLIENTE', 'TERCERO']];
+    var largo = Math.max.apply(null, columnas.map(function(c){ return c.length; }));
+    var filas = [['Forma de pago', 'Instrumento monetario', 'Moneda', 'Pais', 'Quien paga']];
+    for (var i = 0; i < largo; i++) filas.push(columnas.map(function(c){ return c[i] || ''; }));
+    var wsListas = XLSX.utils.aoa_to_sheet(filas);
+    var rango = function(letra, n){ return 'Listas!$' + letra + '$2:$' + letra + '$' + (n + 1); };
+
+    // Hoja de catálogos (consulta)
+    var cat = [['CATALOGOS — en la hoja "Operaciones" estas columnas se eligen de una lista; tambien se acepta solo el codigo'],[]];
+    cat.push(['FORMA DE PAGO']); cat.push(['Codigo','Descripcion']);
     FORMAS_PAGO.forEach(function(f){ cat.push([f.codigo, f.desc]); });
     cat.push([]);
-    cat.push(['INSTRUMENTO MONETARIO  → columna "Instrumento monetario (codigo)"']);
-    cat.push(['Codigo','Descripcion']);
+    cat.push(['INSTRUMENTO MONETARIO']); cat.push(['Codigo','Descripcion']);
     INSTRUMENTOS_MON.forEach(function(f){ cat.push([f.codigo, f.desc]); });
     cat.push([]);
-    cat.push(['MONEDA  → columna "Moneda (codigo)"  (1 = Peso mexicano)']);
-    cat.push(['Codigo','Abreviatura','Tipo de cambio']);
+    cat.push(['MONEDA  (1 = Peso mexicano)']); cat.push(['Codigo','Abreviatura','Tipo de cambio']);
     MONEDAS.forEach(function(f){
       var b = MONEDAS_BANXICO[f.codigo];
       cat.push([f.codigo, f.desc, f.codigo === '1' ? 'No aplica' : b ? 'Banxico, serie ' + b.serie + ' (automatico)' : 'Capturar en la columna "Tipo de cambio"']);
@@ -15835,16 +15961,17 @@ function descargarLayoutOps() {
     // Hoja de instrucciones
     var inst = [
       ['INSTRUCCIONES — Carga masiva de operaciones (PLD Corporativo SMS)'],[],
-      ['1. Captura una operación por fila en la hoja "Operaciones".'],
+      ['1. Captura una operación por fila en la hoja "Operaciones". El encabezado queda fijo al desplazarte.'],
       ['2. Identifica al cliente por Num. Cliente (ej. CIN-0001) O por RFC. Basta con llenar UNA de las dos; si dejas Num. Cliente vacío se buscará por el RFC. El Nombre/Razon social es solo de referencia.'],
       ['3. Fecha de pago: formato AAAA-MM-DD (ej. 2026-07-01).'],
-      ['4. Forma de pago / Instrumento / Moneda: escribe el CODIGO numérico según la hoja "Catalogos".'],
+      ['4. Forma de pago, Instrumento monetario, Moneda, Quien paga y Pais de procedencia: elige el valor de la lista desplegable de cada celda. La hoja "Catalogos" tiene los codigos de consulta.'],
       ['5. Subtotal, IVA y Accesorios: montos en la moneda de la operación. El Total de operación se calcula solo (Subtotal + IVA + Accesorios).'],
       ['6. Los umbrales de identificación y aviso (Fr. V y Fr. XV) se calculan sobre el SUBTOTAL convertido a pesos.'],
       ['6 bis. Tipo de cambio: el peso no lo necesita. Dólar, euro, yen japonés, libra esterlina y yuan chino toman el de Banxico de la fecha de pago. Cualquier otra moneda requiere la columna "Tipo de cambio" (pesos por 1 unidad); sin ella, la fila no se importa.'],
       ['7. La fracción (V Compraventa o XV Arrendamiento) se toma de la pestaña activa al momento de cargar el archivo.'],
-      ['8. Quien paga: escribe CLIENTE o TERCERO; si es TERCERO, llena su nombre. En arrendamiento, Contrato es el identificador del contrato del cliente (ej. CONTRATO PRINCIPAL). Si se dejan vacias, la operacion queda sin ese dato.'],
+      ['8. Quien paga: CLIENTE o TERCERO; si es TERCERO, llena su nombre. En arrendamiento, Contrato es el identificador del contrato del cliente (ej. CONTRATO PRINCIPAL). Si se dejan vacias, la operacion queda sin ese dato.'],
       ['8 bis. Inmueble (solo compraventa): escribelo como aparece en la pestaña Inmuebles del cliente, por ejemplo FRACCIONAMIENTO LAS PALMAS, LOTE 12. Si el cliente tiene un solo inmueble puede quedar vacio. Si el efectivo y los metales preciosos recibidos para ese inmueble llegan a 8,025 UMA con la fila, la fila no se importa (art. 32 fr. I LFPIORPI).'],
+      ['8 ter. Pais de procedencia de los recursos: obligatorio cuando el instrumento es 10 - Transferencia Internacional (un pais distinto de Mexico); sin el, la fila no se importa. Si el pais esta en las listas del GAFI, del Consejo de Seguridad o de regimenes fiscales preferentes, la operacion genera alerta (art. 41 fr. V).'],
       ['9. Borra la fila de ejemplo antes de cargar.']
     ];
     var wsInst = XLSX.utils.aoa_to_sheet(inst);
@@ -15854,7 +15981,22 @@ function descargarLayoutOps() {
     XLSX.utils.book_append_sheet(wb, wsInst, 'Instrucciones');
     XLSX.utils.book_append_sheet(wb, wsDatos, 'Operaciones');
     XLSX.utils.book_append_sheet(wb, wsCat, 'Catalogos');
-    XLSX.writeFile(wb, 'Layout_Operaciones_PLD.xlsx');
+    XLSX.utils.book_append_sheet(wb, wsListas, 'Listas');
+    wb.Workbook = { Sheets: [{}, {}, {}, { Hidden: 1 }] };
+    var out;
+    try {
+      out = xlsxConFormato(wb, 2, [
+        { rango: 'E2:E1000', formula: rango('A', columnas[0].length) },
+        { rango: 'F2:F1000', formula: rango('B', columnas[1].length) },
+        { rango: 'G2:G1000', formula: rango('C', columnas[2].length) },
+        { rango: 'M2:M1000', formula: rango('E', 2) },
+        { rango: 'R2:R1000', formula: rango('D', paises.length), titulo: 'Pais de procedencia', mensaje: 'Obligatorio con 10 - Transferencia Internacional.' }
+      ]);
+    } catch (e) {
+      console.warn('[layout] sin listas desplegables', e);
+      out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    }
+    descargarArchivo(out, 'Layout_Operaciones_PLD.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     toast('Layout descargado','s');
   });
 }
@@ -15894,7 +16036,7 @@ function procesarExcel(data, fraccion) {
     var wb = XLSX.read(data, {type:'array', cellDates:true});
 
     // Elegir la hoja de DATOS (nunca las hojas de ayuda de la plantilla)
-    var HOJAS_AYUDA = ['Instrucciones','Catalogos','Catálogos','Instructivo'];
+    var HOJAS_AYUDA = ['Instrucciones','Catalogos','Catálogos','Instructivo','Listas'];
     var preferidas = (fraccion === 'ARI')
       ? ['Fr XV - Arrendamiento','Operaciones']
       : ['Fr V - Compraventa','Operaciones'];
@@ -15928,6 +16070,7 @@ function procesarExcel(data, fraccion) {
         noVacias++;
         if (val.indexOf('cambio') >= 0) map['tc'] = c;   // "Tipo de cambio": antes que "moneda"
         else if (val.indexOf('inmueble') >= 0) map['inmueble'] = c;   // "Inmueble (solo compraventa)"
+        else if (/pa[ií]s/.test(val)) map['pais'] = c;                  // "Pais de procedencia de los recursos"
         else if (val.indexOf('num') >= 0 && val.indexOf('cliente') >= 0) map['num_cliente'] = c;
         else if (val === 'rfc' || val.indexOf('rfc') >= 0) map['rfc'] = c;
         else if (/qui[eé]n/.test(val) && val.indexOf('paga') >= 0) map['pagador'] = c;
@@ -15954,7 +16097,7 @@ function procesarExcel(data, fraccion) {
     }
 
     // Leer datos desde la fila siguiente al encabezado
-    var registros = [], sinTCImp = [], sinInmImp = [], efCvImp = [];
+    var registros = [], sinTCImp = [], sinInmImp = [], efCvImp = [], sinPaisImp = [];
     var sinTxt = function(a){ return a.join(', '); };
     for (var ri = headerRow + 1; ri < allRows.length; ri++) {
       var row = allRows[ri];
@@ -16014,7 +16157,11 @@ function procesarExcel(data, fraccion) {
       // Compraventa: el inmueble de la fila (o el unico del cliente); sin el, la fila no se importa.
       var inmImp = (fraccion !== 'ARI' && cliImp) ? inmueblePorTexto(cliImp, celda('inmueble')) : null;
       if (fraccion !== 'ARI' && cliImp && !inmImp) { sinInmImp.push(ri + 1); continue; }
-      var monedaOp = String(row[headerMap['moneda'] !== undefined ? headerMap['moneda'] : 4] || '1').trim() || '1';
+      var monedaOp = codigoDeCelda(row[headerMap['moneda'] !== undefined ? headerMap['moneda'] : 4]) || '1';
+      // Pais de procedencia: obligatorio (y distinto de Mexico) con 10 - Transferencia Internacional.
+      var instImp = codigoDeCelda(row[headerMap['instrumento'] !== undefined ? headerMap['instrumento'] : 3]);
+      var paisImp = paisDeTexto(celda('pais'));
+      if (instImp === '10' && (!paisImp || normPais(paisImp) === 'MEXICO')) { sinPaisImp.push(ri + 1); continue; }
       // Congelar el tipo de cambio de la fecha de cada operacion importada. Una
       // moneda sin cotizacion de Banxico necesita la columna "Tipo de cambio";
       // sin ella, la fila no se importa.
@@ -16031,8 +16178,9 @@ function procesarExcel(data, fraccion) {
         pagador: pagImp, tercero_nombre: pagImp === 'TERCERO' ? celda('tercero').toUpperCase() : '',
         contrato_id: ctrImp ? ctrImp.id : '', contrato_desc: ctrImp ? textoContrato(ctrImp) : ctrTxt.toUpperCase(),
         inmueble_id: inmImp ? inmImp.id : '', inmueble_desc: inmImp ? textoInmueble(inmImp) : '',
-        forma_pago: String(row[headerMap['forma'] !== undefined ? headerMap['forma'] : 2] || '').trim(),
-        instrumento_monetario: String(row[headerMap['instrumento'] !== undefined ? headerMap['instrumento'] : 3] || '').trim(),
+        forma_pago: codigoDeCelda(row[headerMap['forma'] !== undefined ? headerMap['forma'] : 2]),
+        instrumento_monetario: instImp,
+        pais_procedencia: paisImp,
         moneda: monedaOp,
         subtotal: subtotal, iva: iva, accesorios: accesorios,
         total_operacion: total_operacion,
@@ -16064,6 +16212,7 @@ function procesarExcel(data, fraccion) {
         + ': su moneda no tiene cotizacion de Banxico y falta el tipo de cambio. Capturalo en la columna "Tipo de cambio" y vuelve a cargarlas. '
       : '')
       + (sinInmImp.length ? (sinInmImp.length === 1 ? 'La fila ' : 'Las filas ') + sinInmImp.join(', ') + ': falta el inmueble o no coincide con los del cliente (columna "Inmueble"). ' : '')
+      + (sinPaisImp.length ? (sinPaisImp.length === 1 ? 'La fila ' : 'Las filas ') + sinPaisImp.join(', ') + ': transferencia internacional sin pais de procedencia (o con Mexico); no se importaron. ' : '')
       + (efCvImp.length ? (efCvImp.length === 1 ? 'La fila ' : 'Las filas ') + sinTxt(efCvImp) + ': con ese pago, el efectivo y metales preciosos del inmueble llegarian a 8,025 UMA o mas (art. 32 fr. I LFPIORPI); no se importaron. ' : '');
     msgSinTC = msgSinTC.trim();
     if (!registros.length) { pensadorOff(); toast(msgSinTC || 'No se encontraron registros con datos en el archivo', 'e'); return; }
