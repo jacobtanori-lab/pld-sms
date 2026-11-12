@@ -6403,7 +6403,7 @@ function opsDelClienteReval(c, ops, desde, hasta) {
 // Lo que realmente paso en la ventana.
 function observadoReval(ops) {
   var o = { n: ops.length, meses: {}, porMes: {}, efectivoN: 0, efectivoMXN: 0, totalMXN: 0, monedas: {}, instrumentos: [],
-            pagoConDato: 0, terceros: false, tercerosNombres: [], contratos: [], efArt32: {} };
+            pagoConDato: 0, terceros: false, tercerosNombres: [], contratos: [], efArt32: {}, efCv: {} };
   ops.forEach(function(op){
     var m = (op.monto_mxn !== undefined && op.monto_mxn !== null && op.monto_mxn !== '')
       ? (parseFloat(op.monto_mxn) || 0)
@@ -6417,6 +6417,11 @@ function observadoReval(ops) {
     if ((op.fraccion || 'INM') === 'ARI' && esEfectivoArt32(op) && f) {
       var kEf = String(op.contrato_id || '') + '|' + f.substring(0, 6);
       o.efArt32[kEf] = (o.efArt32[kEf] || 0) + m;
+    }
+    // Compraventa: efectivo y metales preciosos por inmueble (art. 32 fr. I).
+    if ((op.fraccion || 'INM') !== 'ARI' && esEfectivoArt32(op) && !opExcluida(op)) {
+      var kI = String(op.inmueble_id || '');
+      o.efCv[kI] = (o.efCv[kI] || 0) + m;
     }
     if (op.pagador) {
       o.pagoConDato++;
@@ -6513,6 +6518,13 @@ function evaluarReval(c, ops) {
   var limA = limiteEfectivoArr();
   var efExc = c.es_arrendamiento === 'SI' && limA > 0 && Object.keys(ob.efArt32 || {}).some(function(k){ return ob.efArt32[k] >= limA; });
   if (efExc) ap.desv.push('Efectivo o metales preciosos de 3,210 UMA o mas en un mes y contrato (art. 32 fr. VII LFPIORPI): pago prohibido');
+  // Compraventa: efectivo de un inmueble en la ventana por encima del art. 32
+  // fr. I (las operaciones sin inmueble cuentan en el primero del cliente).
+  var limC = limiteEfectivoCv(), porInm = {}, inm0 = (inmueblesDe(c)[0] || {}).id || '';
+  Object.keys(ob.efCv || {}).forEach(function(k){ var kk = k || inm0; porInm[kk] = (porInm[kk] || 0) + ob.efCv[k]; });
+  var efExcCv = c.es_arrendamiento !== 'SI' && limC > 0 && Object.keys(porInm).some(function(k){ return porInm[k] >= limC; });
+  if (efExcCv) ap.desv.push('Efectivo o metales preciosos de 8,025 UMA o mas para un mismo inmueble (art. 32 fr. I LFPIORPI): pago prohibido');
+  efExc = efExc || efExcCv;
   ap.datos._reval = { desv: ap.desv.length > 0, efNoDecl: ob.efectivoN > 0 && sinEfDecl, maxMesMXN: ob.n ? ob.maxMesMXN : undefined,
                       instAlto: (instObs && instObs !== 'NINGUNO') ? instObs : undefined, efExcede: efExc || undefined };
   var r = calcEBR(ap.datos);
@@ -8121,6 +8133,142 @@ function guardarContratos() {
   });
 }
 
+// ── Pestana "Inmuebles" (compraventa) ──
+// Se puede agregar otro fraccionamiento o otro lote del mismo fraccionamiento.
+// Junto a cada inmueble se ve cuanto efectivo y metales preciosos se han
+// recibido contra el limite del art. 32 fr. I. Un inmueble con operaciones no
+// se puede quitar.
+function renderInmuebles(conservar) {
+  var c = App.clienteActual, ct = document.getElementById('fd-inm');
+  if (!c || !ct) return;
+  if (!conservar || App._inmId !== c.id) {
+    App._inmBorrador = JSON.parse(JSON.stringify(inmueblesDe(c))); App._inmId = c.id; App._inmUso = null;
+    // Viene del alta de un cliente que ya tenia expediente: se agrega el inmueble capturado.
+    var pend = App._inmPendiente;
+    if (pend && String(pend.cliente) === String(c.id)) {
+      App._inmPendiente = null;
+      if (!App._inmBorrador.some(function(k){ return claveInmueble(k) === claveInmueble(pend); })) {
+        App._inmBorrador.push({ id: siguienteIdInm(App._inmBorrador), fraccionamiento: pend.fraccionamiento, lote: pend.lote, alta: hoy(), nuevo: true });
+        setTimeout(function(){ toast('Se agrego el inmueble capturado en el alta: revisalo y guarda', 'i'); }, 50);
+      }
+    }
+  }
+  var lista = App._inmBorrador, uso = App._inmUso && App._inmUso.cliente === c.id ? App._inmUso.porInm : null;
+  var fraccs = []; lista.forEach(function(k){ if (k.fraccionamiento && fraccs.indexOf(k.fraccionamiento) < 0) fraccs.push(k.fraccionamiento); });
+  var lim = limiteEfectivoCv();
+  var filas = lista.map(function(k, i){
+    var u = uso ? (uso[String(k.id)] || { ops: 0, efectivo: 0 }) : null;
+    var pct = u && lim ? Math.min(100, Math.round(u.efectivo / lim * 100)) : 0;
+    return '<tr data-inm="' + capEsc(k.id) + '">'
+      + '<td><input class="inp" data-k="fraccionamiento" list="inm-fraccs" value="' + capEsc(k.fraccionamiento || '') + '" style="text-transform:uppercase"></td>'
+      + '<td><input class="inp" data-k="lote" value="' + capEsc(k.lote || '') + '" style="text-transform:uppercase;max-width:110px"></td>'
+      + '<td><input class="inp" data-k="alta" type="date" value="' + capEsc(k.alta || '') + '"></td>'
+      + '<td style="font-size:12px">' + (u ? u.ops + (u.ops === 1 ? ' operacion' : ' operaciones') : '…') + '</td>'
+      + '<td style="font-size:12px;white-space:nowrap">' + (u ? fmtMXN(u.efectivo) + ' <span style="color:' + (pct >= 100 ? 'var(--rj)' : pct >= 80 ? 'var(--am)' : 'var(--tx3)') + '">(' + pct + '% del limite)</span>' : '…') + '</td>'
+      + '<td>' + (u && u.ops ? '<span style="font-size:11px;color:var(--tx3)" title="Tiene operaciones ligadas">Con operaciones</span>' : '<button class="btn btn-sm" onclick="inmQuitar(' + i + ')">Quitar</button>') + '</td></tr>';
+  }).join('');
+  var omision = lista.some(function(k){ return k.por_omision; });
+  ct.innerHTML = '<div style="font-size:12px;color:var(--tx2);margin-bottom:8px;line-height:1.6">Cada operacion de compraventa se liga a uno de estos inmuebles. '
+    + 'El efectivo y los metales preciosos se suman por inmueble: una operacion que lleve la suma a 8,025 UMA o mas (' + fmtMXN(lim) + ') no se puede registrar (art. 32 fr. I LFPIORPI). '
+    + 'Para otro lote del mismo fraccionamiento, elige el fraccionamiento de la lista y escribe el lote.</div>'
+    + (omision ? '<div class="alerta-banner"><span>Este expediente no tenia inmuebles registrados: se muestra el de su alta. Revisa los datos y guarda para registrarlo.</span></div>' : '')
+    + '<datalist id="inm-fraccs">' + fraccs.map(function(f){ return '<option value="' + capEsc(f) + '">'; }).join('') + '</datalist>'
+    + '<div class="twrap"><table><thead><tr><th>Fraccionamiento o descripcion del inmueble</th><th>Lote (opcional)</th><th>Alta</th><th>Operaciones</th><th>Efectivo y metales recibidos</th><th></th></tr></thead><tbody>'
+    + (filas || '<tr><td colspan="6" style="color:var(--tx3);font-size:12px">Sin inmuebles.</td></tr>') + '</tbody></table></div>'
+    + '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button class="btn btn-sm" onclick="inmAgregar()">Agregar inmueble o lote</button>'
+    + '<button class="btn btn-p btn-sm" onclick="guardarInmuebles()">Guardar inmuebles</button></div>';
+  if (!uso) cargarUsoInmuebles(c);
+}
+function limiteEfectivoCv() { return (Number(CFG_UMA.DIARIA) || 0) * (Number(CFG_UMA.UMBRAL_INM) || 8025); }
+function siguienteIdInm(lista) {
+  return 'I' + ((lista || []).reduce(function(mx, k){ var x = parseInt(String(k.id).replace(/\D/g, ''), 10); return isNaN(x) ? mx : Math.max(mx, x); }, 0) + 1);
+}
+// Operaciones y efectivo de cada inmueble del cliente (para la pestana).
+function cargarUsoInmuebles(c) {
+  spGet('PLD_Ops_Liq', function(todas){
+    var porInm = {};
+    (todas || []).forEach(function(o){
+      if ((o.fraccion || 'INM') === 'ARI') return;
+      var mismo = (c.id && String(o.id_cliente_ref || '') === String(c.id)) || (c.num_cliente && String(o.num_cliente || '') === String(c.num_cliente));
+      if (!mismo) return;
+      var k = String(o.inmueble_id || inmueblesDe(c)[0].id);
+      var u = porInm[k] || (porInm[k] = { ops: 0, efectivo: 0 });
+      u.ops++;
+      if (esEfectivoArt32(o) && !opExcluida(o)) u.efectivo += montoOpMXN(o);
+    });
+    App._inmUso = { cliente: c.id, porInm: porInm };
+    if (App.clienteActual && App.clienteActual.id === c.id && document.getElementById('fd-inm')) { inmLeerDom(); renderInmuebles(true); }
+  });
+}
+function inmLeerDom() {
+  var lista = App._inmBorrador || [];
+  document.querySelectorAll('#fd-inm tr[data-inm]').forEach(function(tr, i){
+    var k = lista[i]; if (!k) return;
+    tr.querySelectorAll('[data-k]').forEach(function(el){
+      var v = String(el.value || '').trim();
+      k[el.getAttribute('data-k')] = el.type === 'date' ? v : v.toUpperCase();
+    });
+  });
+  return lista;
+}
+function inmAgregar() {
+  var lista = inmLeerDom();
+  lista.push({ id: siguienteIdInm(lista), fraccionamiento: '', lote: '', alta: hoy(), nuevo: true });
+  renderInmuebles(true);
+}
+function inmQuitar(i) {
+  var lista = inmLeerDom();
+  lista.splice(i, 1);
+  renderInmuebles(true);
+}
+function guardarInmuebles() {
+  var c = App.clienteActual; if (!c) return;
+  var lista = inmLeerDom().map(function(k){ var x = JSON.parse(JSON.stringify(k)); delete x.por_omision; delete x.nuevo; return x; });
+  if (!lista.length) { toast('El expediente necesita al menos un inmueble', 'w'); return; }
+  if (lista.some(function(k){ return !k.fraccionamiento; })) { toast('Cada inmueble necesita el fraccionamiento o la descripcion del inmueble', 'w'); return; }
+  var claves = lista.map(claveInmueble);
+  if (claves.some(function(x, i){ return claves.indexOf(x) !== i; })) { toast('Hay dos inmuebles con el mismo fraccionamiento y lote', 'w'); return; }
+  // El primer inmueble se refleja en los campos del alta.
+  var cambios = { inmuebles_cv: lista, nombre_fraccionamiento: lista[0].fraccionamiento, lote_inmueble: lista[0].lote || '' };
+  spPatch('PLD_Clientes', c.id, cambios, function(ok){
+    if (!ok || ok.error) { toast('No se pudieron guardar los inmuebles', 'e'); return; }
+    Object.assign(c, cambios);
+    (App.clientes || []).forEach(function(x){ if (String(x.id) === String(c.id)) Object.assign(x, cambios); });
+    toast('Inmuebles guardados', 's');
+    renderInmuebles();
+  });
+}
+// Efectivo y metales preciosos recibidos para el inmueble de la operacion op
+// (incluida), sin las operaciones devueltas ni rechazadas. Sin plazo: la ley
+// habla del acto (la compra del inmueble). Las operaciones anteriores sin
+// inmueble cuentan en el primer inmueble del cliente.
+function efectivoCvInmueble(ops, op, cli) {
+  var inm0 = cli ? (inmueblesDe(cli)[0] || {}).id : '';
+  var idDe = function(o){ return String(o.inmueble_id || inm0 || ''); }, k = idDe(op);
+  var mismo = function(o){
+    return op.id_cliente_ref ? String(o.id_cliente_ref || '') === String(op.id_cliente_ref)
+      : (op.num_cliente && String(o.num_cliente || '') === String(op.num_cliente));
+  };
+  var previas = (ops || []).filter(function(o){
+    return (!op.id || String(o.id) !== String(op.id)) && mismo(o) && (o.fraccion || 'INM') !== 'ARI'
+      && idDe(o) === k && esEfectivoArt32(o) && !opExcluida(o);
+  });
+  var previo = previas.reduce(function(s, o){ return s + montoOpMXN(o); }, 0);
+  var nuevo = (esEfectivoArt32(op) && !opExcluida(op)) ? montoOpMXN(op) : 0, lim = limiteEfectivoCv();
+  var total = previo + nuevo;
+  return { inmueble_id: k, inmueble_desc: op.inmueble_desc || '', previo: Math.round(previo * 100) / 100, efectivo: Math.round(total * 100) / 100,
+           pagos: previas.length + (nuevo ? 1 : 0), limite: Math.round(lim * 100) / 100, excede: lim > 0 && nuevo > 0 && total >= lim };
+}
+function textoBloqueoEfCv(r) {
+  var disp = Math.max(0, r.limite - r.previo);
+  return 'No se puede registrar la operacion: con este pago, el efectivo y los metales preciosos recibidos para el inmueble '
+    + (r.inmueble_desc || '') + ' sumarian ' + fmtMXN(r.efectivo) + ' en ' + r.pagos + (r.pagos === 1 ? ' pago' : ' pagos')
+    + ', igual o mas que el limite de 8,025 UMA (' + fmtMXN(r.limite) + ') del art. 32 fr. I de la LFPIORPI. '
+    + 'Ya se han recibido ' + fmtMXN(r.previo) + ' en efectivo para este inmueble'
+    + (disp > 0 ? '; un pago en efectivo tendria que ser menor a ' + fmtMXN(disp) + '.' : '; ya no se puede recibir mas efectivo.')
+    + ' El resto debe pagarse con otro instrumento (transferencia, cheque, etc.).';
+}
+
 // ── Historial del grado de riesgo ──
 // Articulo 41, fraccion IV: conservar al menos diez anios los cambios del grado
 // de riesgo y del perfil transaccional. Cada evento queda como un registro
@@ -8564,8 +8712,11 @@ function htmlArrendamiento(d) {
     +'<option value="NO"'+(d.es_arrendamiento==='NO'?' selected':'')+'>NO - Compraventa de inmueble (Fr. V)</option>'
     +'<option value="SI"'+(esArr?' selected':'')+'>SI - Cliente de arrendamiento (Fr. XV)</option>'
     +'</select></div>'
-    +'<div class="fg full cv-campo" style="'+visCV+'"><label class="lbl">Nombre del fraccionamiento o bien inmueble</label>'
-    +'<input class="inp" name="nombre_fraccionamiento" value="'+capEsc(d.nombre_fraccionamiento||'')+'" placeholder="Ej: FRACCIONAMIENTO LAS PALMAS, LOTE 12" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>'
+    +'<div class="fg cv-campo" style="'+visCV+'"><label class="lbl">Fraccionamiento o descripcion del inmueble</label>'
+    +'<input class="inp" name="nombre_fraccionamiento" value="'+capEsc(d.nombre_fraccionamiento||'')+'" placeholder="Ej: FRACCIONAMIENTO LAS PALMAS" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>'
+    +'<div class="fg cv-campo" style="'+visCV+'"><label class="lbl">Numero de lote (opcional)</label>'
+    +'<input class="inp" name="lote_inmueble" value="'+capEsc(d.lote_inmueble||'')+'" placeholder="Ej: 12" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>'
+    +((d.inmuebles_cv || []).length > 1 ? '<div class="fg full cv-campo" style="'+visCV+';font-size:12px;color:var(--tx3)">Este es el primer inmueble del expediente; tiene ' + d.inmuebles_cv.length + ' en total. Los demas se administran en la pestana Inmuebles de la ficha.</div>' : '')
     +'<div class="fg full arr-campo" style="'+vis+'"><label class="lbl">Inmueble arrendado / nombre del establecimiento</label>'
     +'<input class="inp" name="inmueble_arrendado" value="'+(d.inmueble_arrendado||'')+'" placeholder="Ej: LOCAL 4, PLAZA NORTE" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>';
 }
@@ -8626,6 +8777,36 @@ function contratoPorTexto(c, t) {
 }
 function textoContrato(k) {
   return k ? (k.identificador || k.id) + (k.domicilio ? ' · ' + k.domicilio : '') : '';
+}
+// ── Inmuebles de compraventa (Fr. V) ──
+// Un mismo expediente de compraventa puede tener varios inmuebles: varios
+// fraccionamientos y varios lotes dentro de un fraccionamiento. Viven en
+// inmuebles_cv. El lote es opcional: un inmueble que no es de fraccionamiento
+// se describe en el campo del fraccionamiento. Cada operacion de compraventa
+// se liga a uno, y el limite de efectivo del art. 32 fr. I se suma por inmueble.
+function inmueblePorOmision(c) {
+  return { id: 'I1', fraccionamiento: String(c.nombre_fraccionamiento || '').trim().toUpperCase() || 'INMUEBLE PRINCIPAL',
+           lote: String(c.lote_inmueble || '').trim().toUpperCase(), alta: String(c.fecha_registro || hoy()).substring(0, 10), por_omision: true };
+}
+function inmueblesDe(c) {
+  if (!c || c.es_arrendamiento === 'SI') return [];
+  return (c.inmuebles_cv && c.inmuebles_cv.length) ? c.inmuebles_cv : [inmueblePorOmision(c)];
+}
+function textoInmueble(k) {
+  return k ? (k.fraccionamiento || k.id) + (k.lote ? ', LOTE ' + k.lote : '') : '';
+}
+function claveInmueble(k) { return scrNorm(k.fraccionamiento || '') + '|' + scrNorm(k.lote || ''); }
+// El inmueble que escribe una fila de Excel: su id, su texto completo
+// ("FRACC. LAS PALMAS, LOTE 12") o el fraccionamiento si ahi solo hay uno.
+// Sin texto, el unico inmueble del cliente.
+function inmueblePorTexto(c, t) {
+  var lista = inmueblesDe(c), s = String(t || '').trim().toUpperCase();
+  if (!s) return lista.length === 1 ? lista[0] : null;
+  var n = scrNorm(s);
+  var m = lista.filter(function(k){ return String(k.id).toUpperCase() === s || scrNorm(textoInmueble(k)) === n; });
+  if (m.length) return m[0];
+  m = lista.filter(function(k){ return scrNorm(k.fraccionamiento || '') === n; });
+  return m.length === 1 ? m[0] : null;
 }
 // Instrumentos monetarios de alto riesgo (art. 23 Bis 2 fr. II): activos
 // virtuales, metales preciosos y cheques de viajero, con su codigo del
@@ -8742,7 +8923,7 @@ function renderPerfilTx(c) {
     fcHtml('Tipo de cliente por fraccion', esArr ? 'Arrendamiento (Fr. XV)' : 'Compraventa de inmueble (Fr. V)')
     + (esArr
         ? fcHtml('Inmueble arrendado', capEsc(c.inmueble_arrendado))
-        : fcHtml('Fraccionamiento o bien inmueble', capEsc(c.nombre_fraccionamiento)))
+        : fcHtml('Inmuebles', inmueblesDe(c).map(function(k){ return capEsc(textoInmueble(k)); }).join('<br>')))
   );
   var vacio = esArr
     ? !(c.ptx_arr_pago || c.ptx_arr_numops || c.ptx_arr_frec || c.renta_monto || c.ptx_arr_efectivo || c.ptx_arr_origen)
@@ -9499,6 +9680,20 @@ function clientePorRFC(rfc, entId, idExcluir, lista) {
   });
   return dup;
 }
+// Alta de un cliente que ya tiene expediente. En compraventa, en lugar de
+// duplicarlo se ofrece abrir su expediente y agregar el inmueble capturado
+// (nuevo fraccionamiento o nuevo lote) en la pestana Inmuebles.
+function ofrecerNuevoInmueble(datos, dup) {
+  if (datos.es_arrendamiento === 'SI') { alert(_msgDupRFC(datos.rfc, dup)); return; }
+  var conInm = !!String(datos.nombre_fraccionamiento || '').trim();
+  var inm = inmueblePorOmision(datos);
+  if (!confirm(_msgDupRFC(datos.rfc, dup) + '\n\n¿Abrir su expediente para agregar '
+      + (conInm ? 'el inmueble ' + textoInmueble(inm) : 'un nuevo fraccionamiento o lote') + '?')) return;
+  App._inmPendiente = conInm ? { cliente: dup.id, fraccionamiento: inm.fraccionamiento, lote: inm.lote } : null;
+  if (!(App.clientes || []).some(function(x){ return String(x.id) === String(dup.id); })) App.clientes.push(dup);
+  abrirFicha(dup.id);
+  setTimeout(function(){ var t = document.getElementById('ftab-inm'); if (t) t.click(); }, 50);
+}
 function _msgDupRFC(rfc, c) {
   return 'Ya existe un expediente con el RFC ' + _rfcNorm(rfc) + ' en esta entidad:\n\n'
     + '    ' + nStr(c.num_cliente) + ' — ' + nombreCliente(c) + '\n'
@@ -9562,7 +9757,7 @@ function submitCliente(tipo, idEx) {
   if (_orig) {
     ['scr_resoluciones','pep_origen','pep_confirmado_por','pep_confirmado_fecha','bloqueo_scr',
      'ciclo_ult_revaluacion','fecha_ult_revaluacion','curp_qr_url','curp_folio','curp_constancia_fecha','id_cif','rfc_qr_url',
-     'perfil_tx_original','perfil_operado_ult','perfil_tx_actualizado','ddr','contratos_arr','aprobado_por','aprobado_cargo','fecha_aprobacion'
+     'perfil_tx_original','perfil_operado_ult','perfil_tx_actualizado','ddr','contratos_arr','inmuebles_cv','aprobado_por','aprobado_cargo','fecha_aprobacion'
     ].forEach(function(k){
       if ((datos[k] === undefined || datos[k] === '') && _orig[k] !== undefined) datos[k] = _orig[k];
     });
@@ -9582,7 +9777,7 @@ function submitCliente(tipo, idEx) {
     ? (App.clienteActual.entidad_id || '')
     : (App.entidadActual ? App.entidadActual.id : '');
   var dupRfc = clientePorRFC(datos.rfc, entIdRfc, idEx, App.clientes);
-  if (dupRfc) { alert(_msgDupRFC(datos.rfc, dupRfc)); return; }
+  if (dupRfc) { if (idEx) alert(_msgDupRFC(datos.rfc, dupRfc)); else ofrecerNuevoInmueble(datos, dupRfc); return; }
   if (datos.estatus === 'Activo' && val.faltantes.length) {
     var msg = 'Para guardar en estatus ACTIVO faltan ' + val.faltantes.length + ' campo(s) obligatorio(s):\n\n• '
       + val.faltantes.slice(0, 12).join('\n• ')
@@ -9604,6 +9799,18 @@ function submitCliente(tipo, idEx) {
   if (datos.es_arrendamiento === 'SI' && !(datos.contratos_arr && datos.contratos_arr.length)) {
     var ctr0 = contratoPorOmision(datos); delete ctr0.por_omision;
     datos.contratos_arr = [ctr0];
+  }
+  // Compraventa: el expediente nace con el inmueble del alta; despues los
+  // inmuebles se administran en la pestana Inmuebles de la ficha.
+  // Los campos del alta reflejan siempre el primer inmueble.
+  if (datos.es_arrendamiento !== 'SI') {
+    var inm0 = inmueblePorOmision(datos); delete inm0.por_omision;
+    if (!(datos.inmuebles_cv && datos.inmuebles_cv.length)) datos.inmuebles_cv = [inm0];
+    else if (String(datos.nombre_fraccionamiento || '').trim()) {
+      datos.inmuebles_cv = JSON.parse(JSON.stringify(datos.inmuebles_cv));
+      datos.inmuebles_cv[0].fraccionamiento = inm0.fraccionamiento;
+      datos.inmuebles_cv[0].lote = inm0.lote;
+    }
   }
 
   // Asegurar que las listas de screening estén cargadas (última versión en SharePoint)
@@ -9656,7 +9863,7 @@ function submitCliente(tipo, idEx) {
       // Cotejo definitivo contra la lista recien leida de SharePoint: atrapa el
       // duplicado que otro usuario (u otra pestaña) acaba de crear.
       var dup2 = clientePorRFC(datos.rfc, entId, null, lista);
-      if (dup2) { pensadorOff(); alert(_msgDupRFC(datos.rfc, dup2)); return; }
+      if (dup2) { pensadorOff(); ofrecerNuevoInmueble(datos, dup2); return; }
 
       datos.num_cliente = entId + '-' + String(maxNum + 1).padStart(4, '0');
       datos.fecha_registro = hoy();
@@ -9824,7 +10031,7 @@ function renderFicha(c) {
     +'<div class="ftab" onclick="fichaTab(this,\'fd-ops\');renderOpsCliente()">Operaciones</div>'
     +'<div class="ftab" onclick="fichaTab(this,\'fd-ptx\');cargarOperadoFicha()">Perfil transaccional</div>'
     +'<div class="ftab" onclick="fichaTab(this,\'fd-scr\')">Screening</div>'
-    +(c.es_arrendamiento==='SI' ? '<div class="ftab" onclick="fichaTab(this,\'fd-ctr\');renderContratos()">Contratos</div>' : '')
+    +(c.es_arrendamiento==='SI' ? '<div class="ftab" onclick="fichaTab(this,\'fd-ctr\');renderContratos()">Contratos</div>' : '<div class="ftab" id="ftab-inm" onclick="fichaTab(this,\'fd-inm\');renderInmuebles()">Inmuebles</div>')
     +'<div class="ftab" onclick="fichaTab(this,\'fd-hist\');renderHistorialRiesgo(App.clienteActual)">Historial de riesgo</div>'
     +((estadoDDR(c).aplica || c.ddr) ? '<div class="ftab" onclick="fichaTab(this,\'fd-ddr\');renderDDR()">Debida diligencia reforzada</div>' : '')
     +'</div>'
@@ -9842,6 +10049,7 @@ function renderFicha(c) {
     +'<div id="fd-ptx" class="card-b" style="display:none">'+renderPerfilTx(c)+'</div>'
     +'<div id="fd-scr" class="card-b" style="display:none">'+renderResolucionesScr(c)+'</div>'
     +'<div id="fd-ctr" class="card-b" style="display:none"></div>'
+    +'<div id="fd-inm" class="card-b" style="display:none"></div>'
     +'<div id="fd-hist" class="card-b" style="display:none"></div>'
     +'<div id="fd-ddr" class="card-b" style="display:none"></div>'
     +'</div>';
@@ -9850,7 +10058,7 @@ function renderFicha(c) {
 
 function fichaTab(el,id) {
   document.querySelectorAll('.ftab').forEach(function(t){t.classList.remove('on');}); el.classList.add('on');
-  ['fd-datos','fd-dom','fd-rl','fd-bcs','fd-fid','fd-df','fd-dom-ext','fd-duen','fd-docs','fd-ops','fd-ptx','fd-scr','fd-ctr','fd-hist','fd-ddr'].forEach(function(i){
+  ['fd-datos','fd-dom','fd-rl','fd-bcs','fd-fid','fd-df','fd-dom-ext','fd-duen','fd-docs','fd-ops','fd-ptx','fd-scr','fd-ctr','fd-inm','fd-hist','fd-ddr'].forEach(function(i){
     var e=document.getElementById(i); if(e) e.style.display='none';
   });
   var t=document.getElementById(id); if(t) t.style.display='block';
@@ -10393,7 +10601,7 @@ function renderOpsCliente() {
           +'<td>'+(fp?fp.desc:o.forma_pago||'-')+'</td>'
           +'<td>'+(mo?mo.desc:o.moneda||'-')+'</td>'
           +'<td style="font-size:12px">'+(o.pagador==='TERCERO' ? 'Tercero: '+capEsc(o.tercero_nombre||'') : o.pagador==='CLIENTE' ? 'Cliente' : '<span style="color:var(--tx3)">Sin dato</span>')
-          +(o.contrato_desc ? '<div style="font-size:11px;color:var(--tx3)">'+capEsc(o.contrato_desc)+'</div>' : '')+'</td>'
+          +((o.contrato_desc || o.inmueble_desc) ? '<div style="font-size:11px;color:var(--tx3)">'+capEsc(o.contrato_desc || o.inmueble_desc)+'</div>' : '')+'</td>'
           +'<td style="font-weight:500;text-align:right">$'+subtotalOpMXN(o).toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2})
           +(esMonedaExtranjera(o) ? '<div style="font-size:11px;font-weight:400;color:var(--tx3)">'+fmtMonedaOrig(o.subtotal!==undefined&&o.subtotal!==''?o.subtotal:o.monto, o.moneda)+'</div>' : '')+'</td>'
           +'<td>'+badgeOp+'</td>'
@@ -13705,7 +13913,7 @@ function editarOp(opId) {
   });
 }
 // Campos que se comparan para dejar rastro de cada edicion.
-var CAMPOS_EDICION_OP = [['id_cliente_ref','cliente'],['pagador','quien paga'],['tercero_nombre','tercero'],['contrato_id','contrato'],
+var CAMPOS_EDICION_OP = [['id_cliente_ref','cliente'],['pagador','quien paga'],['tercero_nombre','tercero'],['contrato_id','contrato'],['inmueble_desc','inmueble'],
   ['fecha_pago','fecha de pago'],['forma_pago','forma de pago'],['instrumento_monetario','instrumento'],['moneda','moneda'],
   ['subtotal','subtotal'],['iva','IVA'],['accesorios','accesorios'],['tipo_cambio_aplicado','tipo de cambio'],['ref_aviso','referencia de aviso'],['observaciones','observaciones']];
 
@@ -13748,7 +13956,7 @@ function verLiq(id, origen) {
       + fcHtml('Monto en MXN', fmtMXN(parseFloat(o.monto_mxn) || 0) + capEsc(tc))
       + (o.ef_art32 && o.ef_art32.excede ? fcHtml('Limite de efectivo (art. 32)', '<span style="color:var(--rj)">' + capEsc(textoEfArt32(o.ef_art32)) + '</span>') : '')
       + fcHtml('Quien realiza el pago', o.pagador === 'TERCERO' ? 'Un tercero: ' + capEsc(o.tercero_nombre || '') : o.pagador === 'CLIENTE' ? 'El cliente' : 'Sin dato')
-      + (o.fraccion === 'ARI' ? fcHtml('Contrato', capEsc(o.contrato_desc || '')) : '')
+      + (o.fraccion === 'ARI' ? fcHtml('Contrato', capEsc(o.contrato_desc || '')) : fcHtml('Inmueble', capEsc(o.inmueble_desc || 'Sin inmueble (operacion anterior)')))
       + fcHtml('Referencia de aviso', capEsc(o.ref_aviso || ''))
       + fcHtml('Observaciones', capEsc(o.observaciones || ''))
       + fcHtml('Registrada por', capEsc((o.registrado_por || '') + (o.fecha_registro ? ', ' + String(o.fecha_registro).substring(0, 10) : ''))));
@@ -13811,6 +14019,7 @@ function eliminarOp(opId) {
 function refrescarContratosOp() {
   var sel = document.getElementById('contrato_op');
   var cs = document.querySelector('[name="id_cliente_ref_op"]');
+  refrescarInmueblesOp();
   if (!sel || !cs) return;
   var c = null; (App.clientes || []).forEach(function(x){ if (String(x.id) === String(cs.value)) c = x; });
   var previo = sel.value || sel.getAttribute('data-sel') || '';
@@ -13818,6 +14027,19 @@ function refrescarContratosOp() {
   sel.innerHTML = !c ? '<option value="">-- Selecciona primero el cliente --</option>'
     : !lista.length ? '<option value="">El cliente no es de arrendamiento</option>'
     : '<option value="">-- Seleccionar --</option>' + lista.map(function(k){ return '<option value="' + capEsc(k.id) + '"' + (String(k.id) === String(previo) ? ' selected' : '') + '>' + capEsc(textoContrato(k)) + '</option>'; }).join('');
+}
+// Compraventa: los inmuebles del cliente elegido. Si tiene uno solo, queda elegido.
+function refrescarInmueblesOp() {
+  var sel = document.getElementById('inmueble_op');
+  var cs = document.querySelector('[name="id_cliente_ref_op"]');
+  if (!sel || !cs) return;
+  var c = null; (App.clientes || []).forEach(function(x){ if (String(x.id) === String(cs.value)) c = x; });
+  var previo = sel.value || sel.getAttribute('data-sel') || '';
+  var lista = inmueblesDe(c);
+  if (lista.length === 1 && !previo) previo = lista[0].id;
+  sel.innerHTML = !c ? '<option value="">-- Selecciona primero el cliente --</option>'
+    : !lista.length ? '<option value="">El cliente es de arrendamiento</option>'
+    : '<option value="">-- Seleccionar --</option>' + lista.map(function(k){ return '<option value="' + capEsc(k.id) + '"' + (String(k.id) === String(previo) ? ' selected' : '') + '>' + capEsc(textoInmueble(k)) + '</option>'; }).join('');
 }
 document.addEventListener('change', function(ev){ if (ev.target && ev.target.name === 'id_cliente_ref_op') refrescarContratosOp(); });
 
@@ -13852,7 +14074,7 @@ function nuevaLiqForm(datos) {
     +'<input class="inp" name="tercero_nombre_op" value="'+capEsc(d.tercero_nombre||'')+'" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>'
     +(fraccion==='ARI'
         ? fg('Contrato',null,true)+'<select class="sel" name="contrato_op" id="contrato_op" data-sel="'+capEsc(d.contrato_id||'')+'"><option value="">-- Selecciona primero el cliente --</option></select></div>'
-        : '')
+        : fg('Inmueble (fraccionamiento y lote)',null,true)+'<select class="sel" name="inmueble_op" id="inmueble_op" data-sel="'+capEsc(d.inmueble_id||'')+'"><option value="">-- Selecciona primero el cliente --</option></select></div>')
     +fg('Fecha de pago',null,true)+fi('fecha_pago_op',d.fecha_pago||hoy(),'AAAA-MM-DD')
     +fg('Forma de pago',null,true)+'<select class="sel" name="forma_pago_op">'+optsC2(FORMAS_PAGO,d.forma_pago||'')+'</select></div>'
     +fg('Instrumento monetario',null,true)+'<select class="sel" name="instrumento_op">'+optsC2(INSTRUMENTOS_MON,d.instrumento_monetario||'')+'</select></div>'
@@ -13871,15 +14093,16 @@ function nuevaLiqForm(datos) {
     +'<input class="inp" name="tc_manual_op" value="'+(d.tc_manual ? capEsc(d.tipo_cambio_aplicado || '') : '')+'" placeholder="0.0000" oninput="calcTotalOp()" style="max-width:220px"></div>'
     +'<div id="tc_op_mxn" style="font-size:13px;margin-top:6px;font-weight:500"></div>'
     +'</div>'
-    +'<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" style="display:none" onload="iniciarTCOp()">'
     +fg('Referencia de aviso relacionado',null,false)+fi('ref_aviso_op',d.ref_aviso||'','Opcional')
     +ftxt('Observaciones','obs_op',d.observaciones||'')
     +'</div>'
     +'<div style="padding:12px 16px;border-top:1px solid var(--brd);display:flex;justify-content:flex-end">'
     +'<button class="btn btn-p liq-save-btn" data-idex="'+idEx+'">Guardar operacion</button>'
-    +'<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" style="display:none" onload="refrescarContratosOp()">'
     +'</div></div>';
   setMain(html);
+  // Contratos o inmuebles del cliente y tipo de cambio: se llenan al abrir el
+  // formulario (tambien al editar, con lo que ya tenia la operacion).
+  setTimeout(function(){ refrescarContratosOp(); iniciarTCOp(); }, 0);
 }
 
 // ── MOTOR DE DETECCIÓN DE UMBRALES ───────────────────────────
@@ -15422,6 +15645,18 @@ function guardarLiq(idEx) {
       spPatch('PLD_Clientes', cliOp.id, { contratos_arr: [k0] }, null);
     }
   }
+  // Compraventa: el inmueble (fraccionamiento y lote) al que corresponde el pago.
+  var inmOp = null;
+  if (fraccion !== 'ARI') {
+    var inmId = v('inmueble_op');
+    inmOp = inmueblesDe(cliOp).filter(function(k){ return String(k.id) === String(inmId); })[0] || null;
+    if (!inmOp) { toast('Elige el inmueble (fraccionamiento y lote) al que corresponde el pago', 'w'); return; }
+    if (inmOp.por_omision && cliOp) {
+      var i0 = JSON.parse(JSON.stringify(inmOp)); delete i0.por_omision;
+      cliOp.inmuebles_cv = [i0];
+      spPatch('PLD_Clientes', cliOp.id, { inmuebles_cv: [i0] }, null);
+    }
+  }
 
   var datos = {
     id_cliente_ref: idCli, nombre_cliente: nomCli,
@@ -15430,6 +15665,7 @@ function guardarLiq(idEx) {
     forma_pago: formaPago,
     pagador: pagador, tercero_nombre: pagador === 'TERCERO' ? terceroNom : '',
     contrato_id: ctrOp ? ctrOp.id : '', contrato_desc: ctrOp ? textoContrato(ctrOp) : '',
+    inmueble_id: inmOp ? inmOp.id : '', inmueble_desc: inmOp ? textoInmueble(inmOp) : '',
     instrumento_monetario: v('instrumento_op'),
     moneda: v('moneda_op'),
     subtotal: subtotal, iva: iva, accesorios: accesorios,
@@ -15532,6 +15768,16 @@ function guardarLiq(idEx) {
   // Arrendamiento pagado en efectivo: se suma lo del mismo contrato y mes y,
   // si llega al limite del art. 32, se confirma antes de registrar.
   var guardar = function() {
+    // Compraventa pagada en efectivo o metales preciosos: si con este pago el
+    // inmueble llega a 8,025 UMA, la operacion no se registra (art. 32 fr. I).
+    if (fraccion !== 'ARI' && esEfectivoArt32(datos)) {
+      spGet('PLD_Ops_Liq', function(todas){
+        var rCv = efectivoCvInmueble(todas || [], Object.assign({}, datos, { id: idEx || '' }), cliOp);
+        if (rCv.excede) { alert(textoBloqueoEfCv(rCv)); return; }
+        datos.ef_art32 = ''; guardarFinal(null);
+      });
+      return;
+    }
     if (fraccion !== 'ARI' || !esEfectivoArt32(datos)) { datos.ef_art32 = ''; guardarFinal(null); return; }
     spGet('PLD_Ops_Liq', function(todas){
       var r = efectivoArrMes(todas || [], Object.assign({}, datos, { id: idEx || '' }));
@@ -15561,10 +15807,11 @@ function descargarLayoutOps() {
       'Forma de pago (codigo)','Instrumento monetario (codigo)','Moneda (codigo)',
       'Subtotal','IVA','Accesorios','Referencia de aviso','Observaciones',
       'Quien paga (CLIENTE o TERCERO)','Nombre del tercero','Contrato (solo arrendamiento)',
-      'Tipo de cambio (pesos por unidad; solo monedas sin cotizacion de Banxico)'];
-    var ejemplo = ['CIN-0001','','JUAN PEREZ LOPEZ','2026-07-01','1','1','1',100000,16000,0,'','Fila de ejemplo — borrar antes de cargar','CLIENTE','','',''];
+      'Tipo de cambio (pesos por unidad; solo monedas sin cotizacion de Banxico)',
+      'Inmueble (solo compraventa: fraccionamiento y lote)'];
+    var ejemplo = ['CIN-0001','','JUAN PEREZ LOPEZ','2026-07-01','1','1','1',100000,16000,0,'','Fila de ejemplo — borrar antes de cargar','CLIENTE','','','','FRACCIONAMIENTO LAS PALMAS, LOTE 12'];
     var wsDatos = XLSX.utils.aoa_to_sheet([cols, ejemplo]);
-    wsDatos['!cols'] = cols.map(function(c,i){ return {wch: (i===2?34:(i===11||i===15?30:16))}; });
+    wsDatos['!cols'] = cols.map(function(c,i){ return {wch: (i===2?34:(i===11||i===15||i===16?30:16))}; });
 
     // Hoja de catálogos (códigos válidos)
     var cat = [['CATALOGOS — usa el CODIGO (número) en las columnas correspondientes del layout'],[]];
@@ -15597,6 +15844,7 @@ function descargarLayoutOps() {
       ['6 bis. Tipo de cambio: el peso no lo necesita. Dólar, euro, yen japonés, libra esterlina y yuan chino toman el de Banxico de la fecha de pago. Cualquier otra moneda requiere la columna "Tipo de cambio" (pesos por 1 unidad); sin ella, la fila no se importa.'],
       ['7. La fracción (V Compraventa o XV Arrendamiento) se toma de la pestaña activa al momento de cargar el archivo.'],
       ['8. Quien paga: escribe CLIENTE o TERCERO; si es TERCERO, llena su nombre. En arrendamiento, Contrato es el identificador del contrato del cliente (ej. CONTRATO PRINCIPAL). Si se dejan vacias, la operacion queda sin ese dato.'],
+      ['8 bis. Inmueble (solo compraventa): escribelo como aparece en la pestaña Inmuebles del cliente, por ejemplo FRACCIONAMIENTO LAS PALMAS, LOTE 12. Si el cliente tiene un solo inmueble puede quedar vacio. Si el efectivo y los metales preciosos recibidos para ese inmueble llegan a 8,025 UMA con la fila, la fila no se importa (art. 32 fr. I LFPIORPI).'],
       ['9. Borra la fila de ejemplo antes de cargar.']
     ];
     var wsInst = XLSX.utils.aoa_to_sheet(inst);
@@ -15679,6 +15927,7 @@ function procesarExcel(data, fraccion) {
         if (!val) continue;
         noVacias++;
         if (val.indexOf('cambio') >= 0) map['tc'] = c;   // "Tipo de cambio": antes que "moneda"
+        else if (val.indexOf('inmueble') >= 0) map['inmueble'] = c;   // "Inmueble (solo compraventa)"
         else if (val.indexOf('num') >= 0 && val.indexOf('cliente') >= 0) map['num_cliente'] = c;
         else if (val === 'rfc' || val.indexOf('rfc') >= 0) map['rfc'] = c;
         else if (/qui[eé]n/.test(val) && val.indexOf('paga') >= 0) map['pagador'] = c;
@@ -15705,7 +15954,8 @@ function procesarExcel(data, fraccion) {
     }
 
     // Leer datos desde la fila siguiente al encabezado
-    var registros = [], sinTCImp = [];
+    var registros = [], sinTCImp = [], sinInmImp = [], efCvImp = [];
+    var sinTxt = function(a){ return a.join(', '); };
     for (var ri = headerRow + 1; ri < allRows.length; ri++) {
       var row = allRows[ri];
       var nombre = String(row[headerMap['nombre'] !== undefined ? headerMap['nombre'] : 0] || '').trim();
@@ -15761,6 +16011,9 @@ function procesarExcel(data, fraccion) {
       var pagImp = pagadorDeTexto(celda('pagador'));
       var cliImp = null; App.clientes.forEach(function(c){ if (String(c.id) === String(idCli)) cliImp = c; });
       var ctrTxt = celda('contrato'), ctrImp = (fraccion === 'ARI' && cliImp) ? contratoPorTexto(cliImp, ctrTxt) : null;
+      // Compraventa: el inmueble de la fila (o el unico del cliente); sin el, la fila no se importa.
+      var inmImp = (fraccion !== 'ARI' && cliImp) ? inmueblePorTexto(cliImp, celda('inmueble')) : null;
+      if (fraccion !== 'ARI' && cliImp && !inmImp) { sinInmImp.push(ri + 1); continue; }
       var monedaOp = String(row[headerMap['moneda'] !== undefined ? headerMap['moneda'] : 4] || '1').trim() || '1';
       // Congelar el tipo de cambio de la fecha de cada operacion importada. Una
       // moneda sin cotizacion de Banxico necesita la columna "Tipo de cambio";
@@ -15769,7 +16022,7 @@ function procesarExcel(data, fraccion) {
       if (pideTCImp && !(tcImp > 0)) { sinTCImp.push(ri + 1); continue; }
       var convOp = montoAMXN(total_operacion, monedaOp, fechaStr, tcImp);
 
-      registros.push({
+      var regImp = {
         nombre_cliente: nombre,
         num_cliente: numCli,
         id_cliente_ref: idCli,
@@ -15777,6 +16030,7 @@ function procesarExcel(data, fraccion) {
         fecha_pago: fechaStr,
         pagador: pagImp, tercero_nombre: pagImp === 'TERCERO' ? celda('tercero').toUpperCase() : '',
         contrato_id: ctrImp ? ctrImp.id : '', contrato_desc: ctrImp ? textoContrato(ctrImp) : ctrTxt.toUpperCase(),
+        inmueble_id: inmImp ? inmImp.id : '', inmueble_desc: inmImp ? textoInmueble(inmImp) : '',
         forma_pago: String(row[headerMap['forma'] !== undefined ? headerMap['forma'] : 2] || '').trim(),
         instrumento_monetario: String(row[headerMap['instrumento'] !== undefined ? headerMap['instrumento'] : 3] || '').trim(),
         moneda: monedaOp,
@@ -15795,13 +16049,23 @@ function procesarExcel(data, fraccion) {
         entidad_nombre: App.entidadActual ? App.entidadActual.nombre : '',
         registrado_por: App.cuenta.username,
         fecha_registro: hoy()
-      });
+      };
+      // Limite de efectivo por inmueble (art. 32 fr. I): suma lo ya registrado
+      // y las filas anteriores del archivo; la fila que lo alcanza no se importa.
+      if (fraccion !== 'ARI' && esEfectivoArt32(regImp)) {
+        var rCvImp = efectivoCvInmueble((App._opsLiqPrevias || []).concat(registros), regImp, cliImp);
+        if (rCvImp.excede) { efCvImp.push(ri + 1); continue; }
+      }
+      registros.push(regImp);
     }
 
-    var msgSinTC = sinTCImp.length
+    var msgSinTC = (sinTCImp.length
       ? (sinTCImp.length === 1 ? 'La fila ' : 'Las filas ') + sinTCImp.join(', ') + (sinTCImp.length === 1 ? ' no se importo' : ' no se importaron')
-        + ': su moneda no tiene cotizacion de Banxico y falta el tipo de cambio. Capturalo en la columna "Tipo de cambio" y vuelve a cargarlas.'
-      : '';
+        + ': su moneda no tiene cotizacion de Banxico y falta el tipo de cambio. Capturalo en la columna "Tipo de cambio" y vuelve a cargarlas. '
+      : '')
+      + (sinInmImp.length ? (sinInmImp.length === 1 ? 'La fila ' : 'Las filas ') + sinInmImp.join(', ') + ': falta el inmueble o no coincide con los del cliente (columna "Inmueble"). ' : '')
+      + (efCvImp.length ? (efCvImp.length === 1 ? 'La fila ' : 'Las filas ') + sinTxt(efCvImp) + ': con ese pago, el efectivo y metales preciosos del inmueble llegarian a 8,025 UMA o mas (art. 32 fr. I LFPIORPI); no se importaron. ' : '');
+    msgSinTC = msgSinTC.trim();
     if (!registros.length) { pensadorOff(); toast(msgSinTC || 'No se encontraron registros con datos en el archivo', 'e'); return; }
     if (msgSinTC) toast(msgSinTC, 'w');
 
