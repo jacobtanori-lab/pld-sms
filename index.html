@@ -8313,7 +8313,7 @@ var CAMPOS_PTX_HIST = ['es_arrendamiento', 'ptx_arr_pago', 'ptx_arr_numops', 'pt
   'ptx_cv_contrapartes', 'ptx_cv_efectivo_mxn', 'ptx_cv_origen', 'ptx_cv_origen_otro', 'ptx_monto_max_mensual', 'razon_opera_mx', 'razon_opera_mx_otro',
   'canal_operacion', 'canal_intermediario', 'ptx_inst_alto',
   'pep_ingreso_mensual'];
-var ETQ_PTX_HIST = { es_arrendamiento: 'tipo de operacion', ptx_arr_pago: 'tipo de pago', ptx_arr_numops: 'operaciones por periodo',
+var ETQ_PTX_HIST = { es_arrendamiento: 'tipo de cliente', ptx_arr_pago: 'tipo de pago', ptx_arr_numops: 'operaciones por periodo',
   ptx_arr_frec: 'frecuencia', renta_monto: 'renta', renta_moneda: 'moneda de la renta', ptx_arr_efectivo: 'uso de efectivo',
   ptx_arr_origen: 'origen de los recursos', ptx_arr_origen_otro: 'origen de los recursos', ptx_cv_pago: 'tipo de pago',
   ptx_cv_numops: 'numero de operaciones', ptx_cv_moneda: 'moneda de pago', ptx_cv_contrapartes: 'contrapartes',
@@ -8368,6 +8368,7 @@ function fmtCampoPtx(k, o) {
               ptx_cv_contrapartes: PTX_CONTRAPARTES, ptx_cv_origen: PTX_ORIGEN, razon_opera_mx: RAZON_OPERA_MX }[k];
   if (k === 'renta_monto' || k === 'ptx_cv_efectivo_mxn' || k === 'ptx_monto_max_mensual' || k === 'pep_ingreso_mensual') return fmtMXN(v);
   if (k === 'renta_moneda') return v === 'USD' ? 'USD - Dolares' : 'MXN - Pesos';
+  if (k === 'es_arrendamiento') return TIPO_CLIENTE_FRAC[v] || String(v);
   if (k === 'ptx_inst_alto') return ptxEtiqueta(INST_ALTO, v);
   if (k === 'canal_operacion') return ptxEtiqueta(CANALES_OPERACION, v) + (v === 'INTERMEDIARIO' && o.canal_intermediario ? ': ' + o.canal_intermediario : '');
   var t = cat ? ptxEtiqueta(cat, v) : String(v);
@@ -8729,20 +8730,22 @@ function toggleDuenoBen(val) {
   if (el) el.style.display = (val === 'SI') ? 'block' : 'none';
 }
 
-// --- MARCADOR DE CLIENTE DE ARRENDAMIENTO (perfil transaccional) ---
+// --- TIPO DE CLIENTE POR FRACCION (perfil transaccional) ---
 // Se inserta en "Datos generales del expediente" de todos los tipos de cliente.
+var TIPO_CLIENTE_FRAC = { NO: 'Compraventa de inmueble (Fr V)', SI: 'Cliente de Arrendamiento (Fr XV)' };
 function htmlArrendamiento(d) {
   var esArr = (d.es_arrendamiento === 'SI');
   var vis = esArr ? '' : 'display:none';
   var visCV = esArr ? 'display:none' : '';
-  // La respuesta decide la fraccion: SI es arrendamiento (Fr. XV) y NO es
-  // compraventa de inmueble (Fr. V). Cada rama pide lo suyo, y el perfil
-  // transaccional de mas abajo tambien cambia con ella.
-  return fg('Cliente de arrendamiento',null,true)
+  // El tipo de cliente decide la fraccion. El valor guardado sigue siendo
+  // es_arrendamiento SI (arrendamiento, Fr. XV) o NO (compraventa de inmueble,
+  // Fr. V). Cada rama pide lo suyo, y el perfil transaccional de mas abajo
+  // tambien cambia con ella.
+  return fg('Tipo de cliente',null,true)
     +'<select class="sel" name="es_arrendamiento" onchange="toggleArrendamiento(this.value)">'
     +(d.es_arrendamiento ? '' : '<option value="" selected>-- Seleccionar --</option>')
-    +'<option value="NO"'+(d.es_arrendamiento==='NO'?' selected':'')+'>NO - Compraventa de inmueble (Fr. V)</option>'
-    +'<option value="SI"'+(esArr?' selected':'')+'>SI - Cliente de arrendamiento (Fr. XV)</option>'
+    +'<option value="NO"'+(d.es_arrendamiento==='NO'?' selected':'')+'>'+TIPO_CLIENTE_FRAC.NO+'</option>'
+    +'<option value="SI"'+(esArr?' selected':'')+'>'+TIPO_CLIENTE_FRAC.SI+'</option>'
     +'</select></div>'
     +'<div class="fg cv-campo" style="'+visCV+'"><label class="lbl">Fraccionamiento o descripcion del inmueble</label>'
     +'<input class="inp" name="nombre_fraccionamiento" value="'+capEsc(d.nombre_fraccionamiento||'')+'" placeholder="Ej: FRACCIONAMIENTO LAS PALMAS" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>'
@@ -8943,7 +8946,7 @@ function htmlPerfilTx(d) {
   return '<div class="card"><div class="card-h"><span class="card-t">Perfil transaccional</span>'
     + '<span style="font-size:12px;color:var(--tx3)">Lo que el cliente declara sobre como va a operar</span></div>'
     + '<div class="card-b" style="padding-bottom:0"><div style="font-size:12px;color:var(--tx3);margin-bottom:8px;line-height:1.5">'
-    + 'Las preguntas cambian segun la respuesta a "Cliente de arrendamiento", en Datos generales.</div></div>'
+    + 'Las preguntas cambian segun el "Tipo de cliente" elegido en Datos generales.</div></div>'
     + arr + cv + razon + '</div>';
 }
 
@@ -8952,7 +8955,7 @@ function htmlPerfilTx(d) {
 function renderPerfilTx(c) {
   var esArr = (c.es_arrendamiento === 'SI');
   var cab = fgHtml(
-    fcHtml('Tipo de cliente por fraccion', esArr ? 'Arrendamiento (Fr. XV)' : 'Compraventa de inmueble (Fr. V)')
+    fcHtml('Tipo de cliente', esArr ? TIPO_CLIENTE_FRAC.SI : TIPO_CLIENTE_FRAC.NO)
     + (esArr
         ? fcHtml('Inmueble arrendado', capEsc(c.inmueble_arrendado))
         : fcHtml('Inmuebles', inmueblesDe(c).map(function(k){ return capEsc(textoInmueble(k)); }).join('<br>')))
