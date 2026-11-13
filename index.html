@@ -4118,6 +4118,8 @@ function pgConfig(sec) {
     +'<button class="btn btn-p" onclick="agregarAsesor()">+ Agregar</button>'
     +'</div></div></div></div>'
 
+    + htmlCardFraccionamientos()
+
     // Gestión de roles — solo admin
     +(App.rol === 'admin' ? (function(){
       return '<div class="card"><div class="card-h"><span class="card-t">Roles de usuario</span>'
@@ -8186,13 +8188,12 @@ function renderInmuebles(conservar) {
     }
   }
   var lista = App._inmBorrador, uso = App._inmUso && App._inmUso.cliente === c.id ? App._inmUso.porInm : null;
-  var fraccs = []; lista.forEach(function(k){ if (k.fraccionamiento && fraccs.indexOf(k.fraccionamiento) < 0) fraccs.push(k.fraccionamiento); });
   var lim = limiteEfectivoCv();
   var filas = lista.map(function(k, i){
     var u = uso ? (uso[String(k.id)] || { ops: 0, efectivo: 0 }) : null;
     var pct = u && lim ? Math.min(100, Math.round(u.efectivo / lim * 100)) : 0;
     return '<tr data-inm="' + capEsc(k.id) + '">'
-      + '<td><input class="inp" data-k="fraccionamiento" list="inm-fraccs" value="' + capEsc(k.fraccionamiento || '') + '" style="text-transform:uppercase"></td>'
+      + '<td style="min-width:220px">' + selectorFraccHtml(k.fraccionamiento, c.entidad_id, 'data-k="fraccionamiento"') + '</td>'
       + '<td><input class="inp" data-k="lote" value="' + capEsc(k.lote || '') + '" style="text-transform:uppercase;max-width:110px"></td>'
       + '<td><input class="inp" data-k="alta" type="date" value="' + capEsc(k.alta || '') + '"></td>'
       + '<td style="font-size:12px">' + (u ? u.ops + (u.ops === 1 ? ' operacion' : ' operaciones') : '…') + '</td>'
@@ -8204,8 +8205,7 @@ function renderInmuebles(conservar) {
     + 'El efectivo y los metales preciosos se suman por inmueble: una operacion que lleve la suma a 8,025 UMA o mas (' + fmtMXN(lim) + ') no se puede registrar (art. 32 fr. I LFPIORPI). '
     + 'Para otro lote del mismo fraccionamiento, elige el fraccionamiento de la lista y escribe el lote.</div>'
     + (omision ? '<div class="alerta-banner"><span>Este expediente no tenia inmuebles registrados: se muestra el de su alta. Revisa los datos y guarda para registrarlo.</span></div>' : '')
-    + '<datalist id="inm-fraccs">' + fraccs.map(function(f){ return '<option value="' + capEsc(f) + '">'; }).join('') + '</datalist>'
-    + '<div class="twrap"><table><thead><tr><th>Fraccionamiento o descripcion del inmueble</th><th>Lote (opcional)</th><th>Alta</th><th>Operaciones</th><th>Efectivo y metales recibidos</th><th></th></tr></thead><tbody>'
+    + '<div class="twrap"><table><thead><tr><th>Fraccionamiento</th><th>Lote (opcional)</th><th>Alta</th><th>Operaciones</th><th>Efectivo y metales recibidos</th><th></th></tr></thead><tbody>'
     + (filas || '<tr><td colspan="6" style="color:var(--tx3);font-size:12px">Sin inmuebles.</td></tr>') + '</tbody></table></div>'
     + '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button class="btn btn-sm" onclick="inmAgregar()">Agregar inmueble o lote</button>'
     + '<button class="btn btn-p btn-sm" onclick="guardarInmuebles()">Guardar inmuebles</button></div>';
@@ -8747,8 +8747,10 @@ function htmlArrendamiento(d) {
     +'<option value="NO"'+(d.es_arrendamiento==='NO'?' selected':'')+'>'+TIPO_CLIENTE_FRAC.NO+'</option>'
     +'<option value="SI"'+(esArr?' selected':'')+'>'+TIPO_CLIENTE_FRAC.SI+'</option>'
     +'</select></div>'
-    +'<div class="fg cv-campo" style="'+visCV+'"><label class="lbl">Fraccionamiento o descripcion del inmueble</label>'
-    +'<input class="inp" name="nombre_fraccionamiento" value="'+capEsc(d.nombre_fraccionamiento||'')+'" placeholder="Ej: FRACCIONAMIENTO LAS PALMAS" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>'
+    +'<div class="fg cv-campo" style="'+visCV+'"><label class="lbl">Fraccionamiento</label>'
+    +selectorFraccHtml(d.nombre_fraccionamiento, entidadDelExpediente(d), 'name="nombre_fraccionamiento"')
+    +(fraccionamientosDe(entidadDelExpediente(d)).length ? '' : '<span class="fhint">Esta entidad aun no tiene fraccionamientos en el catalogo: se agregan en Configuracion &gt; Parametros del sistema.</span>')
+    +'</div>'
     +'<div class="fg cv-campo" style="'+visCV+'"><label class="lbl">Numero de lote (opcional)</label>'
     +'<input class="inp" name="lote_inmueble" value="'+capEsc(d.lote_inmueble||'')+'" placeholder="Ej: 12" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>'
     +((d.inmuebles_cv || []).length > 1 ? '<div class="fg full cv-campo" style="'+visCV+';font-size:12px;color:var(--tx3)">Este es el primer inmueble del expediente; tiene ' + d.inmuebles_cv.length + ' en total. Los demas se administran en la pestana Inmuebles de la ficha.</div>' : '')
@@ -8813,6 +8815,108 @@ function contratoPorTexto(c, t) {
 function textoContrato(k) {
   return k ? (k.identificador || k.id) + (k.domicilio ? ' · ' + k.domicilio : '') : '';
 }
+// ── Catalogo de fraccionamientos ──
+// Cada entidad tiene los suyos; se dan de alta en Configuracion > Parametros
+// del sistema y se guardan en PLD_Config (fraccionamientos). En el expediente
+// el fraccionamiento se elige de la lista de su entidad; "Otro" abre un campo
+// libre para un inmueble fuera de fraccionamiento. Lo que se guarda en el
+// expediente sigue siendo el texto (nombre_fraccionamiento, inmuebles_cv).
+var CAT_FRACC = [];
+try { CAT_FRACC = JSON.parse(localStorage.getItem('fraccionamientos') || '[]') || []; } catch (e) { CAT_FRACC = []; }
+var FRACC_OTRO = '__OTRO__';
+function fraccionamientosDe(entId) {
+  return CAT_FRACC.filter(function(x){ return String(x.entidad_id) === String(entId || ''); })
+    .sort(function(a, b){ return String(a.nombre).localeCompare(String(b.nombre), 'es'); });
+}
+// Entidad del expediente: la suya al editar, la actual al dar de alta.
+function entidadDelExpediente(d) {
+  return (d && d.entidad_id) || (App.entidadActual && App.entidadActual.id !== 'TODAS' ? App.entidadActual.id : '');
+}
+// Selector del fraccionamiento + campo libre de "Otro". El campo libre es el
+// que lleva el valor (attrs: name o data-k); con un fraccionamiento elegido
+// queda oculto con su nombre.
+function selectorFraccHtml(valor, entId, attrs) {
+  var lista = fraccionamientosDe(entId), v = String(valor || '').trim().toUpperCase();
+  var enCat = lista.filter(function(x){ return scrNorm(x.nombre) === scrNorm(v); })[0];
+  var otro = !!v && !enCat;
+  var sel = enCat ? enCat.nombre : (otro ? FRACC_OTRO : '');
+  return '<select class="sel" data-prev="' + capEsc(sel) + '" onchange="fraccSelCambio(this)">'
+    + '<option value="">-- Seleccionar --</option>'
+    + lista.map(function(x){ return '<option value="' + capEsc(x.nombre) + '"' + (x.nombre === sel ? ' selected' : '') + '>' + capEsc(x.nombre) + '</option>'; }).join('')
+    + '<option value="' + FRACC_OTRO + '"' + (otro ? ' selected' : '') + '>Otro (inmueble fuera de fraccionamiento)</option></select>'
+    + '<input class="inp fracc-otro" ' + attrs + ' value="' + capEsc(enCat ? enCat.nombre : v) + '" placeholder="Describe el inmueble: calle, numero, colonia"'
+    + ' oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase;margin-top:6px;' + (otro ? '' : 'display:none') + '">';
+}
+function fraccSelCambio(sel) {
+  var inp = sel.parentNode.querySelector('.fracc-otro'); if (!inp) return;
+  if (sel.value === FRACC_OTRO) {
+    inp.style.display = '';
+    if (sel.getAttribute('data-prev') !== FRACC_OTRO) inp.value = '';
+    inp.focus();
+  } else {
+    inp.style.display = 'none';
+    inp.value = sel.value;
+  }
+  sel.setAttribute('data-prev', sel.value);
+}
+// Tarjeta de Parametros del sistema.
+function htmlCardFraccionamientos() {
+  var entAct = (App.entidadActual && App.entidadActual.id !== 'TODAS') ? App.entidadActual.id : (ENTIDADES[0] || {}).id;
+  var grupos = ENTIDADES.map(function(e){
+    var lista = fraccionamientosDe(e.id);
+    return '<div style="padding:10px 0;border-bottom:1px solid var(--brd)">'
+      + '<div style="font-size:12px;font-weight:600;color:var(--tx2);margin-bottom:6px">' + capEsc(e.nombre) + ' <span style="font-weight:400;color:var(--tx3)">(' + lista.length + ')</span></div>'
+      + (lista.length
+          ? '<div style="display:flex;gap:6px;flex-wrap:wrap">' + lista.map(function(x){
+              return '<span class="pill p-gr" style="display:inline-flex;align-items:center;gap:6px">' + capEsc(x.nombre)
+                + '<button type="button" class="btn btn-xs" style="padding:0 5px;border:0;background:transparent;color:var(--tx3)" title="Quitar del catalogo" onclick="quitarFraccionamiento(\'' + capEsc(x.id) + '\')">✕</button></span>';
+            }).join('') + '</div>'
+          : '<div style="font-size:12px;color:var(--tx3)">Sin fraccionamientos.</div>')
+      + '</div>';
+  }).join('');
+  return '<div class="card"><div class="card-h"><span class="card-t">Fraccionamientos</span>'
+    + '<span style="font-size:12px;color:var(--tx3)">Catalogo por entidad para los expedientes de compraventa</span></div>'
+    + '<div class="card-b">' + grupos + '</div>'
+    + '<div class="card-h" style="margin-top:8px"><span class="card-t" style="font-size:13px">+ Agregar fraccionamiento</span></div>'
+    + '<div class="card-b"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
+    + '<div class="fg" style="flex:2;min-width:220px"><label class="lbl">Nombre del fraccionamiento <span class="req">*</span></label>'
+    + '<input class="inp" id="new-fracc-nom" placeholder="Ej: FRACCIONAMIENTO LAS PALMAS" oninput="this.value=this.value.toUpperCase()" style="text-transform:uppercase"></div>'
+    + '<div class="fg" style="flex:1;min-width:200px"><label class="lbl">Entidad <span class="req">*</span></label>'
+    + '<select class="sel" id="new-fracc-ent">' + ENTIDADES.map(function(e){ return '<option value="' + capEsc(e.id) + '"' + (e.id === entAct ? ' selected' : '') + '>' + capEsc(e.nombre) + '</option>'; }).join('') + '</select></div>'
+    + '<div class="fg" style="flex:0 0 auto;padding-top:18px"><button class="btn btn-p" onclick="agregarFraccionamiento()">+ Agregar</button></div>'
+    + '</div><p style="font-size:11px;color:var(--tx3);margin-top:8px">Quitar un fraccionamiento del catalogo no cambia los expedientes que ya lo tienen.</p></div></div>';
+}
+function agregarFraccionamiento() {
+  var nom = String((document.getElementById('new-fracc-nom') || {}).value || '').trim().toUpperCase().replace(/\s+/g, ' ');
+  var ent = (document.getElementById('new-fracc-ent') || {}).value || '';
+  if (!nom) { toast('Escribe el nombre del fraccionamiento', 'e'); return; }
+  if (!ent) { toast('Elige la entidad', 'e'); return; }
+  if (fraccionamientosDe(ent).some(function(x){ return scrNorm(x.nombre) === scrNorm(nom); })) { toast('Ese fraccionamiento ya esta en el catalogo de la entidad', 'w'); return; }
+  var quien = App.cuenta ? (App.cuenta.username || App.cuenta.name || '') : '';
+  var nuevo = CAT_FRACC.concat([{ id: 'F' + Date.now(), nombre: nom, entidad_id: ent, alta: hoy(), usuario: quien }]);
+  persistirFraccionamientos(nuevo, 'Fraccionamiento agregado: ' + nom);
+}
+function quitarFraccionamiento(id) {
+  var x = CAT_FRACC.filter(function(k){ return k.id === id; })[0]; if (!x) return;
+  if (!confirm('¿Quitar ' + x.nombre + ' del catalogo?\n\nLos expedientes que ya lo tienen no cambian.')) return;
+  persistirFraccionamientos(CAT_FRACC.filter(function(k){ return k.id !== id; }), 'Fraccionamiento quitado: ' + x.nombre);
+}
+function persistirFraccionamientos(nuevo, msg) {
+  var json = JSON.stringify(nuevo);
+  spGet('PLD_Config', function(lista) {
+    var item = itemConfigSistema(lista);
+    var listo = function(ok) {
+      if (!ok || ok.error) { toast('No se pudo guardar el catalogo de fraccionamientos', 'e'); return; }
+      CAT_FRACC = nuevo;
+      localStorage.setItem('fraccionamientos', json);
+      toast(msg, 's');
+      pgConfig('sistema');
+    };
+    if (item && item.id) spPatch('PLD_Config', item.id, { fraccionamientos: json }, listo);
+    else spCreate('PLD_Config', { Title: 'CONFIG_SISTEMA', fraccionamientos: json }, listo);
+  });
+}
+
 // ── Inmuebles de compraventa (Fr. V) ──
 // Un mismo expediente de compraventa puede tener varios inmuebles: varios
 // fraccionamientos y varios lotes dentro de un fraccionamiento. Viven en
@@ -12719,6 +12823,12 @@ function cargarConfigUMA() {
         localStorage.setItem('gafi_listas', JSON.stringify(CFG_GAFI));
         aplicarListasGafi();
       } catch(e) { console.warn('Listas GAFI parse error', e); }
+    }
+    if (cfg.fraccionamientos) {
+      try {
+        CAT_FRACC = (typeof cfg.fraccionamientos === 'string' ? JSON.parse(cfg.fraccionamientos) : cfg.fraccionamientos) || [];
+        localStorage.setItem('fraccionamientos', JSON.stringify(CAT_FRACC));
+      } catch(e) { console.warn('Fraccionamientos parse error', e); }
     }
     if (cfg.perfil_config) {
       try {
