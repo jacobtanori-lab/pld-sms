@@ -8747,7 +8747,7 @@ function htmlArrendamiento(d) {
     +'<option value="NO"'+(d.es_arrendamiento==='NO'?' selected':'')+'>'+TIPO_CLIENTE_FRAC.NO+'</option>'
     +'<option value="SI"'+(esArr?' selected':'')+'>'+TIPO_CLIENTE_FRAC.SI+'</option>'
     +'</select></div>'
-    +'<div class="fg cv-campo" style="'+visCV+'"><label class="lbl">Fraccionamiento</label>'
+    +'<div class="fg cv-campo" style="'+visCV+'"><label class="lbl">Fraccionamiento <span class="req">*</span></label>'
     +selectorFraccHtml(d.nombre_fraccionamiento, entidadDelExpediente(d), 'name="nombre_fraccionamiento"')
     +(fraccionamientosDe(entidadDelExpediente(d)).length ? '' : '<span class="fhint">Esta entidad aun no tiene fraccionamientos en el catalogo: se agregan en Configuracion &gt; Parametros del sistema.</span>')
     +'</div>'
@@ -9755,6 +9755,14 @@ function validarCliente(frm, datos, tipo) {
       faltan.push('Fecha de fin del cargo (el estatus PEP es ' + datos.estatus_pep + ')');
     if (fIniPep && fIniPep > hoy().replace(/-/g, '')) bloq.push('La fecha de inicio del cargo no puede ser posterior a hoy');
     if (fIniPep && fFinPep && fFinPep < fIniPep) bloq.push('La fecha de fin del cargo no puede ser anterior a la de inicio');
+  }
+
+  // Compraventa: el fraccionamiento es obligatorio. Con "Otro", la descripcion
+  // del inmueble tambien (el aviso generico solo ve que el selector tiene valor).
+  if (datos.es_arrendamiento === 'NO' && !String(datos.nombre_fraccionamiento || '').trim()) {
+    var inpFr = frm.querySelector('[name="nombre_fraccionamiento"]');
+    var selFr = inpFr ? inpFr.parentNode.querySelector('select') : null;
+    if (selFr && selFr.value === FRACC_OTRO) faltan.push('Descripcion del inmueble (Fraccionamiento: Otro)');
   }
 
   // El efectivo de una compraventa de inmueble no puede llegar a 8,025 UMA
