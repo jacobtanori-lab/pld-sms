@@ -9433,11 +9433,12 @@ function selectEstatusPEP(d) {
         : '')
     + '</div>'
     // El PEP extranjero es riesgo Alto en cualquier estatus (modelo por reglas).
-    + fg('El PEP es extranjero', null, false)
+    // Solo se ve con un estatus PEP distinto de NO APLICA (actualizarCargoPep).
+    + '<div class="fg" id="pep-ext-wrap" style="' + (est === 'NO APLICA' ? 'display:none' : '') + '"><label class="lbl">El PEP es extranjero</label>'
     + '<select class="sel" name="pep_extranjero">'
     + '<option value="NO"' + (d.pep_extranjero !== 'SI' ? ' selected' : '') + '>NO</option>'
     + '<option value="SI"' + (d.pep_extranjero === 'SI' ? ' selected' : '') + '>SI - el cargo es o fue en otro pais</option>'
-    + '</select><span class="fhint">Solo cuenta si el estatus PEP no es NO APLICA. Un PEP extranjero es riesgo Alto en cualquier estatus.</span></div>';
+    + '</select><span class="fhint">Un PEP extranjero es riesgo Alto en cualquier estatus. Su nacionalidad debe ser distinta de la mexicana.</span></div>';
 }
 
 // Articulo 23 Bis 3: del PEP persona fisica se registran el cargo, la
@@ -9487,6 +9488,52 @@ function opcionesPersonaPEP(d, actual) {
   if (actual && !hay) h += '<option value="' + capEsc(actual) + '" data-parte="' + capEsc(d.pep_persona_parte || '') + '" selected>' + capEsc(actual) + ' (ya no esta en el expediente)</option>';
   return h;
 }
+// Nacionalidad de la persona que es PEP en el expediente: el propio cliente
+// persona fisica (activo, inactivo o vencido) o, en persona moral y
+// fideicomiso, la persona elegida en la tarjeta del cargo. Un familiar o
+// relacionado de persona fisica no tiene capturada la del PEP: null.
+// Devuelve { quien, pais, campo } (campo: el name del select en el formulario).
+function nacionalidadDelPEP(d) {
+  var est = d.estatus_pep || 'NO APLICA';
+  if (est === 'NO APLICA') return null;
+  if (d.tipo === 'PF_MEX' || d.tipo === 'PF_EXT') {
+    if (est === 'Familiar' || est === 'Relacionado a PEP') return null;
+    return { quien: '', pais: d.pais_nac2 || '', campo: 'pais_nac2' };
+  }
+  var parte = String(d.pep_persona_parte || ''), n = parseInt((parte.match(/#(\d+)/) || [])[1], 10) || 1;
+  if (!d.pep_persona || !parte) return null;
+  var quien = parte + ' ' + d.pep_persona;
+  if (parte === 'Representante legal') return { quien: quien, pais: d.rl_pais_nac2 || '', campo: 'rl_pais_nac2' };
+  if (parte === 'Delegado fiduciario') return { quien: quien, pais: d.df_pais_nac2 || '', campo: 'df_pais_nac2' };
+  if (parte === 'Dueño beneficiario') return { quien: quien, pais: d.db_pais_nac2 || '', campo: 'db_pais_nac2' };
+  if (parte.indexOf('Beneficiario controlador') === 0) {
+    var bc = (d.beneficiarios || [])[n - 1];
+    return bc ? { quien: quien, pais: bc.pais_nac2 || '', campo: 'bc_' + (n - 1) + '_pais_nac2' } : null;
+  }
+  if (parte.indexOf('Fideicomitente') === 0 || parte.indexOf('Fideicomisario') === 0) {
+    var pref = parte.indexOf('Fideicomitente') === 0 ? 'fte' : 'fsa', p = partesFid(d, pref)[n - 1];
+    return p ? { quien: quien, pais: p.pais || '', campo: pref + '_' + (n - 1) + '_pais' } : null;
+  }
+  return null;
+}
+// Al guardar: un PEP marcado como extranjero con nacionalidad mexicana se
+// avisa y se sugiere corregir. Devuelve true si hay que volver al formulario.
+function avisoPEPExtranjeroMexicano(frm, d) {
+  if (d.pep_extranjero !== 'SI') return false;
+  var nac = nacionalidadDelPEP(d);
+  if (!nac || !nac.pais || normPais(nac.pais) !== 'MEXICO') return false;
+  var de = nac.quien ? 'de ' + nac.quien : 'del cliente';
+  var volver = confirm('El PEP esta marcado como extranjero, pero la nacionalidad ' + de + ' es MEXICO.\n\n'
+    + 'Para corregirlo:\n'
+    + '  • Si el cargo es o fue en otro pais, cambia la nacionalidad ' + de + '.\n'
+    + '  • Si el cargo es en Mexico, cambia "El PEP es extranjero" a NO.\n\n'
+    + '¿Volver al formulario para corregirlo?\n(Cancelar guarda el expediente como esta.)');
+  if (volver) {
+    var el = frm.querySelector('[name="pep_extranjero"]');
+    if (el) { el.scrollIntoView({ block: 'center' }); el.focus(); }
+  }
+  return volver;
+}
 // Al cambiar el formulario: la tarjeta se ve solo con estatus PEP, la
 // definicion sigue al estatus elegido y la lista de personas se rehace con lo
 // capturado.
@@ -9495,6 +9542,8 @@ function actualizarCargoPep() {
   var w = document.getElementById('pep-cargo-wrap'), s = frm.querySelector('[name="estatus_pep"]');
   if (!s) return;
   if (w) w.style.display = (s.value && s.value !== 'NO APLICA') ? '' : 'none';
+  var we = document.getElementById('pep-ext-wrap');
+  if (we) we.style.display = (s.value && s.value !== 'NO APLICA') ? '' : 'none';
   var def = document.getElementById('pep-def'); if (def) def.textContent = DEF_ESTATUS_PEP[s.value] || '';
   var sp = document.getElementById('pep-persona'), hp = document.getElementById('pep-persona-parte');
   if (!sp) return;
@@ -9895,6 +9944,9 @@ function submitCliente(tipo, idEx) {
     alert('No se puede guardar el expediente:\n\n• ' + val.bloqueantes.join('\n• '));
     return;
   }
+  // Sin estatus PEP, "El PEP es extranjero" no aplica (el campo esta oculto).
+  if (!datos.estatus_pep || datos.estatus_pep === 'NO APLICA') datos.pep_extranjero = 'NO';
+  if (avisoPEPExtranjeroMexicano(frm, datos)) return;
 
   // Campos que pone el sistema y que el formulario no trae: al editar se
   // conservan del expediente guardado (resoluciones de screening, origen del
